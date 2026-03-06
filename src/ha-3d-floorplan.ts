@@ -3,7 +3,9 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { Hass, CardConfig, AnchorEntry, SavedView } from './types';
 import { syncLights, stepTransitions } from './lights';
 import { loadGLTF, detectAnchors } from './model';
-import { AnchorOverlay } from './overlay';
+import { AnchorOverlay, SensorOverlay } from './overlay';
+
+type AnyOverlay = AnchorOverlay | SensorOverlay;
 
 class Ha3dFloorplan extends HTMLElement {
   private _config: CardConfig | null = null;
@@ -18,7 +20,7 @@ class Ha3dFloorplan extends HTMLElement {
   private overlayContainer: HTMLDivElement | null = null;
 
   private anchors = new Map<string, AnchorEntry>();
-  private overlays = new Map<string, AnchorOverlay>();
+  private overlays = new Map<string, AnyOverlay>();
 
   private rafId = 0;
   private ro: ResizeObserver | null = null;
@@ -27,6 +29,15 @@ class Ha3dFloorplan extends HTMLElement {
 
   private _dirty = false;
   private _lastTime = 0;
+
+  // Environment lights
+  private _hemiLight: THREE.HemisphereLight | null = null;
+  private _sunLight: THREE.DirectionalLight | null = null;
+
+  // Weather
+  private _weatherParticles: THREE.Object3D | null = null;
+  private _weatherType: 'none' | 'rain' | 'snow' = 'none';
+  private _modelBox = new THREE.Box3();
 
   private _requestRender() { this._dirty = true; }
 
@@ -66,6 +77,7 @@ class Ha3dFloorplan extends HTMLElement {
     if (this.modelLoaded) {
       syncLights(this.anchors, hass, this._config);
       this._updateOverlayStates();
+      this._updateEnvironment();
       this._requestRender();
     }
   }
@@ -80,7 +92,15 @@ class Ha3dFloorplan extends HTMLElement {
     if (this.renderer) this._teardown();
 
     const card = document.createElement('ha-card');
-    card.style.cssText = 'overflow:hidden;position:relative;display:block;';
+    card.style.cssText = [
+      'overflow:hidden',
+      'position:relative',
+      'display:block',
+      'background:#050a14',
+      '--ha-card-background:#050a14',
+      '--ha-card-border-radius:12px',
+      'padding:0',
+    ].join(';');
     this.innerHTML = '';
     this.appendChild(card);
 
@@ -88,7 +108,6 @@ class Ha3dFloorplan extends HTMLElement {
     this.canvas.style.cssText = 'display:block;width:100%;height:100%;';
     card.appendChild(this.canvas);
 
-    // Overlay container — pointer-events:none so canvas gets drag events
     this.overlayContainer = document.createElement('div');
     this.overlayContainer.style.cssText =
       'position:absolute;inset:0;pointer-events:none;overflow:hidden;';
@@ -135,6 +154,7 @@ class Ha3dFloorplan extends HTMLElement {
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x0d1117);
+    this.scene.fog = new THREE.Fog(0x0d1117, 20, 80);
 
     this.camera = new THREE.PerspectiveCamera(45, w / h, 0.01, 500);
     this.camera.position.set(0, 5, 12);
@@ -161,9 +181,12 @@ class Ha3dFloorplan extends HTMLElement {
     this.controls.addEventListener('change', () => this._requestRender());
     this.controls.addEventListener('end', () => this._saveView());
 
-    // Hemisphere light: warm sky, cool ground — much nicer than plain ambient
-    const hemi = new THREE.HemisphereLight(0xfff4e0, 0x1a1a2e, 0.45);
-    this.scene.add(hemi);
+    this._hemiLight = new THREE.HemisphereLight(0xfff4e0, 0x1a1a2e, 0.45);
+    this.scene.add(this._hemiLight);
+
+    this._sunLight = new THREE.DirectionalLight(0xfff4c2, 0.4);
+    this._sunLight.position.set(5, 10, 5);
+    this.scene.add(this._sunLight);
 
     this._lastTime = performance.now();
     this._loop();
@@ -184,7 +207,11 @@ class Ha3dFloorplan extends HTMLElement {
     const transitioning = stepTransitions(this.anchors, dt, this._config);
     if (transitioning) this._dirty = true;
 
-    // Always sync overlay positions with camera (cheap CSS update)
+    if (this._weatherParticles) {
+      this._stepParticles(dt);
+      this._dirty = true;
+    }
+
     if ((moved || this._dirty) && this.camera && this.canvas) {
       const w = this.canvas.offsetWidth;
       const h = this.canvas.offsetHeight;
@@ -214,6 +241,7 @@ class Ha3dFloorplan extends HTMLElement {
     const box = new THREE.Box3().setFromObject(model);
     const centre = box.getCenter(new THREE.Vector3());
     model.position.sub(centre);
+    this._modelBox.copy(box).translate(centre.negate());
 
     const saved = this._loadView();
     if (saved) {
@@ -229,8 +257,17 @@ class Ha3dFloorplan extends HTMLElement {
       this.lockBtn!.textContent = '🔓';
     }
 
+    // Adapt fog to model scale
+    if (this.scene.fog instanceof THREE.Fog) {
+      const size = box.getSize(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.z);
+      this.scene.fog.near = maxDim * 1.2;
+      this.scene.fog.far = maxDim * 4;
+    }
+
     this.controls!.update();
     this.scene.add(model);
+    this._addGround(box);
 
     this.anchors = detectAnchors(model, this.scene, this._config);
     this._createOverlays();
@@ -239,6 +276,7 @@ class Ha3dFloorplan extends HTMLElement {
     if (this._hass) {
       syncLights(this.anchors, this._hass, this._config);
       this._updateOverlayStates();
+      this._updateEnvironment();
     }
     this._requestRender();
   }
@@ -251,25 +289,70 @@ class Ha3dFloorplan extends HTMLElement {
 
     this.anchors.forEach((entry, name) => {
       const label = name.replace('ha_anchor_', '');
+
+      if (entry.domain === 'sensor') {
+        const overlay = new SensorOverlay(
+          this.overlayContainer!,
+          () => this._openMoreInfo(entry.entityId),
+        );
+        this.overlays.set(name, overlay);
+        return;
+      }
+
+      const onShortClick = this._getShortClickHandler(entry);
       const overlay = new AnchorOverlay(
         this.overlayContainer!,
+        entry.domain,
         label,
-        () => this._hass?.callService('light', 'toggle', { entity_id: entry.entityId }),
+        onShortClick,
         () => this._openMoreInfo(entry.entityId),
       );
       this.overlays.set(name, overlay);
     });
   }
 
+  private _getShortClickHandler(entry: AnchorEntry): () => void {
+    switch (entry.domain) {
+      case 'light':
+      case 'switch':
+        return () => this._hass?.callService(entry.domain, 'toggle', { entity_id: entry.entityId });
+      case 'cover':
+        return () => this._hass?.callService('cover', 'toggle', { entity_id: entry.entityId });
+      case 'media_player':
+        return () => this._hass?.callService('media_player', 'media_play_pause', { entity_id: entry.entityId });
+      default:
+        return () => this._openMoreInfo(entry.entityId);
+    }
+  }
+
   private _updateOverlayStates() {
     this.anchors.forEach((entry, name) => {
       const overlay = this.overlays.get(name);
       if (!overlay) return;
-      const on = entry.targetIntensity > 0;
+
       const stateObj = this._hass?.states[entry.entityId];
-      const stateName = stateObj?.state ?? '—';
-      const label = `${name.replace('ha_anchor_', '')} • ${stateName}`;
-      overlay.updateState(on, entry.targetColor, label);
+      const baseName = name.replace('ha_anchor_', '');
+
+      if (overlay instanceof SensorOverlay) {
+        const value = stateObj?.state ?? '—';
+        const unit = (stateObj?.attributes.unit_of_measurement as string) ?? '';
+        overlay.updateValue(value, unit, `${baseName}: ${value}${unit}`);
+        return;
+      }
+
+      if (overlay instanceof AnchorOverlay) {
+        const on = entry.targetIntensity > 0;
+        const stateName = stateObj?.state ?? '—';
+        let label = `${baseName} • ${stateName}`;
+        if (entry.domain === 'climate') {
+          const temp = stateObj?.attributes.current_temperature;
+          if (temp != null) label = `${baseName} • ${temp}°`;
+        } else if (entry.domain === 'cover') {
+          const pct = stateObj?.attributes.current_position;
+          if (pct != null) label = `${baseName} • ${pct}%`;
+        }
+        overlay.updateState(on, entry.targetColor, label);
+      }
     });
   }
 
@@ -279,6 +362,218 @@ class Ha3dFloorplan extends HTMLElement {
       composed: true,
       detail: { entityId },
     }));
+  }
+
+  // ── Environment (sun + weather) ───────────────────────────────────────
+
+  private _updateEnvironment() {
+    if (!this._hass) return;
+    const cfg = this._config;
+
+    if (cfg?.sun_entity) {
+      const sunState = this._hass.states[cfg.sun_entity];
+      if (sunState) {
+        const elevation = (sunState.attributes.elevation as number) ?? 0;
+        const azimuth = (sunState.attributes.azimuth as number) ?? 180;
+        this._applySunLight(elevation, azimuth);
+      }
+    }
+
+    if (cfg?.weather_entity) {
+      const weatherState = this._hass.states[cfg.weather_entity];
+      if (weatherState) this._applyWeather(weatherState.state);
+    }
+  }
+
+  private _applySunLight(elevation: number, azimuth: number) {
+    if (!this._hemiLight || !this._sunLight || !this.scene) return;
+
+    // t = 0 at night, 1 at full day
+    const t = Math.max(0, Math.min(1, (elevation + 10) / 30));
+
+    this._hemiLight.intensity = THREE.MathUtils.lerp(0.08, 0.45, t);
+    this._hemiLight.color.setHex(t > 0.5 ? 0xfff4e0 : 0x2244aa);
+    this._hemiLight.groundColor.setHex(t > 0.5 ? 0x1a1a2e : 0x050a14);
+
+    this._sunLight.intensity = Math.max(0, elevation / 60) * 0.8;
+    const azRad = ((azimuth - 180) * Math.PI) / 180;
+    const elRad = (elevation * Math.PI) / 180;
+    this._sunLight.position.set(
+      Math.sin(azRad) * Math.cos(elRad) * 10,
+      Math.sin(elRad) * 10,
+      Math.cos(azRad) * Math.cos(elRad) * 10,
+    );
+
+    // Tint background + fog for day/night
+    const bgColor = new THREE.Color().lerpColors(
+      new THREE.Color(0x050a14),
+      new THREE.Color(0x0d1117),
+      t,
+    );
+    this.scene.background = bgColor;
+    if (this.scene.fog) this.scene.fog.color.copy(bgColor);
+
+    this._requestRender();
+  }
+
+  private _applyWeather(weatherState: string) {
+    const rainy = ['rainy', 'pouring', 'lightning', 'lightning-rainy'].includes(weatherState);
+    const snowy = ['snowy', 'snowy-rainy'].includes(weatherState);
+    const wanted: 'rain' | 'snow' | 'none' = rainy ? 'rain' : snowy ? 'snow' : 'none';
+
+    if (wanted === this._weatherType) return;
+    this._weatherType = wanted;
+    this._removeWeatherParticles();
+
+    // Fog tint + ambient dimming for overcast feel
+    if (this.scene) {
+      if (wanted === 'rain') {
+        this.scene.fog?.color.setHex(0x0a1020);
+        if (this._hemiLight) this._hemiLight.intensity *= 0.6;
+      } else if (wanted === 'snow') {
+        this.scene.fog?.color.setHex(0x1a2030);
+        if (this._hemiLight) this._hemiLight.intensity *= 0.8;
+      }
+    }
+
+    if (wanted !== 'none') this._createWeatherParticles(wanted);
+    this._requestRender();
+  }
+
+  private _addGround(originalBox: THREE.Box3) {
+    if (!this.scene) return;
+    const size = originalBox.getSize(new THREE.Vector3());
+    const spread = Math.max(size.x, size.z) * 6;
+    const groundY = -size.y / 2 - 0.01;
+    const geo = new THREE.PlaneGeometry(spread, spread);
+    const mat = new THREE.MeshStandardMaterial({ color: 0x111418, roughness: 0.95, metalness: 0.05 });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.y = groundY;
+    mesh.receiveShadow = true;
+    this.scene.add(mesh);
+  }
+
+  // ── Weather particles ─────────────────────────────────────────────────
+
+  private _createWeatherParticles(type: 'rain' | 'snow') {
+    if (!this.scene) return;
+
+    const box = this._modelBox;
+    const size = box.getSize(new THREE.Vector3());
+    const cx = (box.min.x + box.max.x) / 2;
+    const cz = (box.min.z + box.max.z) / 2;
+    const spreadX = Math.max(size.x * 2, 12);
+    const spreadZ = Math.max(size.z * 2, 12);
+    const yTop = box.max.y + 5;
+    const yBot = box.min.y - 0.5;
+    const meta = { type, spreadX, spreadZ, cx, cz, yTop, yBot };
+
+    if (type === 'rain') {
+      // Rain: LineSegments — each drop is a short angled streak
+      const COUNT = 700;
+      const pos = new Float32Array(COUNT * 6); // 2 pts × 3 coords per segment
+      for (let i = 0; i < COUNT; i++) {
+        const x = cx + (Math.random() - 0.5) * spreadX;
+        const y = yBot + Math.random() * (yTop - yBot);
+        const z = cz + (Math.random() - 0.5) * spreadZ;
+        const len = 0.25 + Math.random() * 0.2;
+        const wx = -0.06; // slight wind angle
+        pos[i * 6 + 0] = x;       pos[i * 6 + 1] = y;        pos[i * 6 + 2] = z;
+        pos[i * 6 + 3] = x + wx;  pos[i * 6 + 4] = y - len;  pos[i * 6 + 5] = z;
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      const mat = new THREE.LineBasicMaterial({ color: 0xaac8e8, transparent: true, opacity: 0.45 });
+      const mesh = new THREE.LineSegments(geo, mat);
+      mesh.userData = meta;
+      this._weatherParticles = mesh;
+      this.scene.add(mesh);
+
+    } else {
+      // Snow: Points — varied sizes, slow drift
+      const COUNT = 350;
+      const pos = new Float32Array(COUNT * 3);
+      for (let i = 0; i < COUNT; i++) {
+        pos[i * 3 + 0] = cx + (Math.random() - 0.5) * spreadX;
+        pos[i * 3 + 1] = yBot + Math.random() * (yTop - yBot);
+        pos[i * 3 + 2] = cz + (Math.random() - 0.5) * spreadZ;
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      const mat = new THREE.PointsMaterial({
+        color: 0xddeeff,
+        size: 0.12,
+        transparent: true,
+        opacity: 0.82,
+        depthWrite: false,
+        sizeAttenuation: true,
+      });
+      const mesh = new THREE.Points(geo, mat);
+      mesh.userData = meta;
+      this._weatherParticles = mesh;
+      this.scene.add(mesh);
+    }
+  }
+
+  private _stepParticles(dt: number) {
+    const obj = this._weatherParticles;
+    if (!obj) return;
+    const { type, spreadX, spreadZ, cx, cz, yTop, yBot } = obj.userData as {
+      type: string; spreadX: number; spreadZ: number;
+      cx: number; cz: number; yTop: number; yBot: number;
+    };
+
+    // Both LineSegments and Points have a geometry attribute
+    const geo = (obj as THREE.LineSegments | THREE.Points).geometry;
+    const pos = geo.getAttribute('position') as THREE.BufferAttribute;
+    const arr = pos.array as Float32Array;
+
+    if (type === 'rain') {
+      // Move pairs of vertices (top + bottom of each streak)
+      const speed = 5.5;
+      const wx = -0.06 * speed * dt;
+      for (let i = 0; i < arr.length; i += 6) {
+        arr[i + 1] -= speed * dt;
+        arr[i + 4] -= speed * dt;
+        arr[i + 0] += wx; arr[i + 3] += wx;
+        if (arr[i + 4] < yBot) {
+          const x = cx + (Math.random() - 0.5) * spreadX;
+          const z = cz + (Math.random() - 0.5) * spreadZ;
+          const len = 0.25 + Math.random() * 0.2;
+          arr[i + 0] = x;        arr[i + 1] = yTop;       arr[i + 2] = z;
+          arr[i + 3] = x - 0.06; arr[i + 4] = yTop - len; arr[i + 5] = z;
+        }
+      }
+    } else {
+      // Snow: slow fall + gentle horizontal drift
+      const speed = 0.5 + Math.random() * 0.1;
+      const driftAmp = 0.15;
+      for (let i = 0; i < arr.length; i += 3) {
+        arr[i + 1] -= speed * dt;
+        arr[i + 0] += (Math.random() - 0.5) * driftAmp * dt;
+        arr[i + 2] += (Math.random() - 0.5) * driftAmp * dt;
+        if (arr[i + 1] < yBot) {
+          arr[i + 0] = cx + (Math.random() - 0.5) * spreadX;
+          arr[i + 1] = yTop;
+          arr[i + 2] = cz + (Math.random() - 0.5) * spreadZ;
+        }
+      }
+    }
+    pos.needsUpdate = true;
+  }
+
+  private _removeWeatherParticles() {
+    if (!this._weatherParticles) return;
+    this.scene?.remove(this._weatherParticles);
+    const obj = this._weatherParticles as THREE.LineSegments | THREE.Points;
+    obj.geometry.dispose();
+    (obj.material as THREE.Material).dispose();
+    this._weatherParticles = null;
+
+    // Reset fog and ambient
+    if (this.scene?.fog) this.scene.fog.color.setHex(0x0d1117);
+    if (this._hemiLight) this._hemiLight.intensity = 0.45;
   }
 
   // ── Resize ────────────────────────────────────────────────────────────
@@ -302,6 +597,7 @@ class Ha3dFloorplan extends HTMLElement {
     this.ro?.disconnect();
     this.controls?.dispose();
     this.renderer?.dispose();
+    this._removeWeatherParticles();
     this.overlays.forEach((o) => o.destroy());
     this.overlays.clear();
     this.anchors.clear();

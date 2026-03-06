@@ -27,18 +27,24 @@ export function detectAnchors(
     const entityId = anchorMap[node.name];
     if (!entityId) return;
 
+    const domain = entityId.split('.')[0];
     const worldPos = new THREE.Vector3();
     node.getWorldPosition(worldPos);
 
-    const light = new THREE.PointLight(0xffffff, 0, lightDist, lightDecay);
-    light.position.copy(worldPos);
-    light.visible = false;
-    scene.add(light);
+    // Only create a PointLight for light entities
+    let light: THREE.PointLight | null = null;
+    if (domain === 'light') {
+      light = new THREE.PointLight(0xffffff, 0, lightDist, lightDecay);
+      light.position.copy(worldPos);
+      light.visible = false;
+      scene.add(light);
+    }
 
     anchors.set(node.name, {
       light,
       worldPos,
       entityId,
+      domain,
       targetIntensity: 0,
       targetColor: new THREE.Color(0xffffff),
     });
