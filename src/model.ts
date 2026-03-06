@@ -14,9 +14,8 @@ export function detectAnchors(
   root: THREE.Object3D,
   scene: THREE.Scene,
   config: CardConfig,
-): { anchors: Map<string, AnchorEntry>; clickTargets: THREE.Mesh[] } {
+): Map<string, AnchorEntry> {
   const anchors = new Map<string, AnchorEntry>();
-  const clickTargets: THREE.Mesh[] = [];
 
   const anchorMap = config.anchors ?? {};
   const lightDist = config.lights?.distance ?? 8;
@@ -28,34 +27,22 @@ export function detectAnchors(
     const entityId = anchorMap[node.name];
     if (!entityId) return;
 
-    const pos = new THREE.Vector3();
-    node.getWorldPosition(pos);
+    const worldPos = new THREE.Vector3();
+    node.getWorldPosition(worldPos);
 
     const light = new THREE.PointLight(0xffffff, 0, lightDist, lightDecay);
-    light.position.copy(pos);
+    light.position.copy(worldPos);
     light.visible = false;
     scene.add(light);
 
-    const helperGeo = new THREE.SphereGeometry(0.08, 8, 8);
-    const helperMat = new THREE.MeshBasicMaterial({
-      color: 0xffdd00,
-      visible: !!config.show_debug_anchors,
-    });
-    const helper = new THREE.Mesh(helperGeo, helperMat);
-    helper.position.copy(pos);
-    helper.userData.anchorName = node.name;
-    helper.userData.entityId = entityId;
-    scene.add(helper);
-    clickTargets.push(helper);
-
     anchors.set(node.name, {
       light,
-      helper,
+      worldPos,
       entityId,
       targetIntensity: 0,
       targetColor: new THREE.Color(0xffffff),
     });
   });
 
-  return { anchors, clickTargets };
+  return anchors;
 }

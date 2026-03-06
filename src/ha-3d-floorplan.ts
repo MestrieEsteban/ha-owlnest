@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { Hass, CardConfig, AnchorEntry, SavedView } from './types';
 import { syncLights, stepTransitions } from './lights';
 import { loadGLTF, detectAnchors } from './model';
+import { AnchorOverlay } from './overlay';
 
 class Ha3dFloorplan extends HTMLElement {
   private _config: CardConfig | null = null;
@@ -13,13 +14,11 @@ class Ha3dFloorplan extends HTMLElement {
   private camera: THREE.PerspectiveCamera | null = null;
   private controls: OrbitControls | null = null;
   private canvas: HTMLCanvasElement | null = null;
-  private tooltip: HTMLDivElement | null = null;
   private lockBtn: HTMLButtonElement | null = null;
+  private overlayContainer: HTMLDivElement | null = null;
 
   private anchors = new Map<string, AnchorEntry>();
-  private clickTargets: THREE.Mesh[] = [];
-  private raycaster = new THREE.Raycaster();
-  private pointer = new THREE.Vector2();
+  private overlays = new Map<string, AnchorOverlay>();
 
   private rafId = 0;
   private ro: ResizeObserver | null = null;
@@ -66,6 +65,7 @@ class Ha3dFloorplan extends HTMLElement {
     this._hass = hass;
     if (this.modelLoaded) {
       syncLights(this.anchors, hass, this._config);
+      this._updateOverlayStates();
       this._requestRender();
     }
   }
@@ -88,12 +88,11 @@ class Ha3dFloorplan extends HTMLElement {
     this.canvas.style.cssText = 'display:block;width:100%;height:100%;';
     card.appendChild(this.canvas);
 
-    this.tooltip = document.createElement('div');
-    this.tooltip.style.cssText =
-      'position:absolute;background:rgba(0,0,0,.75);color:#fff;' +
-      'padding:4px 10px;border-radius:6px;font-size:12px;' +
-      'pointer-events:none;display:none;white-space:nowrap;';
-    card.appendChild(this.tooltip);
+    // Overlay container — pointer-events:none so canvas gets drag events
+    this.overlayContainer = document.createElement('div');
+    this.overlayContainer.style.cssText =
+      'position:absolute;inset:0;pointer-events:none;overflow:hidden;';
+    card.appendChild(this.overlayContainer);
 
     this.lockBtn = this._makeLockBtn();
     card.appendChild(this.lockBtn);
@@ -102,12 +101,6 @@ class Ha3dFloorplan extends HTMLElement {
 
     this.ro = new ResizeObserver(() => this._onResize());
     this.ro.observe(card);
-
-    this.canvas.addEventListener('click', this._onClick);
-    this.canvas.addEventListener('mousemove', this._onMouseMove);
-    this.canvas.addEventListener('mouseleave', () => {
-      this.tooltip!.style.display = 'none';
-    });
 
     this._loadModel();
   }
@@ -141,7 +134,7 @@ class Ha3dFloorplan extends HTMLElement {
     container.style.height = `${h}px`;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x111827);
+    this.scene.background = new THREE.Color(0x0d1117);
 
     this.camera = new THREE.PerspectiveCamera(45, w / h, 0.01, 500);
     this.camera.position.set(0, 5, 12);
@@ -150,6 +143,8 @@ class Ha3dFloorplan extends HTMLElement {
     this.renderer.setSize(w, h, false);
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 0.9;
 
     this.controls = new OrbitControls(this.camera, this.canvas!);
     this.controls.enableDamping = true;
@@ -166,8 +161,9 @@ class Ha3dFloorplan extends HTMLElement {
     this.controls.addEventListener('change', () => this._requestRender());
     this.controls.addEventListener('end', () => this._saveView());
 
-    const ambient = new THREE.AmbientLight(0xffffff, 0.25);
-    this.scene.add(ambient);
+    // Hemisphere light: warm sky, cool ground — much nicer than plain ambient
+    const hemi = new THREE.HemisphereLight(0xfff4e0, 0x1a1a2e, 0.45);
+    this.scene.add(hemi);
 
     this._lastTime = performance.now();
     this._loop();
@@ -187,6 +183,15 @@ class Ha3dFloorplan extends HTMLElement {
 
     const transitioning = stepTransitions(this.anchors, dt, this._config);
     if (transitioning) this._dirty = true;
+
+    // Always sync overlay positions with camera (cheap CSS update)
+    if ((moved || this._dirty) && this.camera && this.canvas) {
+      const w = this.canvas.offsetWidth;
+      const h = this.canvas.offsetHeight;
+      this.anchors.forEach((entry, name) => {
+        this.overlays.get(name)?.updatePosition(entry.worldPos, this.camera!, w, h);
+      });
+    }
 
     if (!this._dirty) return;
     this._dirty = false;
@@ -227,49 +232,54 @@ class Ha3dFloorplan extends HTMLElement {
     this.controls!.update();
     this.scene.add(model);
 
-    const { anchors, clickTargets } = detectAnchors(model, this.scene, this._config);
-    this.anchors = anchors;
-    this.clickTargets = clickTargets;
+    this.anchors = detectAnchors(model, this.scene, this._config);
+    this._createOverlays();
 
     this.modelLoaded = true;
-    if (this._hass) syncLights(this.anchors, this._hass, this._config);
+    if (this._hass) {
+      syncLights(this.anchors, this._hass, this._config);
+      this._updateOverlayStates();
+    }
     this._requestRender();
   }
 
-  // ── Interaction ───────────────────────────────────────────────────────
+  // ── Overlays ──────────────────────────────────────────────────────────
 
-  private _hit(e: MouseEvent): THREE.Intersection | null {
-    const rect = this.canvas!.getBoundingClientRect();
-    this.pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-    this.pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-    this.raycaster.setFromCamera(this.pointer, this.camera!);
-    const hits = this.raycaster.intersectObjects(this.clickTargets, false);
-    return hits[0] ?? null;
+  private _createOverlays() {
+    this.overlays.forEach((o) => o.destroy());
+    this.overlays.clear();
+
+    this.anchors.forEach((entry, name) => {
+      const label = name.replace('ha_anchor_', '');
+      const overlay = new AnchorOverlay(
+        this.overlayContainer!,
+        label,
+        () => this._hass?.callService('light', 'toggle', { entity_id: entry.entityId }),
+        () => this._openMoreInfo(entry.entityId),
+      );
+      this.overlays.set(name, overlay);
+    });
   }
 
-  private _onClick = (e: MouseEvent) => {
-    const hit = this._hit(e);
-    if (!hit) return;
-    const entityId = hit.object.userData.entityId as string;
-    this._hass?.callService('light', 'toggle', { entity_id: entityId });
-  };
+  private _updateOverlayStates() {
+    this.anchors.forEach((entry, name) => {
+      const overlay = this.overlays.get(name);
+      if (!overlay) return;
+      const on = entry.targetIntensity > 0;
+      const stateObj = this._hass?.states[entry.entityId];
+      const stateName = stateObj?.state ?? '—';
+      const label = `${name.replace('ha_anchor_', '')} • ${stateName}`;
+      overlay.updateState(on, entry.targetColor, label);
+    });
+  }
 
-  private _onMouseMove = (e: MouseEvent) => {
-    const hit = this._hit(e);
-    if (!hit) { this.tooltip!.style.display = 'none'; return; }
-
-    const entityId = hit.object.userData.entityId as string;
-    const anchorName = hit.object.userData.anchorName as string;
-    const state = this._hass?.states[entityId];
-    const label = state ? `${anchorName}  •  ${state.state}` : anchorName;
-
-    this.tooltip!.textContent = label;
-    this.tooltip!.style.display = 'block';
-
-    const rect = this.getBoundingClientRect();
-    this.tooltip!.style.left = `${e.clientX - rect.left + 12}px`;
-    this.tooltip!.style.top = `${e.clientY - rect.top - 28}px`;
-  };
+  private _openMoreInfo(entityId: string) {
+    this.dispatchEvent(new CustomEvent('hass-more-info', {
+      bubbles: true,
+      composed: true,
+      detail: { entityId },
+    }));
+  }
 
   // ── Resize ────────────────────────────────────────────────────────────
 
@@ -292,8 +302,9 @@ class Ha3dFloorplan extends HTMLElement {
     this.ro?.disconnect();
     this.controls?.dispose();
     this.renderer?.dispose();
+    this.overlays.forEach((o) => o.destroy());
+    this.overlays.clear();
     this.anchors.clear();
-    this.clickTargets = [];
     this.modelLoaded = false;
   }
 

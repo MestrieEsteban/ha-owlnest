@@ -30,7 +30,7 @@ export interface CardConfig {
 
 export interface AnchorEntry {
   light: THREE.PointLight;
-  helper?: THREE.Mesh;
+  worldPos: THREE.Vector3;
   entityId: string;
   targetIntensity: number;
   targetColor: THREE.Color;
