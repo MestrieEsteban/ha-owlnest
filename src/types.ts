@@ -57,6 +57,8 @@ export interface CardConfig {
   camera_views?: CameraView[];
   /** If true, overlays start hidden; single tap shows/hides them */
   tap_to_toggle?: boolean;
+  /** If set, anchors within this pixel distance on screen are grouped into a radial menu. Disabled by default. */
+  cluster_threshold?: number;
 }
 
 export interface AnchorEntry {

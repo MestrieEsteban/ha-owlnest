@@ -3,7 +3,8 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { Hass, CardConfig, AnchorEntry, SavedView, EditableAnchor } from './types';
 import { syncLights, stepTransitions } from './lights';
 import { loadGLTF, detectAnchors, buildAnchorsFromEditable } from './model';
-import { AnchorOverlay, SensorOverlay } from './overlay';
+import { AnchorOverlay, SensorOverlay, ClusterOverlay } from './overlay';
+import type { ClusterItem } from './overlay';
 import { AnchorEditor } from './editor';
 
 type AnyOverlay = AnchorOverlay | SensorOverlay;
@@ -26,6 +27,7 @@ class Ha3dFloorplan extends HTMLElement {
 
   private anchors = new Map<string, AnchorEntry>();
   private overlays = new Map<string, AnyOverlay>();
+  private _clusters = new Map<string, ClusterOverlay>();
 
   private rafId = 0;
   private ro: ResizeObserver | null = null;
@@ -328,6 +330,9 @@ class Ha3dFloorplan extends HTMLElement {
     this.overlays.forEach((o) => {
       o.el.style.display = this._overlaysVisible ? '' : 'none';
     });
+    this._clusters.forEach((c) => {
+      if (!this._overlaysVisible) c.hide();
+    });
   }
 
   private _toggleLock(force?: boolean) {
@@ -352,6 +357,7 @@ class Ha3dFloorplan extends HTMLElement {
     this._showControls();
 
     this.overlays.forEach((o) => { o.el.style.display = 'none'; });
+    this._clusters.forEach((c) => c.hide());
 
     const editable = new Map<string, EditableAnchor>();
     this.anchors.forEach((entry, key) => {
@@ -617,10 +623,7 @@ class Ha3dFloorplan extends HTMLElement {
     if ((moved || this._dirty) && this.camera && this.canvas) {
       const w = this.canvas.offsetWidth;
       const h = this.canvas.offsetHeight;
-      this.anchors.forEach((entry, name) => {
-        this.overlays.get(name)?.updatePosition(entry.worldPos, this.camera!, w, h);
-      });
-
+      this._updateOverlayPositions(w, h);
     }
 
     if (!this._dirty) return;
@@ -747,9 +750,107 @@ class Ha3dFloorplan extends HTMLElement {
     };
   }
 
+  // ── Overlay positioning + clustering ──────────────────────────────────
+
+  private _updateOverlayPositions(w: number, h: number) {
+    // 1. Compute 2D screen positions
+    const pos2d = new Map<string, { x: number; y: number }>();
+    const behind = new Set<string>();
+
+    this.anchors.forEach((entry, name) => {
+      const p = entry.worldPos.clone().project(this.camera!);
+      if (p.z >= 1) { behind.add(name); return; }
+      pos2d.set(name, {
+        x: ((p.x + 1) / 2) * w,
+        y: ((-p.y + 1) / 2) * h,
+      });
+    });
+
+    // 2. Cluster visible anchors (opt-in via cluster_threshold)
+    const threshold = this._config?.cluster_threshold ?? 0;
+    const groups = threshold > 0
+      ? this._computeClusters([...pos2d.entries()], threshold)
+      : [...pos2d.keys()].map(k => [k]);
+    const inCluster = new Set<string>();
+    const activeIds = new Set<string>();
+
+    groups.filter(g => g.length > 1).forEach(group => {
+      const id = [...group].sort().join('|');
+      activeIds.add(id);
+      group.forEach(k => inCluster.add(k));
+
+      const cx = group.reduce((s, k) => s + pos2d.get(k)!.x, 0) / group.length;
+      const cy = group.reduce((s, k) => s + pos2d.get(k)!.y, 0) / group.length;
+
+      let clusterOv = this._clusters.get(id);
+      if (!clusterOv) {
+        clusterOv = new ClusterOverlay(this.overlayContainer!);
+        this._clusters.set(id, clusterOv);
+      }
+
+      const items: ClusterItem[] = group.map(k => {
+        const entry = this.anchors.get(k)!;
+        return {
+          domain: entry.domain,
+          label: entry.label,
+          on: entry.targetIntensity > 0,
+          color: entry.targetColor.clone(),
+          onShortClick: this._getShortClickHandler(entry),
+          onLongPress: () => this._openMoreInfo(entry.entityId),
+        };
+      });
+
+      clusterOv.update(items);
+      clusterOv.updatePosition(cx, cy);
+      clusterOv.show();
+    });
+
+    // Remove stale clusters
+    this._clusters.forEach((clusterOv, id) => {
+      if (!activeIds.has(id)) { clusterOv.destroy(); this._clusters.delete(id); }
+    });
+
+    // 3. Show/hide individual overlays
+    this.anchors.forEach((entry, name) => {
+      const ov = this.overlays.get(name);
+      if (!ov) return;
+      if (behind.has(name) || inCluster.has(name)) {
+        ov.el.style.display = 'none';
+        return;
+      }
+      const p = pos2d.get(name)!;
+      ov.el.style.display = ov instanceof SensorOverlay ? 'block' : 'flex';
+      ov.el.style.left = `${p.x}px`;
+      ov.el.style.top = `${p.y}px`;
+    });
+  }
+
+  private _computeClusters(items: [string, { x: number; y: number }][], threshold: number): string[][] {
+    const groups: string[][] = [];
+    const assigned = new Set<string>();
+
+    items.forEach(([key, pos]) => {
+      if (assigned.has(key)) return;
+      const group = [key];
+      assigned.add(key);
+      items.forEach(([k2, pos2]) => {
+        if (k2 === key || assigned.has(k2)) return;
+        if (Math.hypot(pos.x - pos2.x, pos.y - pos2.y) < threshold) {
+          group.push(k2);
+          assigned.add(k2);
+        }
+      });
+      groups.push(group);
+    });
+
+    return groups;
+  }
+
   // ── Overlays ──────────────────────────────────────────────────────────
 
   private _createOverlays() {
+    this._clusters.forEach(c => c.destroy());
+    this._clusters.clear();
     this.overlays.forEach((o) => o.destroy());
     this.overlays.clear();
 
@@ -1052,6 +1153,8 @@ class Ha3dFloorplan extends HTMLElement {
     this.controls?.dispose();
     this.renderer?.dispose();
     this._removeWeatherParticles();
+    this._clusters.forEach((c) => c.destroy());
+    this._clusters.clear();
     this.overlays.forEach((o) => o.destroy());
     this.overlays.clear();
     this.anchors.forEach((e) => { e.light?.dispose(); });
