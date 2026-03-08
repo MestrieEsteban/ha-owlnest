@@ -1,7 +1,20 @@
 import * as THREE from 'three';
 import type { EditableAnchor } from './types';
 
+function copyToClipboard(text: string): void {
+  if (navigator.clipboard?.writeText) { navigator.clipboard.writeText(text); return; }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+  document.body.appendChild(ta);
+  ta.focus(); ta.select();
+  document.execCommand('copy');
+  ta.remove();
+}
+
 export type EditorTool = 'select' | 'add' | 'delete';
+
+type AnchorSnap = { key: string; entity: string; label: string; pos: [number, number, number] }[];
 
 const AXIS_COLORS = { x: 0xFF3333, y: 0x33DD33, z: 0x3388FF };
 const AXIS_DIRS: Record<string, THREE.Vector3> = {
@@ -26,6 +39,9 @@ export class AnchorEditor {
   private _markers = new Map<string, THREE.Mesh>();
   private _pendingPos: THREE.Vector3 | null = null;
   private _popup: HTMLDivElement | null = null;
+  private _hoveredKey: string | null = null;
+  private _undoStack: AnchorSnap[] = [];
+  private _redoStack: AnchorSnap[] = [];
 
   private _scene: THREE.Scene;
   private _camera: THREE.PerspectiveCamera;
@@ -56,6 +72,8 @@ export class AnchorEditor {
   activate(editable: Map<string, EditableAnchor>) {
     this._active = true;
     this._tool = 'select';
+    this._undoStack = [];
+    this._redoStack = [];
     this._anchors = new Map(
       [...editable.entries()].map(([k, v]) => [k, { ...v, position: v.position.clone() }]),
     );
@@ -63,6 +81,7 @@ export class AnchorEditor {
     this._canvas.addEventListener('pointerdown', this._onPointerDown, true);
     this._canvas.addEventListener('pointermove', this._onPointerMove, true);
     this._canvas.addEventListener('pointerup', this._onPointerUp, true);
+    window.addEventListener('keydown', this._onKeyDown, true);
   }
 
   deactivate() {
@@ -70,6 +89,7 @@ export class AnchorEditor {
     this._canvas.removeEventListener('pointerdown', this._onPointerDown, true);
     this._canvas.removeEventListener('pointermove', this._onPointerMove, true);
     this._canvas.removeEventListener('pointerup', this._onPointerUp, true);
+    window.removeEventListener('keydown', this._onKeyDown, true);
     this._clearGizmo();
     this._markers.forEach((m) => {
       this._scene.remove(m);
@@ -79,8 +99,10 @@ export class AnchorEditor {
     this._markers.clear();
     this._closePopup();
     this._selectedKey = null;
+    this._hoveredKey = null;
     this._pendingPos = null;
     this._dragAxis = null;
+    this._canvas.style.cursor = '';
   }
 
   setTool(tool: EditorTool) {
@@ -114,7 +136,7 @@ export class AnchorEditor {
     `);
     const copyBtn = popup.querySelector('[data-action="copy"]') as HTMLButtonElement;
     copyBtn.addEventListener('click', () => {
-      navigator.clipboard.writeText(yaml).catch(() => {});
+      copyToClipboard(yaml);
       copyBtn.textContent = 'Copié !';
     });
     popup.querySelector('[data-action="close"]')!.addEventListener('click', () => this._closePopup());
@@ -133,6 +155,53 @@ export class AnchorEditor {
     return lines.join('\n');
   }
 
+  // ── Undo / Redo ─────────────────────────────────────────────────────────
+
+  private _snap(): AnchorSnap {
+    return [...this._anchors.entries()].map(([key, a]) => ({
+      key, entity: a.entity, label: a.label,
+      pos: [+a.position.x.toFixed(4), +a.position.y.toFixed(4), +a.position.z.toFixed(4)],
+    }));
+  }
+
+  private _pushUndo() {
+    this._undoStack.push(this._snap());
+    this._redoStack = [];
+  }
+
+  private _restore(snap: AnchorSnap) {
+    // Remove all current markers
+    this._clearGizmo();
+    this._selectedKey = null;
+    this._markers.forEach((m) => {
+      this._scene.remove(m);
+      m.geometry.dispose();
+      (m.material as THREE.Material).dispose();
+    });
+    this._markers.clear();
+    this._anchors.clear();
+
+    // Rebuild from snapshot
+    for (const s of snap) {
+      const pos = new THREE.Vector3(...s.pos);
+      this._anchors.set(s.key, { entity: s.entity, label: s.label, position: pos });
+      this._addMarker(s.key, pos);
+    }
+    this.onChanged?.();
+  }
+
+  undo() {
+    if (!this._undoStack.length) return;
+    this._redoStack.push(this._snap());
+    this._restore(this._undoStack.pop()!);
+  }
+
+  redo() {
+    if (!this._redoStack.length) return;
+    this._undoStack.push(this._snap());
+    this._restore(this._redoStack.pop()!);
+  }
+
   // ── Markers ─────────────────────────────────────────────────────────────
 
   private _addMarker(key: string, pos: THREE.Vector3) {
@@ -147,6 +216,7 @@ export class AnchorEditor {
   }
 
   private _deleteAnchor(key: string) {
+    this._pushUndo();
     this._anchors.delete(key);
     const m = this._markers.get(key);
     if (m) {
@@ -242,6 +312,7 @@ export class AnchorEditor {
   }
 
   private _startDrag(e: PointerEvent, axis: string) {
+    this._pushUndo(); // snapshot before drag
     this._dragAxis = axis;
     this._canvas.setPointerCapture(e.pointerId);
     const pos = this._gizmoGroup!.position.clone();
@@ -279,6 +350,7 @@ export class AnchorEditor {
         position: this._pendingPos.clone(),
         label: label || entity.split('.')[1] || entity,
       };
+      this._pushUndo();
       this._anchors.set(key, anchor);
       this._addMarker(key, anchor.position);
       this.setTool('select');
@@ -359,6 +431,27 @@ export class AnchorEditor {
 
   // ── Event handlers ──────────────────────────────────────────────────────
 
+  private _onKeyDown = (e: KeyboardEvent) => {
+    if (!this._active || this._popup) return;
+    const ctrl = e.ctrlKey || e.metaKey;
+    if (ctrl && e.key === 'z') { e.preventDefault(); e.stopImmediatePropagation(); this.undo(); return; }
+    if (ctrl && (e.key === 'y' || (e.shiftKey && e.key === 'z'))) { e.preventDefault(); e.stopImmediatePropagation(); this.redo(); return; }
+    if (ctrl) return; // ignore other ctrl combos
+    switch (e.key) {
+      case 'Delete': case 'Backspace':
+        if (this._selectedKey) { e.preventDefault(); this._deleteAnchor(this._selectedKey); }
+        break;
+      case 'Escape':
+        e.preventDefault();
+        if (this._selectedKey) { this._clearGizmo(); this._selectedKey = null; }
+        else this.setTool('select');
+        break;
+      case 's': case 'S': this.setTool('select'); this.onToolChange?.('select'); break;
+      case 'a': case 'A': this.setTool('add');    this.onToolChange?.('add');    break;
+      case 'd': case 'D': this.setTool('delete'); this.onToolChange?.('delete'); break;
+    }
+  };
+
   private _onPointerDown = (e: PointerEvent) => {
     if (!this._active || e.button !== 0) return;
     if (this._popup) {
@@ -411,7 +504,27 @@ export class AnchorEditor {
   };
 
   private _onPointerMove = (e: PointerEvent) => {
-    if (!this._active || !this._dragAxis || !this._gizmoGroup) return;
+    if (!this._active) return;
+
+    // Hover highlight (only when not dragging)
+    if (!this._dragAxis) {
+      const ndc = this._ndc(e);
+      this._raycaster.setFromCamera(ndc, this._camera);
+      const hits = this._raycaster.intersectObjects([...this._markers.values()], false);
+      const newHover = hits.length > 0 ? (hits[0].object.userData.anchorKey as string) : null;
+      if (newHover !== this._hoveredKey) {
+        if (this._hoveredKey && this._hoveredKey !== this._selectedKey) {
+          (this._markers.get(this._hoveredKey)?.material as THREE.MeshBasicMaterial)?.color.setHex(0xFFDD00);
+        }
+        if (newHover && newHover !== this._selectedKey) {
+          (this._markers.get(newHover)?.material as THREE.MeshBasicMaterial)?.color.setHex(0xFFFFAA);
+        }
+        this._hoveredKey = newHover;
+        this._canvas.style.cursor = newHover ? 'pointer' : '';
+      }
+    }
+
+    if (!this._dragAxis || !this._gizmoGroup) return;
     e.stopImmediatePropagation();
     const ndc = this._ndc(e);
     this._raycaster.setFromCamera(ndc, this._camera);

@@ -1,5 +1,18 @@
 import * as THREE from 'three';
+
+function copyToClipboard(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+  document.body.appendChild(ta);
+  ta.focus(); ta.select();
+  document.execCommand('copy');
+  ta.remove();
+  return Promise.resolve();
+}
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import type { Hass, CardConfig, AnchorEntry, SavedView, EditableAnchor } from './types';
 import { syncLights, stepTransitions } from './lights';
 import { loadGLTF, detectAnchors, buildAnchorsFromEditable } from './model';
@@ -52,11 +65,19 @@ class Ha3dFloorplan extends HTMLElement {
   // Environment lights
   private _hemiLight: THREE.HemisphereLight | null = null;
   private _sunLight: THREE.DirectionalLight | null = null;
+  private _sky: Sky | null = null;
 
   // Weather
   private _weatherParticles: THREE.Object3D | null = null;
   private _weatherType: 'none' | 'rain' | 'snow' = 'none';
   private _modelBox = new THREE.Box3();
+
+  // Day simulation
+  private _simBtn: HTMLButtonElement | null = null;
+  private _simPanel: HTMLDivElement | null = null;
+  private _simActive = false;
+  private _simHour = 12;
+  private _simWeather: 'clear' | 'cloudy' | 'rain' | 'snow' = 'clear';
 
   // Anchor editor
   private _editor: AnchorEditor | null = null;
@@ -149,7 +170,9 @@ class Ha3dFloorplan extends HTMLElement {
     this.lockBtn = this._makeLockBtn();
     this.editBtn = this._makeEditBtn();
     this.captureBtn = this._makeCaptureBtn();
+    this._simBtn = this._makeSimBtn();
     this._controlsEl.appendChild(this.captureBtn);
+    this._controlsEl.appendChild(this._simBtn);
     this._controlsEl.appendChild(this.editBtn);
     this._controlsEl.appendChild(this.lockBtn);
 
@@ -209,18 +232,175 @@ class Ha3dFloorplan extends HTMLElement {
     return btn;
   }
 
+  private _makeSimBtn(): HTMLButtonElement {
+    const btn = document.createElement('button');
+    btn.style.cssText = this._ctrlBtnStyle();
+    btn.textContent = '☀️';
+    btn.title = 'Simuler la journée / météo';
+    btn.addEventListener('click', (e) => { e.stopPropagation(); this._toggleSimPanel(); });
+    return btn;
+  }
+
+  private _toggleSimPanel() {
+    if (this._simPanel) {
+      this._simPanel.remove();
+      this._simPanel = null;
+      this._simBtn!.style.background = 'rgba(0,0,0,.55)';
+      return;
+    }
+    this._simPanel = this._buildSimPanel();
+    this.overlayContainer?.appendChild(this._simPanel);
+    this._simBtn!.style.background = 'rgba(255,160,0,.55)';
+  }
+
+  private _buildSimPanel(): HTMLDivElement {
+    const panel = document.createElement('div');
+    panel.style.cssText = [
+      'position:absolute', 'bottom:12px', 'right:12px',
+      'background:#1a1f2e', 'border:1px solid rgba(255,255,255,0.15)',
+      'border-radius:12px', 'padding:14px 16px',
+      'z-index:100', 'width:240px',
+      'box-shadow:0 8px 32px rgba(0,0,0,0.7)',
+      'font-family:var(--primary-font-family,sans-serif)',
+      'color:#fff', 'pointer-events:auto',
+      'user-select:none',
+    ].join(';');
+
+    // Title
+    const title = document.createElement('div');
+    title.style.cssText = 'font-size:12px;font-weight:600;margin-bottom:12px;color:#aac8e8;display:flex;align-items:center;justify-content:space-between;';
+    title.innerHTML = '<span>☀️ Simulation journée</span>';
+
+    const activeToggle = document.createElement('label');
+    activeToggle.style.cssText = 'display:flex;align-items:center;gap:4px;font-size:11px;color:#aaa;cursor:pointer;';
+    const activeCheck = document.createElement('input');
+    activeCheck.type = 'checkbox';
+    activeCheck.checked = this._simActive;
+    activeCheck.style.cursor = 'pointer';
+    activeToggle.appendChild(activeCheck);
+    activeToggle.appendChild(document.createTextNode('Actif'));
+    title.appendChild(activeToggle);
+    panel.appendChild(title);
+
+    // Time slider
+    const timeRow = document.createElement('div');
+    timeRow.style.cssText = 'margin-bottom:12px;';
+    const timeLabel = document.createElement('div');
+    timeLabel.style.cssText = 'font-size:11px;color:#888;margin-bottom:4px;';
+    const timeValue = document.createElement('span');
+    timeValue.style.cssText = 'color:#fff;font-weight:600;';
+    const fmt = (h: number) => `${String(Math.floor(h)).padStart(2,'0')}:${String(Math.round((h % 1) * 60)).padStart(2,'0')}`;
+    timeValue.textContent = fmt(this._simHour);
+    timeLabel.appendChild(document.createTextNode('Heure : '));
+    timeLabel.appendChild(timeValue);
+    timeRow.appendChild(timeLabel);
+
+    const timeSlider = document.createElement('input');
+    timeSlider.type = 'range';
+    timeSlider.min = '0';
+    timeSlider.max = '24';
+    timeSlider.step = '0.25';
+    timeSlider.value = String(this._simHour);
+    timeSlider.style.cssText = 'width:100%;accent-color:#f59e0b;cursor:pointer;';
+    timeSlider.addEventListener('input', () => {
+      this._simHour = parseFloat(timeSlider.value);
+      timeValue.textContent = fmt(this._simHour);
+      if (this._simActive) this._applySimulation();
+    });
+    timeRow.appendChild(timeSlider);
+    panel.appendChild(timeRow);
+
+    // Weather presets
+    const weatherLabel = document.createElement('div');
+    weatherLabel.style.cssText = 'font-size:11px;color:#888;margin-bottom:6px;';
+    weatherLabel.textContent = 'Météo :';
+    panel.appendChild(weatherLabel);
+
+    const weatherRow = document.createElement('div');
+    weatherRow.style.cssText = 'display:flex;gap:6px;margin-bottom:10px;';
+    const presets: { emoji: string; label: string; value: typeof this._simWeather }[] = [
+      { emoji: '☀️', label: 'Soleil', value: 'clear' },
+      { emoji: '⛅', label: 'Nuageux', value: 'cloudy' },
+      { emoji: '🌧️', label: 'Pluie', value: 'rain' },
+      { emoji: '❄️', label: 'Neige', value: 'snow' },
+    ];
+    const weatherBtns: HTMLButtonElement[] = [];
+    const updateWeatherBtns = () => {
+      weatherBtns.forEach((b, i) => {
+        b.style.background = presets[i].value === this._simWeather
+          ? 'rgba(245,158,11,0.4)' : 'rgba(255,255,255,0.07)';
+      });
+    };
+    for (const p of presets) {
+      const wb = document.createElement('button');
+      wb.title = p.label;
+      wb.textContent = p.emoji;
+      wb.style.cssText = [
+        'flex:1', 'border:none', 'border-radius:6px',
+        'font-size:16px', 'padding:4px 0',
+        'cursor:pointer', 'color:#fff',
+        'background:rgba(255,255,255,0.07)',
+        'transition:background .15s',
+      ].join(';');
+      wb.addEventListener('click', () => {
+        this._simWeather = p.value;
+        updateWeatherBtns();
+        if (this._simActive) this._applySimulation();
+      });
+      weatherBtns.push(wb);
+      weatherRow.appendChild(wb);
+    }
+    updateWeatherBtns();
+    panel.appendChild(weatherRow);
+
+    // Active toggle logic
+    activeCheck.addEventListener('change', () => {
+      this._simActive = activeCheck.checked;
+      if (this._simActive) {
+        this._applySimulation();
+      } else {
+        // Revert to HA state
+        this._removeWeatherParticles();
+        this._weatherType = 'none';
+        this._updateFromHass();
+      }
+    });
+
+    return panel;
+  }
+
+  /** Compute sun elevation from hour of day (0-24) */
+  private _simTimeToElevation(hour: number): number {
+    // -60 at midnight, 0 at sunrise(6h)/sunset(18h), 60 at noon
+    return 60 * Math.sin(Math.PI * (hour - 6) / 12);
+  }
+
+  private _applySimulation() {
+    const elevation = this._simTimeToElevation(this._simHour);
+    const azimuth = 180; // south at noon, simplified
+    this._applySunLight(elevation, azimuth);
+
+    // Apply weather
+    this._removeWeatherParticles();
+    this._weatherType = 'none';
+    if (this._simWeather === 'cloudy') {
+      if (this._hemiLight) this._hemiLight.intensity *= 0.5;
+      if (this._sunLight) this._sunLight.intensity *= 0.2;
+      this.scene?.fog?.color.setHex(0x8899aa);
+    } else if (this._simWeather === 'rain') {
+      this._applyWeather('rainy');
+    } else if (this._simWeather === 'snow') {
+      this._applyWeather('snowy');
+    }
+    this._requestRender();
+  }
+
   private _showCapturePopup() {
     if (!this.camera || !this.controls) return;
-    const p = this.camera.position;
-    const t = this.controls.target;
+    const cam = this.camera.position;
+    const tgt = this.controls.target;
     const fmt = (v: number) => +v.toFixed(3);
-    const yaml = [
-      `- label: "Ma vue"`,
-      `  position: [${fmt(p.x)}, ${fmt(p.y)}, ${fmt(p.z)}]`,
-      `  target: [${fmt(t.x)}, ${fmt(t.y)}, ${fmt(t.z)}]`,
-    ].join('\n');
 
-    // Remove any existing capture popup
     this.overlayContainer?.querySelector('.capture-popup')?.remove();
 
     const popup = document.createElement('div');
@@ -228,59 +408,72 @@ class Ha3dFloorplan extends HTMLElement {
     popup.style.cssText = [
       'position:absolute', 'top:50%', 'left:50%',
       'transform:translate(-50%,-50%)',
-      'background:#1a1f2e',
-      'border:1px solid rgba(255,255,255,0.15)',
+      'background:#1a1f2e', 'border:1px solid rgba(255,255,255,0.15)',
       'border-radius:10px', 'padding:16px 20px',
-      'z-index:200', 'min-width:300px', 'width:360px',
+      'z-index:200', 'width:340px',
       'box-shadow:0 8px 32px rgba(0,0,0,0.7)',
       'font-family:var(--primary-font-family,sans-serif)',
       'color:#fff', 'pointer-events:auto',
     ].join(';');
 
+    // Title
     const title = document.createElement('div');
-    title.textContent = 'Vue capturée';
-    title.style.cssText = 'font-size:13px;font-weight:600;margin-bottom:12px;color:#aac8e8;';
+    title.textContent = '📷 Capturer la vue';
+    title.style.cssText = 'font-size:13px;font-weight:600;margin-bottom:14px;color:#aac8e8;';
+    popup.appendChild(title);
 
-    const hint = document.createElement('div');
-    hint.textContent = 'Ajoute ces lignes sous camera_views: dans ton YAML :';
-    hint.style.cssText = 'font-size:11px;color:rgba(255,255,255,0.5);margin-bottom:8px;';
-
-    const pre = document.createElement('textarea');
-    pre.value = yaml;
-    pre.readOnly = true;
-    pre.style.cssText = [
-      'width:100%', 'height:80px', 'box-sizing:border-box',
+    // Label input
+    const labelInput = document.createElement('input');
+    labelInput.placeholder = 'Nom de la vue (ex: Salon)';
+    labelInput.value = 'Ma vue';
+    labelInput.style.cssText = [
+      'width:100%', 'box-sizing:border-box',
       'background:#0d1117', 'border:1px solid rgba(255,255,255,0.15)',
-      'border-radius:6px', 'color:#aef', 'padding:8px 10px',
-      'font-size:12px', 'font-family:monospace',
-      'resize:none', 'outline:none', 'line-height:1.6',
+      'border-radius:6px', 'color:#fff', 'padding:7px 10px',
+      'font-size:13px', 'outline:none', 'display:block', 'margin-bottom:10px',
     ].join(';');
+    popup.appendChild(labelInput);
 
+    // YAML preview
+    const getYaml = () => {
+      const label = labelInput.value.trim() || 'Ma vue';
+      return `- label: "${label}"\n  position: [${fmt(cam.x)}, ${fmt(cam.y)}, ${fmt(cam.z)}]\n  target: [${fmt(tgt.x)}, ${fmt(tgt.y)}, ${fmt(tgt.z)}]`;
+    };
+    const pre = document.createElement('pre');
+    pre.style.cssText = [
+      'background:#0d1117', 'border:1px solid rgba(255,255,255,0.1)',
+      'border-radius:6px', 'padding:10px', 'font-size:11px', 'color:#7dd3fc',
+      'margin:0 0 14px', 'overflow:auto', 'white-space:pre',
+    ].join(';');
+    pre.textContent = getYaml();
+    popup.appendChild(pre);
+    labelInput.addEventListener('input', () => { pre.textContent = getYaml(); });
+
+    // Buttons
     const btnRow = document.createElement('div');
-    btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:10px;';
+    btnRow.style.cssText = 'display:flex;gap:8px;';
 
     const copyBtn = document.createElement('button');
-    copyBtn.textContent = 'Copier';
-    copyBtn.style.cssText = 'background:#1a6bff;border:none;color:#fff;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:12px;font-weight:600;';
+    copyBtn.textContent = '📋 Copier YAML';
+    copyBtn.style.cssText = 'flex:1;background:#1a6bff;border:none;color:#fff;border-radius:6px;padding:8px 0;cursor:pointer;font-size:12px;font-weight:700;';
     copyBtn.addEventListener('click', () => {
-      navigator.clipboard.writeText(yaml).catch(() => {});
-      copyBtn.textContent = 'Copié !';
-      setTimeout(() => { copyBtn.textContent = 'Copier'; }, 1500);
+      copyToClipboard(getYaml()).then(() => {
+        copyBtn.textContent = '✓ Copié !';
+        setTimeout(() => { copyBtn.textContent = '📋 Copier YAML'; }, 1500);
+      });
     });
 
     const closeBtn = document.createElement('button');
     closeBtn.textContent = 'Fermer';
-    closeBtn.style.cssText = 'background:transparent;border:1px solid rgba(255,255,255,0.2);color:#aaa;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:12px;';
+    closeBtn.style.cssText = 'background:transparent;border:1px solid rgba(255,255,255,0.18);color:#aaa;border-radius:6px;padding:8px 14px;cursor:pointer;font-size:12px;';
     closeBtn.addEventListener('click', () => popup.remove());
 
     btnRow.appendChild(copyBtn);
     btnRow.appendChild(closeBtn);
-    popup.appendChild(title);
-    popup.appendChild(hint);
-    popup.appendChild(pre);
     popup.appendChild(btnRow);
+
     this.overlayContainer!.appendChild(popup);
-    setTimeout(() => pre.select(), 50);
+    setTimeout(() => { labelInput.select(); }, 50);
   }
 
   private _ctrlBtnStyle(): string {
@@ -497,12 +690,14 @@ class Ha3dFloorplan extends HTMLElement {
     sep.style.cssText = 'width:1px;height:20px;background:rgba(255,255,255,0.15);margin:0 4px;';
     bar.appendChild(sep);
 
-    const exportBtn = this._tbBtn('Export YAML', 'rgba(26,107,255,0.7)');
-    exportBtn.addEventListener('click', () => this._editor?.showExportPopup());
-    bar.appendChild(exportBtn);
+    const yamlBtn = this._tbBtn('📋 Copier YAML', 'rgba(26,107,255,0.85)');
+    yamlBtn.style.fontWeight = '700';
+    yamlBtn.title = 'Exporter les ancres en YAML';
+    yamlBtn.addEventListener('click', () => this._editor?.showExportPopup());
+    bar.appendChild(yamlBtn);
 
-    const doneBtn = this._tbBtn('Terminer', 'rgba(20,120,40,0.8)');
-    doneBtn.style.fontWeight = '700';
+    const doneBtn = this._tbBtn('Fermer', 'rgba(255,255,255,0.07)');
+    doneBtn.style.color = 'rgba(255,255,255,0.5)';
     doneBtn.addEventListener('click', () => this._exitEditMode());
     bar.appendChild(doneBtn);
 
@@ -541,19 +736,26 @@ class Ha3dFloorplan extends HTMLElement {
     const h = this._config?.height ?? Math.round(w * 0.75);
     container.style.height = `${h}px`;
 
-    this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x0d1117);
-    this.scene.fog = new THREE.Fog(0x0d1117, 20, 80);
+    const rl = this._config?.rendering ?? {};
+    const useSky = rl.sky !== false;
+    const bgHex = rl.background_color ? parseInt(rl.background_color.replace('#', ''), 16) : 0x0d1117;
 
-    this.camera = new THREE.PerspectiveCamera(45, w / h, 0.01, 500);
+    this.scene = new THREE.Scene();
+    this.scene.background = useSky ? null : new THREE.Color(bgHex);
+    this.scene.fog = new THREE.FogExp2(0x9fc8e8, rl.fog_density ?? 0.018);
+
+    this.camera = new THREE.PerspectiveCamera(45, w / h, 0.01, 2000);
     this.camera.position.set(0, 5, 12);
+    const shadows = rl.shadows !== false;
 
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas!, antialias: true });
     this.renderer.setSize(w, h, false);
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.enabled = shadows;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 0.9;
+    this.renderer.toneMappingExposure = rl.exposure ?? 1.4;
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     this.controls = new OrbitControls(this.camera, this.canvas!);
     this.controls.enableDamping = true;
@@ -570,15 +772,63 @@ class Ha3dFloorplan extends HTMLElement {
     this.controls.addEventListener('change', () => this._requestRender());
     this.controls.addEventListener('end', () => this._saveView());
 
-    this._hemiLight = new THREE.HemisphereLight(0xfff4e0, 0x1a1a2e, 0.45);
+    // Hemisphere — warm sky, dark ground so entity point lights stand out
+    this._hemiLight = new THREE.HemisphereLight(0xfff4e0, 0x1a1a2e, rl.ambient_intensity ?? 0.7);
     this.scene.add(this._hemiLight);
 
-    this._sunLight = new THREE.DirectionalLight(0xfff4c2, 0.4);
+    // Sun directional — soft shadows
+    this._sunLight = new THREE.DirectionalLight(0xfff4c2, rl.sun_intensity ?? 0.8);
     this._sunLight.position.set(5, 10, 5);
+    this._sunLight.castShadow = shadows;
+    this._sunLight.shadow.mapSize.set(2048, 2048);
+    this._sunLight.shadow.camera.near = 0.1;
+    this._sunLight.shadow.camera.far = 60;
+    this._sunLight.shadow.camera.left = -15;
+    this._sunLight.shadow.camera.right = 15;
+    this._sunLight.shadow.camera.top = 15;
+    this._sunLight.shadow.camera.bottom = -15;
+    this._sunLight.shadow.bias = -0.0005;
+    this._sunLight.shadow.normalBias = 0.05;
     this.scene.add(this._sunLight);
+
+    // Procedural sky — visible through windows, updated by sun_entity or default midday
+    if (useSky) {
+      this._sky = new Sky();
+      this._sky.scale.setScalar(1500);
+      this.scene.add(this._sky);
+      const su = this._sky.material.uniforms;
+      su['turbidity'].value = 4;
+      su['rayleigh'].value = 1.2;
+      su['mieCoefficient'].value = 0.005;
+      su['mieDirectionalG'].value = 0.85;
+      this._setSkyPos(rl.sky_elevation ?? 60, 180);
+    }
 
     this._lastTime = performance.now();
     this._loop();
+  }
+
+  private _setSkyPos(elevation: number, azimuth = 180) {
+    if (!this._sky) return;
+    const phi = THREE.MathUtils.degToRad(90 - elevation);
+    const theta = THREE.MathUtils.degToRad(azimuth - 180);
+    const sunPos = new THREE.Vector3().setFromSphericalCoords(1, phi, theta);
+    this._sky.material.uniforms['sunPosition'].value.copy(sunPos);
+    // Adjust haziness near horizon / sunset
+    const t = Math.max(0, Math.min(1, elevation / 30));
+    this._sky.material.uniforms['turbidity'].value = THREE.MathUtils.lerp(10, 3, t);
+    this._sky.material.uniforms['rayleigh'].value = THREE.MathUtils.lerp(3, 1.2, t);
+    // Night: hide sky, use dark bg
+    if (elevation < -5) {
+      this._sky.visible = false;
+      this.scene!.background = new THREE.Color(0x05080f);
+      if (this.scene!.fog) (this.scene!.fog as THREE.FogExp2).color.setHex(0x05080f);
+    } else {
+      this._sky.visible = true;
+      this.scene!.background = null;
+      const fogHex = elevation > 20 ? 0x9fc8e8 : 0xd4845a;
+      if (this.scene!.fog) (this.scene!.fog as THREE.FogExp2).color.setHex(fogHex);
+    }
   }
 
   // ── Render loop ───────────────────────────────────────────────────────
@@ -643,6 +893,14 @@ class Ha3dFloorplan extends HTMLElement {
       console.error('[ha-3d-floorplan] model load failed:', err);
       return;
     }
+
+    // Enable shadows on all meshes
+    model.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) {
+        obj.castShadow = true;
+        obj.receiveShadow = true;
+      }
+    });
 
     const box = new THREE.Box3().setFromObject(model);
     const centre = box.getCenter(new THREE.Vector3());
@@ -811,7 +1069,7 @@ class Ha3dFloorplan extends HTMLElement {
     });
 
     // 3. Show/hide individual overlays
-    this.anchors.forEach((entry, name) => {
+    this.anchors.forEach((_entry, name) => {
       const ov = this.overlays.get(name);
       if (!ov) return;
       if (behind.has(name) || inCluster.has(name)) {
@@ -932,6 +1190,7 @@ class Ha3dFloorplan extends HTMLElement {
 
   private _updateEnvironment() {
     if (!this._hass) return;
+    if (this._simActive) return; // simulation overrides HA sun/weather
     const cfg = this._config;
 
     if (cfg?.sun_entity) {
@@ -954,11 +1213,11 @@ class Ha3dFloorplan extends HTMLElement {
 
     const t = Math.max(0, Math.min(1, (elevation + 10) / 30));
 
-    this._hemiLight.intensity = THREE.MathUtils.lerp(0.22, 0.45, t);
-    this._hemiLight.color.setHex(t > 0.5 ? 0xfff4e0 : 0x2244aa);
+    this._hemiLight.intensity = THREE.MathUtils.lerp(0.15, 0.7, t);
+    this._hemiLight.color.setHex(t > 0.5 ? 0xfff4e0 : 0xee8833);
     this._hemiLight.groundColor.setHex(t > 0.5 ? 0x1a1a2e : 0x0d1020);
 
-    this._sunLight.intensity = Math.max(0, elevation / 60) * 0.8;
+    this._sunLight.intensity = Math.max(0, elevation / 60) * 0.9;
     const azRad = ((azimuth - 180) * Math.PI) / 180;
     const elRad = (elevation * Math.PI) / 180;
     this._sunLight.position.set(
@@ -967,14 +1226,7 @@ class Ha3dFloorplan extends HTMLElement {
       Math.cos(azRad) * Math.cos(elRad) * 10,
     );
 
-    const bgColor = new THREE.Color().lerpColors(
-      new THREE.Color(0x050a14),
-      new THREE.Color(0x0d1117),
-      t,
-    );
-    this.scene.background = bgColor;
-    if (this.scene.fog) this.scene.fog.color.copy(bgColor);
-
+    this._setSkyPos(elevation, azimuth);
     this._requestRender();
   }
 
@@ -1007,7 +1259,10 @@ class Ha3dFloorplan extends HTMLElement {
     const spread = Math.max(size.x, size.z) * 6;
     const groundY = -size.y / 2 - 0.01;
     const geo = new THREE.PlaneGeometry(spread, spread);
-    const mat = new THREE.MeshStandardMaterial({ color: 0x111418, roughness: 0.95, metalness: 0.05 });
+    const groundHex = this._config?.rendering?.ground_color
+      ? parseInt(this._config.rendering.ground_color.replace('#', ''), 16)
+      : 0x4a6741;
+    const mat = new THREE.MeshStandardMaterial({ color: groundHex, roughness: 1, metalness: 0 });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.rotation.x = -Math.PI / 2;
     mesh.position.y = groundY;
@@ -1126,8 +1381,8 @@ class Ha3dFloorplan extends HTMLElement {
     (obj.material as THREE.Material).dispose();
     this._weatherParticles = null;
 
-    if (this.scene?.fog) this.scene.fog.color.setHex(0x0d1117);
-    if (this._hemiLight) this._hemiLight.intensity = 0.45;
+    this._setSkyPos(60, 180);
+    if (this._hemiLight) this._hemiLight.intensity = 0.7;
   }
 
   // ── Resize ────────────────────────────────────────────────────────────
@@ -1167,6 +1422,7 @@ class Ha3dFloorplan extends HTMLElement {
     this._editMode = false;
     this._modelRoot = null;
     this._camAnimTo = null;
+    this._sky = null;
   }
 
   disconnectedCallback() {

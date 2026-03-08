@@ -18,6 +18,8 @@ export interface HassState {
 export interface Hass {
   states: Record<string, HassState>;
   callService(domain: string, service: string, data: Record<string, unknown>): void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  callWS<T = unknown>(msg: Record<string, unknown>): Promise<T>;
 }
 
 /** Named camera preset */
@@ -55,6 +57,26 @@ export interface CardConfig {
     transition?: number;
   };
   camera_views?: CameraView[];
+  rendering?: {
+    /** Overall brightness multiplier (default: 1.4) */
+    exposure?: number;
+    /** Sun directional light intensity (default: 0.8) */
+    sun_intensity?: number;
+    /** Hemisphere ambient intensity (default: 0.7) */
+    ambient_intensity?: number;
+    /** Enable soft shadows (default: true) */
+    shadows?: boolean;
+    /** Procedural sky (default: true). Set false for plain background */
+    sky?: boolean;
+    /** Default sun elevation in degrees when no sun_entity (default: 60) */
+    sky_elevation?: number;
+    /** Fog density — higher = more fog (default: 0.018) */
+    fog_density?: number;
+    /** Ground plane color as hex string e.g. "#4a6741" (default: green) */
+    ground_color?: string;
+    /** Background color when sky is disabled, hex string (default: "#0d1117") */
+    background_color?: string;
+  };
   /** If true, overlays start hidden; single tap shows/hides them */
   tap_to_toggle?: boolean;
   /** If set, anchors within this pixel distance on screen are grouped into a radial menu. Disabled by default. */
