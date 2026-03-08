@@ -1,0 +1,74 @@
+# Full smart home example
+# Replace entity IDs and positions to match your own setup.
+# Use the built-in anchor editor (✏️ button) to position anchors visually.
+
+type: custom:ha-3d-floorplan
+model_url: /local/house.glb
+height: 750
+intensity_scale: 0.25
+sun_entity: sun.sun
+weather_entity: weather.home
+tap_to_toggle: false
+cluster_threshold: 55
+
+orbit:
+  min_distance: 2
+  max_distance: 20
+  max_polar_angle: 83
+
+lights:
+  distance: 7
+  decay: 2
+  transition: 0.35
+
+rendering:
+  exposure: 1.35
+  sun_intensity: 0.9
+  ambient_intensity: 0.6
+  shadows: true
+  sky: true
+  fog_density: 0.015
+  ground_color: "#3a5530"
+
+camera_views:
+  - label: "🏠 Home"
+    position: [0, 12, 16]
+    target: [0, 0, 0]
+  - label: "🛋️ Living"
+    position: [1.5, 3.5, 4]
+    target: [1.5, 0, 0]
+  - label: "🍳 Kitchen"
+    position: [4, 3, 2]
+    target: [4, 0, 0]
+  - label: "🛏️ Bedroom"
+    position: [-3.5, 3, 1.5]
+    target: [-3.5, 0, 0]
+
+anchors:
+  - entity: light.living_room
+    label: "Living Room"
+    position: [0.3, 0.18, -0.4]
+  - entity: light.kitchen
+    label: "Kitchen"
+    position: [3.8, 0.18, 0.2]
+  - entity: light.bedroom
+    label: "Bedroom"
+    position: [-3.2, 0.18, -0.3]
+  - entity: switch.router
+    label: "Router"
+    position: [2.1, 0.6, 1.5]
+  - entity: cover.living_room_blind
+    label: "Blind"
+    position: [1.0, 1.3, -1.9]
+  - entity: sensor.living_room_temperature
+    label: "Temp"
+    position: [0.8, 1.1, 0.2]
+  - entity: sensor.living_room_humidity
+    label: "Humidity"
+    position: [1.2, 1.1, 0.2]
+  - entity: media_player.tv
+    label: "TV"
+    position: [0.2, 0.5, -1.7]
+  - entity: climate.thermostat
+    label: "Thermostat"
+    position: [-0.5, 0.9, 0.8]

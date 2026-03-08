@@ -19,6 +19,7 @@ import { loadGLTF, detectAnchors, buildAnchorsFromEditable } from './model';
 import { AnchorOverlay, SensorOverlay, ClusterOverlay } from './overlay';
 import type { ClusterItem } from './overlay';
 import { AnchorEditor } from './editor';
+import './card-editor';
 
 type AnyOverlay = AnchorOverlay | SensorOverlay;
 
@@ -118,6 +119,7 @@ class Ha3dFloorplan extends HTMLElement {
 
   set hass(hass: Hass) {
     this._hass = hass;
+    this._editor?.setHass(hass);
     if (this.modelLoaded && !this._editMode) {
       syncLights(this.anchors, hass, this._config);
       this._updateOverlayStates();
@@ -128,6 +130,10 @@ class Ha3dFloorplan extends HTMLElement {
 
   static getStubConfig() {
     return { model_url: '/local/floorplan.glb', anchors: [] };
+  }
+
+  static getConfigElement() {
+    return document.createElement('ha-3d-floorplan-editor');
   }
 
   // ── Init ──────────────────────────────────────────────────────────────
@@ -571,6 +577,7 @@ class Ha3dFloorplan extends HTMLElement {
       );
       this._editor.onChanged = () => this._requestRender();
     }
+    this._editor.setHass(this._hass);
     this._editor.activate(editable);
 
     this._showEditorToolbar();
@@ -1212,10 +1219,11 @@ class Ha3dFloorplan extends HTMLElement {
     if (!this._hemiLight || !this._sunLight || !this.scene) return;
 
     const t = Math.max(0, Math.min(1, (elevation + 10) / 30));
+    const isNight = elevation < -2;
 
-    this._hemiLight.intensity = THREE.MathUtils.lerp(0.15, 0.7, t);
-    this._hemiLight.color.setHex(t > 0.5 ? 0xfff4e0 : 0xee8833);
-    this._hemiLight.groundColor.setHex(t > 0.5 ? 0x1a1a2e : 0x0d1020);
+    this._hemiLight.intensity = isNight ? 0.45 : THREE.MathUtils.lerp(0.15, 0.7, t);
+    this._hemiLight.color.setHex(isNight ? 0x3a5080 : (t < 0.5 ? 0xee8833 : 0xfff4e0));
+    this._hemiLight.groundColor.setHex(isNight ? 0x0d1a2e : (t > 0.5 ? 0x1a1a2e : 0x0d1020));
 
     this._sunLight.intensity = Math.max(0, elevation / 60) * 0.9;
     const azRad = ((azimuth - 180) * Math.PI) / 180;
@@ -1283,15 +1291,28 @@ class Ha3dFloorplan extends HTMLElement {
     const spreadZ = Math.max(size.z * 2, 12);
     const yTop = box.max.y + 5;
     const yBot = box.min.y - 0.5;
-    const meta = { type, spreadX, spreadZ, cx, cz, yTop, yBot };
+    const modelMinX = box.min.x;
+    const modelMaxX = box.max.x;
+    const modelMinZ = box.min.z;
+    const modelMaxZ = box.max.z;
+    const meta = { type, spreadX, spreadZ, cx, cz, yTop, yBot, modelMinX, modelMaxX, modelMinZ, modelMaxZ };
+
+    const spawnXZ = (): [number, number] => {
+      let x: number, z: number, tries = 0;
+      do {
+        x = cx + (Math.random() - 0.5) * spreadX;
+        z = cz + (Math.random() - 0.5) * spreadZ;
+        tries++;
+      } while (tries < 30 && x > modelMinX && x < modelMaxX && z > modelMinZ && z < modelMaxZ);
+      return [x, z];
+    };
 
     if (type === 'rain') {
       const COUNT = 700;
       const pos = new Float32Array(COUNT * 6);
       for (let i = 0; i < COUNT; i++) {
-        const x = cx + (Math.random() - 0.5) * spreadX;
+        const [x, z] = spawnXZ();
         const y = yBot + Math.random() * (yTop - yBot);
-        const z = cz + (Math.random() - 0.5) * spreadZ;
         const len = 0.25 + Math.random() * 0.2;
         const wx = -0.06;
         pos[i * 6 + 0] = x;       pos[i * 6 + 1] = y;        pos[i * 6 + 2] = z;
@@ -1308,9 +1329,10 @@ class Ha3dFloorplan extends HTMLElement {
       const COUNT = 350;
       const pos = new Float32Array(COUNT * 3);
       for (let i = 0; i < COUNT; i++) {
-        pos[i * 3 + 0] = cx + (Math.random() - 0.5) * spreadX;
+        const [x, z] = spawnXZ();
+        pos[i * 3 + 0] = x;
         pos[i * 3 + 1] = yBot + Math.random() * (yTop - yBot);
-        pos[i * 3 + 2] = cz + (Math.random() - 0.5) * spreadZ;
+        pos[i * 3 + 2] = z;
       }
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -1332,9 +1354,20 @@ class Ha3dFloorplan extends HTMLElement {
   private _stepParticles(dt: number) {
     const obj = this._weatherParticles;
     if (!obj) return;
-    const { type, spreadX, spreadZ, cx, cz, yTop, yBot } = obj.userData as {
+    const { type, spreadX, spreadZ, cx, cz, yTop, yBot, modelMinX, modelMaxX, modelMinZ, modelMaxZ } = obj.userData as {
       type: string; spreadX: number; spreadZ: number;
       cx: number; cz: number; yTop: number; yBot: number;
+      modelMinX: number; modelMaxX: number; modelMinZ: number; modelMaxZ: number;
+    };
+
+    const spawnXZ = (): [number, number] => {
+      let x: number, z: number, tries = 0;
+      do {
+        x = cx + (Math.random() - 0.5) * spreadX;
+        z = cz + (Math.random() - 0.5) * spreadZ;
+        tries++;
+      } while (tries < 30 && x > modelMinX && x < modelMaxX && z > modelMinZ && z < modelMaxZ);
+      return [x, z];
     };
 
     const geo = (obj as THREE.LineSegments | THREE.Points).geometry;
@@ -1349,8 +1382,7 @@ class Ha3dFloorplan extends HTMLElement {
         arr[i + 4] -= speed * dt;
         arr[i + 0] += wx; arr[i + 3] += wx;
         if (arr[i + 4] < yBot) {
-          const x = cx + (Math.random() - 0.5) * spreadX;
-          const z = cz + (Math.random() - 0.5) * spreadZ;
+          const [x, z] = spawnXZ();
           const len = 0.25 + Math.random() * 0.2;
           arr[i + 0] = x;        arr[i + 1] = yTop;       arr[i + 2] = z;
           arr[i + 3] = x - 0.06; arr[i + 4] = yTop - len; arr[i + 5] = z;
@@ -1364,9 +1396,10 @@ class Ha3dFloorplan extends HTMLElement {
         arr[i + 0] += (Math.random() - 0.5) * driftAmp * dt;
         arr[i + 2] += (Math.random() - 0.5) * driftAmp * dt;
         if (arr[i + 1] < yBot) {
-          arr[i + 0] = cx + (Math.random() - 0.5) * spreadX;
+          const [x, z] = spawnXZ();
+          arr[i + 0] = x;
           arr[i + 1] = yTop;
-          arr[i + 2] = cz + (Math.random() - 0.5) * spreadZ;
+          arr[i + 2] = z;
         }
       }
     }

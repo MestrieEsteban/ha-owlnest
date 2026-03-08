@@ -28,6 +28,9 @@ export class AnchorEditor {
   onToolChange: ((tool: EditorTool) => void) | null = null;
 
   private _active = false;
+  private _hass: import('./types').Hass | null = null;
+
+  setHass(hass: import('./types').Hass | null) { this._hass = hass; }
   private _tool: EditorTool = 'select';
   private _raycaster = new THREE.Raycaster();
   private _anchors = new Map<string, EditableAnchor>();
@@ -328,21 +331,118 @@ export class AnchorEditor {
 
   private _showEntityPicker() {
     this._closePopup();
-    const popup = this._makePopup('Nouvelle ancre', `
-      <input data-field="entity" placeholder="entity_id  (ex: light.salon)" style="${this._inputStyle('margin-bottom:8px')}"/>
-      <input data-field="label"  placeholder="label (optionnel)"             style="${this._inputStyle('margin-bottom:14px')}"/>
-      <div style="display:flex;gap:8px;justify-content:flex-end">
-        <button data-action="cancel" style="${this._btnStyle('transparent', true)}">Annuler</button>
-        <button data-action="ok"     style="${this._btnStyle('#1a6bff')}">Ajouter</button>
-      </div>
-    `);
-    popup.querySelector('[data-action="cancel"]')!.addEventListener('click', () => {
-      this._closePopup();
-      this._pendingPos = null;
-    });
-    popup.querySelector('[data-action="ok"]')!.addEventListener('click', () => {
-      const entity = (popup.querySelector('[data-field="entity"]') as HTMLInputElement).value.trim();
-      const label = (popup.querySelector('[data-field="label"]') as HTMLInputElement).value.trim();
+
+    // Popup container
+    const el = document.createElement('div');
+    el.style.cssText = [
+      'position:absolute', 'top:50%', 'left:50%',
+      'transform:translate(-50%,-50%)',
+      'background:#1a1f2e', 'border:1px solid rgba(255,255,255,0.15)',
+      'border-radius:10px', 'padding:16px 20px',
+      'z-index:200', 'width:340px',
+      'box-shadow:0 8px 32px rgba(0,0,0,0.7)',
+      'font-family:var(--primary-font-family,sans-serif)',
+      'color:#fff', 'pointer-events:auto',
+    ].join(';');
+
+    const titleEl = document.createElement('div');
+    titleEl.style.cssText = 'font-size:13px;font-weight:600;margin-bottom:12px;color:#aac8e8';
+    titleEl.textContent = 'Nouvelle ancre';
+    el.appendChild(titleEl);
+
+    // Entity input + autocomplete dropdown
+    const acWrap = document.createElement('div');
+    acWrap.style.cssText = 'position:relative;margin-bottom:8px;';
+
+    const entityInput = document.createElement('input');
+    entityInput.placeholder = 'entity_id  (ex: light.salon)';
+    entityInput.style.cssText = this._inputStyle('');
+    acWrap.appendChild(entityInput);
+
+    let dropdown: HTMLDivElement | null = null;
+
+    const DOMAIN_COLORS: Record<string, string> = {
+      light: '#ffd700', switch: '#4caf50', cover: '#ff9800',
+      sensor: '#2196f3', binary_sensor: '#00bcd4',
+      climate: '#f44336', media_player: '#9c27b0',
+    };
+
+    const showDropdown = (q: string) => {
+      dropdown?.remove(); dropdown = null;
+      if (!this._hass || q.length < 1) return;
+      const lq = q.toLowerCase();
+      const matches = Object.entries(this._hass.states)
+        .filter(([id, s]) => {
+          const fn = (s.attributes.friendly_name as string ?? '').toLowerCase();
+          return id.includes(lq) || fn.includes(lq);
+        })
+        .slice(0, 12);
+      if (!matches.length) return;
+
+      dropdown = document.createElement('div');
+      dropdown.style.cssText = [
+        'position:absolute', 'top:100%', 'left:0', 'right:0',
+        'background:#1a1f2e', 'border:1px solid rgba(255,255,255,0.2)',
+        'border-top:none', 'border-radius:0 0 8px 8px',
+        'max-height:180px', 'overflow-y:auto',
+        'z-index:10', 'box-shadow:0 6px 20px rgba(0,0,0,0.6)',
+      ].join(';');
+
+      for (const [id, s] of matches) {
+        const fn = s.attributes.friendly_name as string ?? '';
+        const domain = id.split('.')[0];
+        const name = id.split('.')[1];
+        const color = DOMAIN_COLORS[domain] ?? '#aaa';
+
+        const item = document.createElement('div');
+        item.style.cssText = 'padding:7px 10px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.05);line-height:1.4;';
+        item.innerHTML =
+          `<span style="color:${color};font-size:10px;font-weight:700;">${domain}</span>` +
+          `<span style="color:#fff">.</span>` +
+          `<span style="color:#7dd3fc;font-size:13px;">${name}</span>` +
+          (fn ? `<br><span style="font-size:10px;color:#888;">${fn}</span>` : '');
+
+        item.addEventListener('mouseover', () => { item.style.background = 'rgba(255,255,255,0.08)'; });
+        item.addEventListener('mouseout', () => { item.style.background = ''; });
+        item.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          entityInput.value = id;
+          // Auto-fill label with friendly name or entity name part
+          if (!labelInput.value) {
+            labelInput.value = fn || name || '';
+          }
+          dropdown?.remove(); dropdown = null;
+        });
+        dropdown.appendChild(item);
+      }
+      acWrap.appendChild(dropdown);
+    };
+
+    entityInput.addEventListener('input', () => showDropdown(entityInput.value));
+    entityInput.addEventListener('blur', () => setTimeout(() => { dropdown?.remove(); dropdown = null; }, 200));
+    el.appendChild(acWrap);
+
+    // Label input
+    const labelInput = document.createElement('input');
+    labelInput.placeholder = 'Label (optionnel — sinon déduit de l\'entity)';
+    labelInput.style.cssText = this._inputStyle('margin-bottom:14px');
+    el.appendChild(labelInput);
+
+    // Buttons
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.textContent = 'Annuler';
+    cancelBtn.style.cssText = this._btnStyle('transparent', true);
+    cancelBtn.addEventListener('click', () => { this._closePopup(); this._pendingPos = null; });
+
+    const okBtn = document.createElement('button');
+    okBtn.textContent = 'Ajouter';
+    okBtn.style.cssText = this._btnStyle('#1a6bff');
+    okBtn.addEventListener('click', () => {
+      const entity = entityInput.value.trim();
+      const label = labelInput.value.trim();
       if (!entity || !this._pendingPos) return;
       const key = `anchor_${Date.now()}_${entity}`;
       const anchor: EditableAnchor = {
@@ -360,9 +460,14 @@ export class AnchorEditor {
       this.onChanged?.();
       this.onToolChange?.('select');
     });
-    setTimeout(() => {
-      (popup.querySelector('[data-field="entity"]') as HTMLInputElement)?.focus();
-    }, 50);
+
+    btnRow.appendChild(cancelBtn);
+    btnRow.appendChild(okBtn);
+    el.appendChild(btnRow);
+
+    this._popup = el;
+    this._overlayContainer.appendChild(el);
+    setTimeout(() => entityInput.focus(), 50);
   }
 
   // ── Popup helpers ───────────────────────────────────────────────────────

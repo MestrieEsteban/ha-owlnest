@@ -1,0 +1,6 @@
+{
+  "name": "Owlnest 3D Floorplan",
+  "render_readme": true,
+  "filename": "ha-3d-floorplan.js",
+  "homeassistant": "2023.0.0"
+}
