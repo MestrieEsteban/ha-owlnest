@@ -141,13 +141,15 @@ class Ha3dFloorplan extends HTMLElement {
   private _bootstrap() {
     if (this.renderer) this._teardown();
 
+    const transparentBg = this._config?.rendering?.transparent_background === true;
+
     const card = document.createElement('ha-card');
     card.style.cssText = [
       'overflow:hidden',
       'position:relative',
       'display:block',
-      'background:#050a14',
-      '--ha-card-background:#050a14',
+      transparentBg ? 'background:transparent' : 'background:#050a14',
+      transparentBg ? '--ha-card-background:transparent' : '--ha-card-background:#050a14',
       '--ha-card-border-radius:12px',
       'padding:0',
     ].join(';');
@@ -744,18 +746,19 @@ class Ha3dFloorplan extends HTMLElement {
     container.style.height = `${h}px`;
 
     const rl = this._config?.rendering ?? {};
-    const useSky = rl.sky !== false;
+    const useSky = rl.sky !== false && rl.transparent_background !== true;
     const bgHex = rl.background_color ? parseInt(rl.background_color.replace('#', ''), 16) : 0x0d1117;
 
     this.scene = new THREE.Scene();
-    this.scene.background = useSky ? null : new THREE.Color(bgHex);
-    this.scene.fog = new THREE.FogExp2(0x9fc8e8, rl.fog_density ?? 0.018);
+    this.scene.background = useSky ? null : (rl.transparent_background ? null : new THREE.Color(bgHex));
+    this.scene.fog = rl.transparent_background ? null : new THREE.FogExp2(0x9fc8e8, rl.fog_density ?? 0.018);
 
     this.camera = new THREE.PerspectiveCamera(45, w / h, 0.01, 2000);
     this.camera.position.set(0, 5, 12);
     const shadows = rl.shadows !== false;
 
-    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas!, antialias: true });
+    const transparentBg = rl.transparent_background === true;
+    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas!, antialias: true, alpha: transparentBg });
     this.renderer.setSize(w, h, false);
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = shadows;
@@ -763,6 +766,7 @@ class Ha3dFloorplan extends HTMLElement {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = rl.exposure ?? 1.4;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    if (transparentBg) this.renderer.setClearColor(0x000000, 0);
 
     this.controls = new OrbitControls(this.camera, this.canvas!);
     this.controls.enableDamping = true;
@@ -826,7 +830,10 @@ class Ha3dFloorplan extends HTMLElement {
     this._sky.material.uniforms['turbidity'].value = THREE.MathUtils.lerp(10, 3, t);
     this._sky.material.uniforms['rayleigh'].value = THREE.MathUtils.lerp(3, 1.2, t);
     // Night: hide sky, use dark bg
-    if (elevation < -5) {
+    const transparentBg = this._config?.rendering?.transparent_background === true;
+    if (transparentBg) {
+      this._sky.visible = false;
+    } else if (elevation < -5) {
       this._sky.visible = false;
       this.scene!.background = new THREE.Color(0x05080f);
       if (this.scene!.fog) (this.scene!.fog as THREE.FogExp2).color.setHex(0x05080f);
@@ -938,7 +945,7 @@ class Ha3dFloorplan extends HTMLElement {
     this.controls!.update();
     this.scene.add(model);
     this._modelRoot = model;
-    this._addGround(box);
+    if (this._config?.rendering?.transparent_background !== true) this._addGround(box);
 
     this.anchors = detectAnchors(model, this.scene, this._config);
     this._createOverlays();

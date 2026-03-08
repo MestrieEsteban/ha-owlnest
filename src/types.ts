@@ -76,6 +76,8 @@ export interface CardConfig {
     ground_color?: string;
     /** Background color when sky is disabled, hex string (default: "#0d1117") */
     background_color?: string;
+    /** Transparent background — card blends into the HA dashboard (default: false) */
+    transparent_background?: boolean;
   };
   /** If true, overlays start hidden; single tap shows/hides them */
   tap_to_toggle?: boolean;
