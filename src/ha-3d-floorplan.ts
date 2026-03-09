@@ -35,8 +35,14 @@ class Ha3dFloorplan extends HTMLElement {
   private lockBtn: HTMLButtonElement | null = null;
   private editBtn: HTMLButtonElement | null = null;
   private captureBtn: HTMLButtonElement | null = null;
-  private _controlsEl: HTMLDivElement | null = null;
-  private _viewBar: HTMLDivElement | null = null;
+  private _hud: HTMLDivElement | null = null;
+  private _hudLeft: HTMLDivElement | null = null;
+  private _hudSep: HTMLDivElement | null = null;
+  private _hudRight: HTMLDivElement | null = null;
+  private _simExpand: HTMLDivElement | null = null;
+  private _simOpen = false;
+  private _lockOpenIcon = '🔓';
+  private _lockClosedIcon = '🔒';
   private overlayContainer: HTMLDivElement | null = null;
 
   private anchors = new Map<string, AnchorEntry>();
@@ -75,7 +81,6 @@ class Ha3dFloorplan extends HTMLElement {
 
   // Day simulation
   private _simBtn: HTMLButtonElement | null = null;
-  private _simPanel: HTMLDivElement | null = null;
   private _simActive = false;
   private _simHour = 12;
   private _simWeather: 'clear' | 'cloudy' | 'rain' | 'snow' = 'clear';
@@ -165,29 +170,90 @@ class Ha3dFloorplan extends HTMLElement {
       'position:absolute;inset:0;pointer-events:none;overflow:hidden;';
     card.appendChild(this.overlayContainer);
 
-    // Controls group — hidden by default, revealed on hover / touch
-    this._controlsEl = document.createElement('div');
-    this._controlsEl.style.cssText = [
-      'position:absolute', 'top:8px', 'right:8px',
-      'display:flex', 'gap:6px', 'align-items:center',
+    // ── Unified HUD ───────────────────────────────────────────────────────
+    const ui = this._config?.ui ?? {};
+    const uiIcons = ui.icons ?? {};
+    this._lockOpenIcon  = uiIcons.lock_open   ?? '🔓';
+    this._lockClosedIcon = uiIcons.lock_closed ?? '🔒';
+
+    // Wrapper column: [simExpand] then [bar], both stretch to same width
+    const hud = document.createElement('div');
+    hud.style.cssText = [
+      'position:absolute', 'bottom:12px', 'left:50%',
+      'transform:translateX(-50%)',
+      'z-index:10',
+      'display:flex', 'flex-direction:column', 'align-items:stretch', 'gap:6px',
       'opacity:0', 'transition:opacity .25s ease',
-      'z-index:10', 'pointer-events:none',
+      'pointer-events:none',
+      'max-width:calc(100% - 24px)',
     ].join(';');
-    card.appendChild(this._controlsEl);
+    this._hud = hud;
+    card.appendChild(hud);
 
-    this.lockBtn = this._makeLockBtn();
-    this.editBtn = this._makeEditBtn();
-    this.captureBtn = this._makeCaptureBtn();
-    this._simBtn = this._makeSimBtn();
-    this._controlsEl.appendChild(this.captureBtn);
-    this._controlsEl.appendChild(this._simBtn);
-    this._controlsEl.appendChild(this.editBtn);
-    this._controlsEl.appendChild(this.lockBtn);
+    // Sim expand (slides up above bar)
+    const simExpand = document.createElement('div');
+    simExpand.style.cssText = [
+      'overflow:hidden', 'max-height:0', 'opacity:0',
+      'transition:max-height .3s ease, opacity .2s ease',
+      'pointer-events:none',
+    ].join(';');
+    this._simExpand = simExpand;
+    hud.appendChild(simExpand);
+    this._buildSimExpandContent();
 
-    // Hover (desktop) — show/hide controls
+    // Main glass pill bar
+    const bar = document.createElement('div');
+    bar.style.cssText = [
+      'display:flex', 'align-items:center',
+      'background:rgba(8,12,24,0.72)',
+      'backdrop-filter:blur(12px)', '-webkit-backdrop-filter:blur(12px)',
+      'border:1px solid rgba(255,255,255,0.1)',
+      'border-radius:20px',
+      'padding:5px 8px', 'gap:2px',
+      'pointer-events:auto',
+      'white-space:nowrap',
+    ].join(';');
+    hud.appendChild(bar);
+
+    // Left: camera views (populated after model loads)
+    const hudLeft = document.createElement('div');
+    hudLeft.style.cssText = 'display:flex;align-items:center;gap:2px;';
+    this._hudLeft = hudLeft;
+    bar.appendChild(hudLeft);
+
+    // Separator (hidden until views are present)
+    const sep = document.createElement('div');
+    sep.style.cssText = 'width:1px;height:18px;background:rgba(255,255,255,0.15);margin:0 4px;flex-shrink:0;display:none;';
+    this._hudSep = sep;
+    bar.appendChild(sep);
+
+    // Right: action buttons
+    const hudRight = document.createElement('div');
+    hudRight.style.cssText = 'display:flex;align-items:center;gap:2px;flex-shrink:0;';
+    this._hudRight = hudRight;
+    bar.appendChild(hudRight);
+
+    if (ui.show_simulation !== false) {
+      this._simBtn = this._makeSimBtn(uiIcons.simulation ?? '☀️');
+      hudRight.appendChild(this._simBtn);
+    }
+    if (ui.show_lock !== false) {
+      this.lockBtn = this._makeLockBtn();
+      hudRight.appendChild(this.lockBtn);
+    }
+    if (ui.show_editor !== false) {
+      this.editBtn = this._makeEditBtn(uiIcons.editor ?? '✏️');
+      hudRight.appendChild(this.editBtn);
+    }
+    if (ui.show_capture !== false) {
+      this.captureBtn = this._makeCaptureBtn(uiIcons.capture ?? '📷');
+      hudRight.appendChild(this.captureBtn);
+    }
+
+    // Hover (desktop) — show/hide HUD
     card.addEventListener('mouseenter', () => this._showControls());
     card.addEventListener('mouseleave', () => this._hideControls());
-    // Touch — show controls for 3 seconds on tap
+    // Touch — show HUD for 3 seconds on tap
     card.addEventListener('touchstart', () => this._showControlsTemporarily(), { passive: true });
 
     // Canvas tap detection for overlay toggle
@@ -215,166 +281,161 @@ class Ha3dFloorplan extends HTMLElement {
 
   private _makeLockBtn(): HTMLButtonElement {
     const btn = document.createElement('button');
-    btn.style.cssText = this._ctrlBtnStyle();
-    btn.textContent = '\uD83D\uDD13'; // 🔓
+    btn.style.cssText = this._hudBtnStyle();
+    btn.textContent = this._lockOpenIcon;
     btn.title = 'Verrouiller la vue';
     btn.addEventListener('click', (e) => { e.stopPropagation(); this._toggleLock(); });
     return btn;
   }
 
-  private _makeEditBtn(): HTMLButtonElement {
+  private _makeEditBtn(icon: string): HTMLButtonElement {
     const btn = document.createElement('button');
-    btn.style.cssText = this._ctrlBtnStyle();
-    btn.textContent = '\u270F\uFE0F'; // ✏️
+    btn.style.cssText = this._hudBtnStyle();
+    btn.textContent = icon;
     btn.title = 'Editer les ancres';
     btn.addEventListener('click', (e) => { e.stopPropagation(); this._toggleEditMode(); });
     return btn;
   }
 
-  private _makeCaptureBtn(): HTMLButtonElement {
+  private _makeCaptureBtn(icon: string): HTMLButtonElement {
     const btn = document.createElement('button');
-    btn.style.cssText = this._ctrlBtnStyle();
-    btn.textContent = '\uD83D\uDCF7'; // 📷
+    btn.style.cssText = this._hudBtnStyle();
+    btn.textContent = icon;
     btn.title = 'Capturer la vue courante';
     btn.addEventListener('click', (e) => { e.stopPropagation(); this._showCapturePopup(); });
     return btn;
   }
 
-  private _makeSimBtn(): HTMLButtonElement {
+  private _makeSimBtn(icon: string): HTMLButtonElement {
     const btn = document.createElement('button');
-    btn.style.cssText = this._ctrlBtnStyle();
-    btn.textContent = '☀️';
+    btn.style.cssText = this._hudBtnStyle();
+    btn.textContent = icon;
     btn.title = 'Simuler la journée / météo';
-    btn.addEventListener('click', (e) => { e.stopPropagation(); this._toggleSimPanel(); });
+    btn.addEventListener('click', (e) => { e.stopPropagation(); this._toggleSim(); });
     return btn;
   }
 
-  private _toggleSimPanel() {
-    if (this._simPanel) {
-      this._simPanel.remove();
-      this._simPanel = null;
-      this._simBtn!.style.background = 'rgba(0,0,0,.55)';
-      return;
+  private _toggleSim() {
+    this._simOpen = !this._simOpen;
+    if (!this._simExpand || !this._simBtn) return;
+    if (this._simOpen) {
+      this._simExpand.style.maxHeight = '160px';
+      this._simExpand.style.opacity = '1';
+      this._simExpand.style.pointerEvents = 'auto';
+      this._simBtn.style.boxShadow = '0 0 0 2px rgba(245,158,11,0.85)';
+    } else {
+      this._simExpand.style.maxHeight = '0';
+      this._simExpand.style.opacity = '0';
+      this._simExpand.style.pointerEvents = 'none';
+      this._simBtn.style.boxShadow = 'none';
     }
-    this._simPanel = this._buildSimPanel();
-    this.overlayContainer?.appendChild(this._simPanel);
-    this._simBtn!.style.background = 'rgba(255,160,0,.55)';
   }
 
-  private _buildSimPanel(): HTMLDivElement {
-    const panel = document.createElement('div');
-    panel.style.cssText = [
-      'position:absolute', 'bottom:12px', 'right:12px',
-      'background:#1a1f2e', 'border:1px solid rgba(255,255,255,0.15)',
-      'border-radius:12px', 'padding:14px 16px',
-      'z-index:100', 'width:240px',
-      'box-shadow:0 8px 32px rgba(0,0,0,0.7)',
+  private _buildSimExpandContent() {
+    if (!this._simExpand) return;
+    this._simExpand.innerHTML = '';
+
+    const inner = document.createElement('div');
+    inner.style.cssText = [
+      'background:rgba(8,12,24,0.82)',
+      'backdrop-filter:blur(12px)', '-webkit-backdrop-filter:blur(12px)',
+      'border:1px solid rgba(255,255,255,0.12)',
+      'border-radius:14px',
+      'padding:10px 14px',
       'font-family:var(--primary-font-family,sans-serif)',
-      'color:#fff', 'pointer-events:auto',
+      'color:#fff',
       'user-select:none',
     ].join(';');
+    this._simExpand.appendChild(inner);
 
-    // Title
-    const title = document.createElement('div');
-    title.style.cssText = 'font-size:12px;font-weight:600;margin-bottom:12px;color:#aac8e8;display:flex;align-items:center;justify-content:space-between;';
-    title.innerHTML = '<span>☀️ Simulation journée</span>';
+    const fmt = (h: number) =>
+      `${String(Math.floor(h)).padStart(2,'0')}:${String(Math.round((h%1)*60)).padStart(2,'0')}`;
+
+    // Row 1: time label + active toggle
+    const row1 = document.createElement('div');
+    row1.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;';
+
+    const timeLabel = document.createElement('div');
+    timeLabel.style.cssText = 'font-size:11px;color:#aac8e8;';
+    const timeValue = document.createElement('span');
+    timeValue.style.cssText = 'color:#fff;font-weight:600;';
+    timeValue.textContent = fmt(this._simHour);
+    timeLabel.appendChild(document.createTextNode('Heure\u00a0: '));
+    timeLabel.appendChild(timeValue);
+    row1.appendChild(timeLabel);
 
     const activeToggle = document.createElement('label');
-    activeToggle.style.cssText = 'display:flex;align-items:center;gap:4px;font-size:11px;color:#aaa;cursor:pointer;';
+    activeToggle.style.cssText = 'display:flex;align-items:center;gap:4px;font-size:11px;color:#888;cursor:pointer;';
     const activeCheck = document.createElement('input');
     activeCheck.type = 'checkbox';
     activeCheck.checked = this._simActive;
     activeCheck.style.cursor = 'pointer';
     activeToggle.appendChild(activeCheck);
     activeToggle.appendChild(document.createTextNode('Actif'));
-    title.appendChild(activeToggle);
-    panel.appendChild(title);
+    row1.appendChild(activeToggle);
+    inner.appendChild(row1);
 
     // Time slider
-    const timeRow = document.createElement('div');
-    timeRow.style.cssText = 'margin-bottom:12px;';
-    const timeLabel = document.createElement('div');
-    timeLabel.style.cssText = 'font-size:11px;color:#888;margin-bottom:4px;';
-    const timeValue = document.createElement('span');
-    timeValue.style.cssText = 'color:#fff;font-weight:600;';
-    const fmt = (h: number) => `${String(Math.floor(h)).padStart(2,'0')}:${String(Math.round((h % 1) * 60)).padStart(2,'0')}`;
-    timeValue.textContent = fmt(this._simHour);
-    timeLabel.appendChild(document.createTextNode('Heure : '));
-    timeLabel.appendChild(timeValue);
-    timeRow.appendChild(timeLabel);
-
     const timeSlider = document.createElement('input');
     timeSlider.type = 'range';
-    timeSlider.min = '0';
-    timeSlider.max = '24';
-    timeSlider.step = '0.25';
+    timeSlider.min = '0'; timeSlider.max = '24'; timeSlider.step = '0.25';
     timeSlider.value = String(this._simHour);
-    timeSlider.style.cssText = 'width:100%;accent-color:#f59e0b;cursor:pointer;';
+    timeSlider.style.cssText = 'width:100%;accent-color:#f59e0b;cursor:pointer;margin-bottom:8px;display:block;';
     timeSlider.addEventListener('input', () => {
       this._simHour = parseFloat(timeSlider.value);
       timeValue.textContent = fmt(this._simHour);
       if (this._simActive) this._applySimulation();
     });
-    timeRow.appendChild(timeSlider);
-    panel.appendChild(timeRow);
+    inner.appendChild(timeSlider);
 
     // Weather presets
-    const weatherLabel = document.createElement('div');
-    weatherLabel.style.cssText = 'font-size:11px;color:#888;margin-bottom:6px;';
-    weatherLabel.textContent = 'Météo :';
-    panel.appendChild(weatherLabel);
-
     const weatherRow = document.createElement('div');
-    weatherRow.style.cssText = 'display:flex;gap:6px;margin-bottom:10px;';
+    weatherRow.style.cssText = 'display:flex;gap:4px;';
     const presets: { emoji: string; label: string; value: typeof this._simWeather }[] = [
-      { emoji: '☀️', label: 'Soleil', value: 'clear' },
+      { emoji: '☀️', label: 'Soleil',  value: 'clear'  },
       { emoji: '⛅', label: 'Nuageux', value: 'cloudy' },
-      { emoji: '🌧️', label: 'Pluie', value: 'rain' },
-      { emoji: '❄️', label: 'Neige', value: 'snow' },
+      { emoji: '🌧️', label: 'Pluie',   value: 'rain'   },
+      { emoji: '❄️', label: 'Neige',   value: 'snow'   },
     ];
     const weatherBtns: HTMLButtonElement[] = [];
-    const updateWeatherBtns = () => {
+    const syncWeather = () => {
       weatherBtns.forEach((b, i) => {
-        b.style.background = presets[i].value === this._simWeather
-          ? 'rgba(245,158,11,0.4)' : 'rgba(255,255,255,0.07)';
+        const on = presets[i].value === this._simWeather;
+        b.style.background = on ? 'rgba(245,158,11,0.35)' : 'rgba(255,255,255,0.07)';
+        b.style.boxShadow  = on ? '0 0 0 1.5px rgba(245,158,11,0.7)' : 'none';
       });
     };
     for (const p of presets) {
       const wb = document.createElement('button');
-      wb.title = p.label;
-      wb.textContent = p.emoji;
+      wb.title = p.label; wb.textContent = p.emoji;
       wb.style.cssText = [
-        'flex:1', 'border:none', 'border-radius:6px',
-        'font-size:16px', 'padding:4px 0',
+        'flex:1', 'border:none', 'border-radius:8px',
+        'font-size:16px', 'padding:5px 0',
         'cursor:pointer', 'color:#fff',
         'background:rgba(255,255,255,0.07)',
-        'transition:background .15s',
+        'transition:background .15s, box-shadow .15s',
       ].join(';');
       wb.addEventListener('click', () => {
         this._simWeather = p.value;
-        updateWeatherBtns();
+        syncWeather();
         if (this._simActive) this._applySimulation();
       });
       weatherBtns.push(wb);
       weatherRow.appendChild(wb);
     }
-    updateWeatherBtns();
-    panel.appendChild(weatherRow);
+    syncWeather();
+    inner.appendChild(weatherRow);
 
-    // Active toggle logic
     activeCheck.addEventListener('change', () => {
       this._simActive = activeCheck.checked;
       if (this._simActive) {
         this._applySimulation();
       } else {
-        // Revert to HA state
         this._removeWeatherParticles();
         this._weatherType = 'none';
         this._updateFromHass();
       }
     });
-
-    return panel;
   }
 
   /** Compute sun elevation from hour of day (0-24) */
@@ -484,38 +545,33 @@ class Ha3dFloorplan extends HTMLElement {
     setTimeout(() => { labelInput.select(); }, 50);
   }
 
-  private _ctrlBtnStyle(): string {
+  private _hudBtnStyle(): string {
     return [
-      'background:rgba(0,0,0,.55)',
-      'border:none', 'border-radius:6px',
+      'display:inline-flex', 'align-items:center', 'justify-content:center',
+      'width:30px', 'height:30px',
+      'border:none', 'border-radius:50%',
+      'background:rgba(255,255,255,0.07)',
       'color:#fff', 'cursor:pointer',
-      'padding:5px 8px', 'font-size:15px',
-      'line-height:1', 'pointer-events:auto',
-      'transition:background .2s',
+      'font-size:15px', 'line-height:1',
+      'flex-shrink:0',
+      'transition:background .15s, box-shadow .15s',
     ].join(';');
   }
 
   // ── Controls visibility ────────────────────────────────────────────────
 
   private _showControls() {
-    if (!this._controlsEl) return;
-    this._controlsEl.style.opacity = '1';
-    this._controlsEl.style.pointerEvents = 'auto';
-    if (this._viewBar) {
-      this._viewBar.style.opacity = '1';
-      this._viewBar.style.pointerEvents = 'auto';
-    }
+    if (!this._hud) return;
+    this._hud.style.opacity = '1';
+    this._hud.style.pointerEvents = 'auto';
   }
 
   private _hideControls() {
-    if (this._editMode) return; // keep visible in edit mode
-    if (!this._controlsEl) return;
-    this._controlsEl.style.opacity = '0';
-    this._controlsEl.style.pointerEvents = 'none';
-    if (this._viewBar) {
-      this._viewBar.style.opacity = '0';
-      this._viewBar.style.pointerEvents = 'none';
-    }
+    if (this._editMode) return;
+    if (this._simOpen) return; // keep visible while sim panel is open
+    if (!this._hud) return;
+    this._hud.style.opacity = '0';
+    this._hud.style.pointerEvents = 'none';
   }
 
   private _showControlsTemporarily() {
@@ -539,8 +595,9 @@ class Ha3dFloorplan extends HTMLElement {
   private _toggleLock(force?: boolean) {
     this._locked = force !== undefined ? force : !this._locked;
     if (this.controls) this.controls.enabled = !this._locked && !this._editMode;
-    this.lockBtn!.textContent = this._locked ? '\uD83D\uDD12' : '\uD83D\uDD13'; // 🔒 🔓
+    this.lockBtn!.textContent = this._locked ? this._lockClosedIcon : this._lockOpenIcon;
     this.lockBtn!.title = this._locked ? 'Déverrouiller la vue' : 'Verrouiller la vue';
+    this.lockBtn!.style.boxShadow = this._locked ? '0 0 0 2px rgba(239,68,68,0.8)' : 'none';
     this._saveView();
   }
 
@@ -553,8 +610,10 @@ class Ha3dFloorplan extends HTMLElement {
 
   private _enterEditMode() {
     this._editMode = true;
-    this.editBtn!.style.background = 'rgba(26,107,255,.75)';
-    this.editBtn!.title = 'Quitter le mode édition';
+    if (this.editBtn) {
+      this.editBtn.style.boxShadow = '0 0 0 2px rgba(59,130,246,0.9)';
+      this.editBtn.title = 'Quitter le mode édition';
+    }
     this._showControls();
 
     this.overlays.forEach((o) => { o.el.style.display = 'none'; });
@@ -610,8 +669,10 @@ class Ha3dFloorplan extends HTMLElement {
 
   private _exitEditMode() {
     this._editMode = false;
-    this.editBtn!.style.background = 'rgba(0,0,0,.55)';
-    this.editBtn!.title = 'Editer les ancres';
+    if (this.editBtn) {
+      this.editBtn.style.boxShadow = 'none';
+      this.editBtn.title = 'Editer les ancres';
+    }
 
     const editable = new Map<string, EditableAnchor>(this._editor!.anchors as Map<string, EditableAnchor>);
     this._editor!.deactivate();
@@ -642,39 +703,26 @@ class Ha3dFloorplan extends HTMLElement {
 
   // ── Editor toolbar ────────────────────────────────────────────────────
 
-  private _editorToolbar: HTMLDivElement | null = null;
-
   private _showEditorToolbar() {
-    this._removeEditorToolbar();
-    const bar = document.createElement('div');
-    bar.style.cssText = [
-      'position:absolute',
-      'bottom:12px',
-      'left:50%',
-      'transform:translateX(-50%)',
-      'display:flex',
-      'gap:6px',
-      'align-items:center',
-      'background:rgba(10,14,28,0.92)',
-      'border:1px solid rgba(255,255,255,0.14)',
-      'border-radius:10px',
-      'padding:6px 10px',
-      'z-index:50',
-      'pointer-events:auto',
-      'font-family:var(--primary-font-family,sans-serif)',
-      'white-space:nowrap',
-    ].join(';');
+    if (!this._hudLeft || !this._hudRight || !this._hudSep) return;
 
+    // Save and clear current HUD content
+    this._hudLeft.innerHTML = '';
+    this._hudRight.innerHTML = '';
+    this._hudSep.style.display = 'none';
+
+    // Editor tool buttons (left side)
     const tools: Array<{ id: string; label: string; title: string }> = [
-      { id: 'select', label: 'Selectionner', title: 'Selectionner / deplacer une ancre' },
-      { id: 'add',    label: '+ Ajouter',    title: 'Cliquer sur le modele pour placer une ancre' },
-      { id: 'delete', label: 'Supprimer',    title: 'Cliquer sur une ancre pour la supprimer' },
+      { id: 'select', label: '↖ Sélect', title: 'Sélectionner / déplacer une ancre' },
+      { id: 'add',    label: '+ Ajouter', title: 'Cliquer sur le modèle pour placer une ancre' },
+      { id: 'delete', label: '✕ Suppr',  title: 'Cliquer sur une ancre pour la supprimer' },
     ];
 
     const toolBtns = new Map<string, HTMLButtonElement>();
     const setActiveTool = (id: string) => {
       toolBtns.forEach((b, k) => {
-        b.style.background = k === id ? 'rgba(26,107,255,0.85)' : 'rgba(255,255,255,0.08)';
+        b.style.background = k === id ? 'rgba(59,130,246,0.85)' : 'rgba(255,255,255,0.08)';
+        b.style.boxShadow  = k === id ? '0 0 0 1.5px rgba(59,130,246,0.6)' : 'none';
         b.style.color = k === id ? '#fff' : 'rgba(255,255,255,0.6)';
       });
     };
@@ -688,30 +736,24 @@ class Ha3dFloorplan extends HTMLElement {
         setActiveTool(id);
       });
       toolBtns.set(id, btn);
-      bar.appendChild(btn);
+      this._hudLeft!.appendChild(btn);
     });
 
-    if (this._editor) {
-      this._editor.onToolChange = (t) => setActiveTool(t);
-    }
+    if (this._editor) this._editor.onToolChange = (t) => setActiveTool(t);
 
-    const sep = document.createElement('div');
-    sep.style.cssText = 'width:1px;height:20px;background:rgba(255,255,255,0.15);margin:0 4px;';
-    bar.appendChild(sep);
+    this._hudSep.style.display = 'block';
 
-    const yamlBtn = this._tbBtn('📋 Copier YAML', 'rgba(26,107,255,0.85)');
+    // Right side: yaml + done
+    const yamlBtn = this._tbBtn('📋 YAML', 'rgba(59,130,246,0.85)');
     yamlBtn.style.fontWeight = '700';
     yamlBtn.title = 'Exporter les ancres en YAML';
     yamlBtn.addEventListener('click', () => this._editor?.showExportPopup());
-    bar.appendChild(yamlBtn);
+    this._hudRight.appendChild(yamlBtn);
 
-    const doneBtn = this._tbBtn('Fermer', 'rgba(255,255,255,0.07)');
+    const doneBtn = this._tbBtn('✓ Fermer', 'rgba(255,255,255,0.07)');
     doneBtn.style.color = 'rgba(255,255,255,0.5)';
     doneBtn.addEventListener('click', () => this._exitEditMode());
-    bar.appendChild(doneBtn);
-
-    this._editorToolbar = bar;
-    this.overlayContainer!.appendChild(bar);
+    this._hudRight.appendChild(doneBtn);
 
     setActiveTool('select');
   }
@@ -723,19 +765,41 @@ class Ha3dFloorplan extends HTMLElement {
       `background:${bg}`,
       'border:none',
       'color:#fff',
-      'border-radius:6px',
-      'padding:5px 11px',
+      'border-radius:8px',
+      'padding:5px 10px',
       'cursor:pointer',
       'font-size:12px',
-      'font-family:inherit',
-      'transition:background .15s',
+      'font-family:var(--primary-font-family,sans-serif)',
+      'transition:background .15s, box-shadow .15s',
+      'white-space:nowrap',
     ].join(';');
     return btn;
   }
 
   private _removeEditorToolbar() {
-    this._editorToolbar?.remove();
-    this._editorToolbar = null;
+    // Restore HUD to normal camera view + action buttons
+    this._buildCameraViewBar();
+    if (!this._hudRight) return;
+    this._hudRight.innerHTML = '';
+    const ui = this._config?.ui ?? {};
+    const icons = ui.icons ?? {};
+    if (ui.show_simulation !== false && this._simBtn) {
+      this._hudRight.appendChild(this._simBtn);
+    }
+    if (ui.show_lock !== false && this.lockBtn) {
+      this._hudRight.appendChild(this.lockBtn);
+    }
+    if (ui.show_editor !== false && this.editBtn) {
+      this._hudRight.appendChild(this.editBtn);
+    }
+    if (ui.show_capture !== false && this.captureBtn) {
+      this._hudRight.appendChild(this.captureBtn);
+    }
+    // Update separator visibility
+    const hasViews = !!(this._config?.camera_views?.length);
+    const hasActions = this._hudRight.children.length > 0;
+    if (this._hudSep) this._hudSep.style.display = (hasViews && hasActions) ? 'block' : 'none';
+    void icons; // silence unused warning
   }
 
   // ── Three.js init ─────────────────────────────────────────────────────
@@ -966,53 +1030,41 @@ class Ha3dFloorplan extends HTMLElement {
   // ── Camera views ──────────────────────────────────────────────────────
 
   private _buildCameraViewBar() {
-    this._viewBar?.remove();
-    this._viewBar = null;
+    if (!this._hudLeft) return;
+    this._hudLeft.innerHTML = '';
+
     const views = this._config?.camera_views;
-    if (!views?.length) return;
+    const hasViews = !!(views?.length);
+    const hasActions = !!(this._hudRight && this._hudRight.children.length > 0);
+    if (this._hudSep) this._hudSep.style.display = (hasViews && hasActions) ? 'block' : 'none';
+    if (!hasViews) return;
 
-    const bar = document.createElement('div');
-    bar.style.cssText = [
-      'position:absolute', 'bottom:12px', 'left:50%',
-      'transform:translateX(-50%)',
-      'display:flex', 'gap:6px', 'align-items:center',
-      'background:rgba(0,0,0,.45)',
-      'backdrop-filter:blur(6px)', '-webkit-backdrop-filter:blur(6px)',
-      'border:1px solid rgba(255,255,255,0.1)',
-      'border-radius:20px', 'padding:5px 10px',
-      'z-index:10', 'pointer-events:none',
-      'opacity:0', 'transition:opacity .25s ease',
-    ].join(';');
-
-    views.forEach((v) => {
+    views!.forEach((v) => {
       const btn = document.createElement('button');
       btn.textContent = v.label;
       btn.style.cssText = [
         'background:transparent', 'border:none',
-        'color:rgba(255,255,255,0.75)', 'cursor:pointer',
-        'padding:3px 10px', 'font-size:12px',
+        'color:rgba(255,255,255,0.72)', 'cursor:pointer',
+        'padding:3px 9px', 'font-size:12px',
         'font-family:var(--primary-font-family,sans-serif)',
-        'border-radius:12px', 'transition:background .15s,color .15s',
-        'pointer-events:auto',
+        'border-radius:14px',
+        'transition:background .15s, color .15s',
+        'white-space:nowrap',
       ].join(';');
       btn.addEventListener('mouseenter', () => {
-        btn.style.background = 'rgba(255,255,255,0.15)';
+        btn.style.background = 'rgba(255,255,255,0.12)';
         btn.style.color = '#fff';
       });
       btn.addEventListener('mouseleave', () => {
         btn.style.background = 'transparent';
-        btn.style.color = 'rgba(255,255,255,0.75)';
+        btn.style.color = 'rgba(255,255,255,0.72)';
       });
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         this._flyToView(v);
       });
-      bar.appendChild(btn);
+      this._hudLeft!.appendChild(btn);
     });
-
-    this._viewBar = bar;
-    const card = this.querySelector('ha-card') as HTMLElement;
-    card?.appendChild(bar);
   }
 
   private _flyToView(v: import('./types').CameraView) {
@@ -1454,9 +1506,13 @@ class Ha3dFloorplan extends HTMLElement {
     this.overlays.clear();
     this.anchors.forEach((e) => { e.light?.dispose(); });
     this.anchors.clear();
-    this._removeEditorToolbar();
-    this._viewBar?.remove();
-    this._viewBar = null;
+    this._hud?.remove();
+    this._hud = null;
+    this._hudLeft = null;
+    this._hudSep = null;
+    this._hudRight = null;
+    this._simExpand = null;
+    this._simOpen = false;
     if (this._controlsHideTimer) clearTimeout(this._controlsHideTimer);
     this.modelLoaded = false;
     this._editMode = false;

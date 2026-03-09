@@ -83,6 +83,25 @@ export interface CardConfig {
   tap_to_toggle?: boolean;
   /** If set, anchors within this pixel distance on screen are grouped into a radial menu. Disabled by default. */
   cluster_threshold?: number;
+  /** HUD visibility and icon customisation */
+  ui?: {
+    /** Show the day/weather simulation button (default: true) */
+    show_simulation?: boolean;
+    /** Show the anchor editor button (default: true) */
+    show_editor?: boolean;
+    /** Show the view lock button (default: true) */
+    show_lock?: boolean;
+    /** Show the camera capture button (default: true) */
+    show_capture?: boolean;
+    /** Custom emoji/icon overrides for HUD buttons */
+    icons?: {
+      simulation?: string;
+      editor?: string;
+      lock_open?: string;
+      lock_closed?: string;
+      capture?: string;
+    };
+  };
 }
 
 export interface AnchorEntry {

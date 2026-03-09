@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="docs/assets/logo.png" alt="Owlnest 3D Floorplan" width="30%"/>
-</p>
-
 <h1 style="margin-top:-70px" align="center">Owlnest — 3D Floorplan for Home Assistant</h1>
 
 <p align="center">
@@ -96,7 +92,6 @@ Define named presets for different perspectives (living room, overview, bedroom)
 
 ## 🖼️ Screenshots
 
-> _Add your own screenshots here! Use the simulation panel to capture different times of day._
 
 | Day | Sunset | Night |
 |-----|--------|-------|
