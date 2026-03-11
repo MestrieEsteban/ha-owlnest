@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Owlnest",
+        "description": "Owlnest stocke vos scènes 3D dans Home Assistant. Aucune configuration requise."
+      }
+    },
+    "abort": {
+      "already_configured": "Owlnest est déjà configuré."
+    }
+  }
+}

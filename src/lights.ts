@@ -9,17 +9,24 @@ export function syncLights(
   const scale = config?.intensity_scale ?? 1;
 
   anchors.forEach((entry) => {
+    // Hidden anchors have no light effect
+    if (entry.hidden) {
+      entry.targetIntensity = 0;
+      return;
+    }
+
     const stateObj = hass.states[entry.entityId];
     if (!stateObj) return;
 
     const a = stateObj.attributes;
     const on = stateObj.state === 'on';
+    const intensityMult = entry.lightIntensity ?? 1;
 
     switch (entry.domain) {
       case 'light': {
         if (!on) { entry.targetIntensity = 0; break; }
         const brightness = typeof a.brightness === 'number' ? a.brightness / 255 : 1;
-        entry.targetIntensity = brightness * scale * 3;
+        entry.targetIntensity = brightness * scale * 3 * intensityMult;
         if (Array.isArray(a.rgb_color)) {
           const [r, g, b] = a.rgb_color as number[];
           entry.targetColor.setRGB(r / 255, g / 255, b / 255);
@@ -57,7 +64,6 @@ export function syncLights(
         entry.targetColor.set(0x9966ff);
         break;
       case 'sensor':
-        // read-only — targetIntensity used for overlay active state only
         entry.targetIntensity = 1;
         entry.targetColor.set(0x00cc88);
         break;

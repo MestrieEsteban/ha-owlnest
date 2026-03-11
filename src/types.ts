@@ -10,6 +10,8 @@ export type EntityDomain =
   | 'binary_sensor'
   | string;
 
+export type LightStyle = 'point' | 'spot' | 'beam';
+
 export interface HassState {
   state: string;
   attributes: Record<string, unknown>;
@@ -29,16 +31,51 @@ export interface CameraView {
   target?: [number, number, number];
 }
 
-/** New anchor format stored in YAML config */
+/** Anchor config stored in YAML (legacy) or derived from an OwlnestScene */
 export interface AnchorConfig {
   entity: string;
   position: [number, number, number];
   label?: string;
+  hidden?: boolean;
+  lightStyle?: LightStyle;
+  lightIntensity?: number;
+  lightDirection?: [number, number, number];
 }
 
-export interface CardConfig {
+// ── Owlnest scene (backend-persisted) ─────────────────────────────────────
+
+/** A single anchor as stored in an Owlnest scene */
+export interface OwlnestAnchor {
+  id: string;
+  entity: string;
+  label?: string;
+  position: [number, number, number];
+  visible?: boolean;
+  variant?: string;
+  lightStyle?: LightStyle;
+  lightIntensity?: number;
+  lightDirection?: [number, number, number];
+}
+
+/**
+ * A full Owlnest scene, persisted by the backend integration.
+ * camera_views, panels and rules are reserved for future use.
+ */
+export interface OwlnestScene {
+  version: number;
+  scene_id: string;
   model_url: string;
-  /** Old format: { ha_anchor_name: 'entity_id' } or new format: AnchorConfig[] */
+  anchors: OwlnestAnchor[];
+  camera_views: CameraView[];
+  panels: unknown[];
+  rules: unknown[];
+}
+
+// ── Lovelace card config ───────────────────────────────────────────────────
+
+export interface CardConfig {
+  scene_id?: string;
+  model_url?: string;
   anchors?: Record<string, string> | AnchorConfig[];
   show_debug_anchors?: boolean;
   intensity_scale?: number;
@@ -58,42 +95,24 @@ export interface CardConfig {
   };
   camera_views?: CameraView[];
   rendering?: {
-    /** Overall brightness multiplier (default: 1.4) */
     exposure?: number;
-    /** Sun directional light intensity (default: 0.8) */
     sun_intensity?: number;
-    /** Hemisphere ambient intensity (default: 0.7) */
     ambient_intensity?: number;
-    /** Enable soft shadows (default: true) */
     shadows?: boolean;
-    /** Procedural sky (default: true). Set false for plain background */
     sky?: boolean;
-    /** Default sun elevation in degrees when no sun_entity (default: 60) */
     sky_elevation?: number;
-    /** Fog density — higher = more fog (default: 0.018) */
     fog_density?: number;
-    /** Ground plane color as hex string e.g. "#4a6741" (default: green) */
     ground_color?: string;
-    /** Background color when sky is disabled, hex string (default: "#0d1117") */
     background_color?: string;
-    /** Transparent background — card blends into the HA dashboard (default: false) */
     transparent_background?: boolean;
   };
-  /** If true, overlays start hidden; single tap shows/hides them */
   tap_to_toggle?: boolean;
-  /** If set, anchors within this pixel distance on screen are grouped into a radial menu. Disabled by default. */
   cluster_threshold?: number;
-  /** HUD visibility and icon customisation */
   ui?: {
-    /** Show the day/weather simulation button (default: true) */
     show_simulation?: boolean;
-    /** Show the anchor editor button (default: true) */
     show_editor?: boolean;
-    /** Show the view lock button (default: true) */
     show_lock?: boolean;
-    /** Show the camera capture button (default: true) */
     show_capture?: boolean;
-    /** Custom emoji/icon overrides for HUD buttons */
     icons?: {
       simulation?: string;
       editor?: string;
@@ -104,14 +123,21 @@ export interface CardConfig {
   };
 }
 
+// ── Runtime types ──────────────────────────────────────────────────────────
+
 export interface AnchorEntry {
-  light: THREE.PointLight | null;
+  light: THREE.PointLight | THREE.SpotLight | null;
+  lightTarget?: THREE.Object3D;
   worldPos: THREE.Vector3;
   entityId: string;
   domain: EntityDomain;
   targetIntensity: number;
   targetColor: THREE.Color;
   label: string;
+  hidden?: boolean;
+  lightStyle?: LightStyle;
+  lightIntensity?: number;
+  lightDirection?: [number, number, number];
 }
 
 export interface SavedView {
@@ -125,4 +151,8 @@ export interface EditableAnchor {
   entity: string;
   position: THREE.Vector3;
   label: string;
+  hidden?: boolean;
+  lightStyle?: LightStyle;
+  lightIntensity?: number;
+  lightDirection?: [number, number, number];
 }
