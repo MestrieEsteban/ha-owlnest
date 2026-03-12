@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+export type { SceneCard, RoomCard, EntityCard, InfoCard, SceneCardType, SceneCardSize } from './cards/types';
 
 export type EntityDomain =
   | 'light'
@@ -32,28 +33,6 @@ export interface CameraView {
   target: [number, number, number];    // Always required (defaults [0,0,0] on old data)
 }
 
-// ── 3D Panel types ─────────────────────────────────────────────────────────
-
-export type PanelBlock =
-  | { type: 'heading'; text: string; color?: string }
-  | { type: 'entity';  entity_id: string; label?: string }
-  | { type: 'metric';  entity_id: string; label?: string; unit?: string }
-  | { type: 'badge';   entity_id: string; label?: string }
-  | { type: 'button';  label: string; entity_id: string; service: string; domain: string }
-  | { type: 'divider' }
-  | { type: 'text';    content: string; color?: string }
-
-export interface Panel3D {
-  id: string;
-  name: string;
-  position: [number, number, number];
-  rotation?: [number, number, number];  // euler XYZ radians; absent = billboard mode
-  scale?: number;                        // world-space width in metres, default 1.2
-  billboard?: boolean;                   // default true — always face camera
-  blocks: PanelBlock[];
-  visible?: boolean;                     // default true
-}
-
 /** Anchor config stored in YAML (legacy) or derived from an OwlnestScene */
 export interface AnchorConfig {
   entity: string;
@@ -80,17 +59,14 @@ export interface OwlnestAnchor {
   lightDirection?: [number, number, number];
 }
 
-/**
- * A full Owlnest scene, persisted by the backend integration.
- * camera_views, panels and rules are reserved for future use.
- */
+/** A full Owlnest scene, persisted by the backend integration. */
 export interface OwlnestScene {
   version: number;
   scene_id: string;
   model_url: string;
   anchors: OwlnestAnchor[];
   camera_views: CameraView[];
-  panels: Panel3D[];
+  cards: import('./cards/types').SceneCard[];
   rules: unknown[];
 }
 
@@ -131,7 +107,7 @@ export interface CardConfig {
   };
   tap_to_toggle?: boolean;
   cluster_threshold?: number;
-  panels?: Panel3D[];
+  custom_css?: string;
   ui?: {
     show_simulation?: boolean;
     show_editor?: boolean;

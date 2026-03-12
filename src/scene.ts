@@ -82,6 +82,7 @@ export function sceneToEffectiveConfig(scene: OwlnestScene, base: CardConfig): C
     camera_views: scene.camera_views?.length
       ? normalizeViews(scene.camera_views)
       : (base.camera_views ? normalizeViews(base.camera_views) : []),
+    // cards live in the scene only, not in Lovelace YAML
   };
 }
 
@@ -122,7 +123,7 @@ export function buildSceneFromEditor(
     model_url: current?.model_url ?? baseConfig.model_url ?? '',
     anchors,
     camera_views: cameraViews ?? (current?.camera_views ?? []),
-    panels: current?.panels ?? [],
+    cards: current?.cards ?? [],
     rules: current?.rules ?? [],
   };
 }

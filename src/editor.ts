@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { EditableAnchor, LightStyle } from './types';
 
-export type EditorTool = 'select' | 'add' | 'delete' | 'rotate';
+export type EditorTool = 'select' | 'add' | 'delete' | 'rotate' | 'add_panel';
 
 type AnchorSnap = {
   key: string; entity: string; label: string;

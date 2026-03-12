@@ -15,6 +15,9 @@ import { EnvironmentController } from './card/environment';
 import { SimulationPanel } from './card/simulation';
 import { ViewManager } from './card/view-manager';
 import { EditPanel } from './card/edit-panel';
+import { SceneCardRenderer } from './cards/renderer';
+import { PanelGizmo } from './panels/gizmo';
+import type { SceneCard, SceneCardType } from './cards/types';
 
 type AnyOverlay = AnchorOverlay | SensorOverlay;
 
@@ -88,6 +91,30 @@ class Ha3dFloorplan extends HTMLElement {
   private _viewMgr: ViewManager | null = null;
   private _editPanel: EditPanel | null = null;
 
+  // 3D Scene cards
+  private _cardRenderer: SceneCardRenderer | null = null;
+  private _cardPlacementMode = false;
+  private _cardPlacementType: SceneCardType | null = null;
+
+  // Card selection & grab
+  private _selectedCardId: string | null = null;
+  private _cardGrabMode = false;
+  private _cardGrabOrigin: [number, number, number] | null = null;
+  private _cardGrabPlane = new THREE.Plane();
+  private _cardGrabRaycaster = new THREE.Raycaster();
+  private _cardFocusId: string | null = null;
+
+  // Card gizmo (shared with anchor editing)
+  private _panelGizmo: PanelGizmo | null = null;
+  private _gizmoDragAxis: 'x' | 'y' | 'z' | null = null;
+  private _gizmoDragStartIntersect = new THREE.Vector3();
+  private _gizmoDragCardStartPos = new THREE.Vector3();
+  private _gizmoDragPlane = new THREE.Plane();
+  private _preFocusPos: THREE.Vector3 | null = null;
+  private _preFocusTarget: THREE.Vector3 | null = null;
+  private _lastClickTime = 0;
+  private _lastClickCardId: string | null = null;
+
   private _requestRender() { this._dirty = true; }
 
   // ── Persistence ───────────────────────────────────────────────────────
@@ -143,6 +170,10 @@ class Ha3dFloorplan extends HTMLElement {
       syncLights(this.anchors, hass, this._effectiveConfig);
       this._updateOverlayStates();
       this._env?.updateFromHass(hass);
+      const cards = this._scene?.cards ?? [];
+      if (cards.length > 0) {
+        this._cardRenderer?.updateStates(hass);
+      }
       this._requestRender();
     }
   }
@@ -251,6 +282,14 @@ class Ha3dFloorplan extends HTMLElement {
       'position:absolute;inset:0;pointer-events:none;overflow:hidden;';
     card.appendChild(this.overlayContainer);
 
+    // Inject custom CSS if configured
+    if (this._config?.custom_css) {
+      const styleEl = document.createElement('style');
+      styleEl.id = 'owlnest-custom-css';
+      styleEl.textContent = this._config.custom_css;
+      card.appendChild(styleEl);
+    }
+
     // ── Unified HUD ───────────────────────────────────────────────────────
     const ui = this._config?.ui ?? {};
     const uiIcons = ui.icons ?? {};
@@ -338,18 +377,245 @@ class Ha3dFloorplan extends HTMLElement {
     // Touch — show HUD for 4 seconds on tap
     card.addEventListener('touchstart', () => this._showControlsTemporarily(), { passive: true });
 
-    // Canvas tap detection for overlay toggle
+    // Canvas tap detection for overlay toggle + panel direct drag in edit mode
     this.canvas!.addEventListener('pointerdown', (e) => {
       this._tapStartTime = e.timeStamp;
       this._tapStartPos = { x: e.clientX, y: e.clientY };
+
+      // Edit mode: start panel drag directly on pointerdown (no G key needed)
+      if (this._editMode && e.button === 0 && !this._cardPlacementMode && this.camera && this.canvas) {
+        const rect = this.canvas!.getBoundingClientRect();
+        const ndc = new THREE.Vector2(
+          ((e.clientX - rect.left) / rect.width) * 2 - 1,
+          -((e.clientY - rect.top) / rect.height) * 2 + 1,
+        );
+
+        // First: check gizmo handles if a card is selected
+        if (this._selectedCardId && this._panelGizmo?.visible) {
+          const gizmoRay = new THREE.Raycaster();
+          gizmoRay.setFromCamera(ndc, this.camera!);
+          const gizmoHits = gizmoRay.intersectObjects(this._panelGizmo.getMeshes(), false);
+          if (gizmoHits.length) {
+            const axis = this._panelGizmo.getAxis(gizmoHits[0].object as THREE.Mesh);
+            if (axis) {
+              const card = this._cardRenderer?.getCard(this._selectedCardId)!;
+              const cardPos = new THREE.Vector3(...card.position);
+              this._gizmoDragAxis = axis;
+              this._gizmoDragCardStartPos.copy(cardPos);
+
+              // Compute drag plane: perpendicular to the camera's view direction on the chosen axis
+              const axisVec = axis === 'x' ? new THREE.Vector3(1, 0, 0)
+                : axis === 'y' ? new THREE.Vector3(0, 1, 0)
+                : new THREE.Vector3(0, 0, 1);
+              const camFwd = new THREE.Vector3();
+              this.camera!.getWorldDirection(camFwd);
+              let planeNormal = new THREE.Vector3().crossVectors(axisVec, camFwd);
+              if (planeNormal.lengthSq() < 0.001) planeNormal.set(0, 1, 0);
+              else planeNormal.normalize();
+              this._gizmoDragPlane.setFromNormalAndCoplanarPoint(planeNormal, cardPos);
+
+              // Get initial intersection point on the drag plane
+              gizmoRay.ray.intersectPlane(this._gizmoDragPlane, this._gizmoDragStartIntersect);
+
+              if (this.controls) this.controls.enabled = false;
+              e.stopPropagation();
+              return;
+            }
+          }
+        }
+
+        // Then: check card mesh hit
+        const hit = this._cardRenderer?.handleClick(ndc);
+        if (hit) {
+          this._selectedCardId = hit;
+          this._cardRenderer?.setSelectedId(hit);
+          this._editor?.selectAnchor('');
+          this._editPanel?.updateAnchorList();
+          const card = this._cardRenderer?.getCard(hit);
+          if (card) {
+            // Show gizmo at card position
+            const cardPos = new THREE.Vector3(...card.position);
+            this._panelGizmo?.setPosition(cardPos);
+            this._panelGizmo?.setVisible(true);
+            this._panelGizmo?.updateScale(this.camera!);
+
+            this._cardGrabMode = true;
+            this._cardGrabOrigin = [...card.position] as [number, number, number];
+            const camFwd = new THREE.Vector3();
+            this.camera!.getWorldDirection(camFwd);
+            camFwd.negate();
+            this._cardGrabPlane.setFromNormalAndCoplanarPoint(camFwd, cardPos);
+            if (this.controls) this.controls.enabled = false;
+          }
+        }
+      }
     });
+
+    this.canvas!.addEventListener('pointermove', (e) => {
+      if (!this.camera || !this.canvas) return;
+      const rect = this.canvas!.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -((e.clientY - rect.top) / rect.height) * 2 + 1,
+      );
+
+      // Gizmo hover highlight (when not dragging)
+      if (this._editMode && this._selectedCardId && this._panelGizmo?.visible && !this._gizmoDragAxis && !this._cardGrabMode) {
+        const hoverRay = new THREE.Raycaster();
+        hoverRay.setFromCamera(ndc, this.camera!);
+        const hoverHits = hoverRay.intersectObjects(this._panelGizmo.getMeshes(), false);
+        const hovAxis = hoverHits.length ? this._panelGizmo.getAxis(hoverHits[0].object as THREE.Mesh) : null;
+        this._panelGizmo.setHover(hovAxis);
+      }
+
+      // Card hover highlight (normal mode)
+      if (!this._editMode && this._cardRenderer) {
+        const hoveredId = this._cardRenderer.handleHover(ndc);
+        this._cardRenderer.setHoveredId(hoveredId);
+      }
+
+      // Gizmo axis drag
+      if (this._gizmoDragAxis && this._selectedCardId) {
+        const dragRay = new THREE.Raycaster();
+        dragRay.setFromCamera(ndc, this.camera!);
+        const currentIntersect = new THREE.Vector3();
+        if (dragRay.ray.intersectPlane(this._gizmoDragPlane, currentIntersect)) {
+          const delta = currentIntersect.clone().sub(this._gizmoDragStartIntersect);
+          const axisVec = this._gizmoDragAxis === 'x' ? new THREE.Vector3(1, 0, 0)
+            : this._gizmoDragAxis === 'y' ? new THREE.Vector3(0, 1, 0)
+            : new THREE.Vector3(0, 0, 1);
+          const movement = delta.dot(axisVec);
+          const newPos = this._gizmoDragCardStartPos.clone().addScaledVector(axisVec, movement);
+          this._cardRenderer?.previewPosition(this._selectedCardId, newPos);
+          this._panelGizmo?.setPosition(newPos);
+          this._requestRender();
+        }
+        return;
+      }
+
+      // Card free drag (grab mode)
+      if (this._cardGrabMode && this._selectedCardId) {
+        this._cardGrabRaycaster.setFromCamera(ndc, this.camera!);
+        const target = new THREE.Vector3();
+        if (this._cardGrabRaycaster.ray.intersectPlane(this._cardGrabPlane, target)) {
+          this._cardRenderer?.previewPosition(this._selectedCardId, target);
+          this._panelGizmo?.setPosition(target);
+          this._requestRender();
+        }
+      }
+    });
+
     this.canvas!.addEventListener('pointerup', (e) => {
-      if (this._editMode) return;
+      // Gizmo axis drag end — confirm position
+      if (this._gizmoDragAxis && e.button === 0) {
+        this._gizmoDragAxis = null;
+        if (this.controls) this.controls.enabled = !this._locked;
+        this._panelGizmo?.setHover(null);
+
+        if (this._selectedCardId) {
+          const mesh = this._cardRenderer?.getMeshes().find(m => m.userData.cardId === this._selectedCardId);
+          if (mesh) {
+            const newPos: [number, number, number] = [
+              +mesh.position.x.toFixed(4),
+              +mesh.position.y.toFixed(4),
+              +mesh.position.z.toFixed(4),
+            ];
+            const cards = (this._scene?.cards ?? []).map(c =>
+              c.id === this._selectedCardId ? { ...c, position: newPos } : c,
+            );
+            this._saveCardsDirect(cards);
+          }
+        }
+        return;
+      }
+
+      // Card grab confirm or cancel (if barely moved = select only)
+      if (this._cardGrabMode && e.button === 0) {
+        const dx = e.clientX - this._tapStartPos.x;
+        const dy = e.clientY - this._tapStartPos.y;
+        if (Math.hypot(dx, dy) < 5) {
+          // Just a click to select, not a real drag — cancel without saving
+          this._cardGrabMode = false;
+          this._cardGrabOrigin = null;
+          if (this.controls) this.controls.enabled = !this._locked;
+          this._editPanel?.hideStatusBar();
+        } else {
+          this._confirmCardGrab();
+        }
+        return;
+      }
+
       const dt = e.timeStamp - this._tapStartTime;
       const dx = e.clientX - this._tapStartPos.x;
       const dy = e.clientY - this._tapStartPos.y;
-      if (dt < 250 && Math.hypot(dx, dy) < 10 && this._config?.tap_to_toggle) {
-        this._toggleOverlays();
+      const isTap = dt < 250 && Math.hypot(dx, dy) < 10;
+
+      // Edit mode
+      if (this._editMode && isTap) {
+        const rect = this.canvas!.getBoundingClientRect();
+        const ndc = new THREE.Vector2(
+          ((e.clientX - rect.left) / rect.width) * 2 - 1,
+          -((e.clientY - rect.top) / rect.height) * 2 + 1,
+        );
+
+        // Card placement mode takes priority
+        if (this._cardPlacementMode && this._cardPlacementType && this.scene && this.camera) {
+          const raycaster = new THREE.Raycaster();
+          raycaster.setFromCamera(ndc, this.camera!);
+          const objects: THREE.Object3D[] = [];
+          this.scene!.traverse((o) => { if ((o as THREE.Mesh).isMesh && !o.userData.cardId) objects.push(o); });
+          const hits = raycaster.intersectObjects(objects, false);
+          const pos: [number, number, number] = hits.length
+            ? [+hits[0].point.x.toFixed(3), +(hits[0].point.y + 0.5).toFixed(3), +hits[0].point.z.toFixed(3)]
+            : [0, 1, 0];
+          this._placeNewCard(this._cardPlacementType, pos);
+          return;
+        }
+
+        // Deselect if clicked outside a card
+        const hit = this._cardRenderer?.handleClick(ndc);
+        if (!hit && this._selectedCardId) {
+          this._selectedCardId = null;
+          this._cardRenderer?.setSelectedId(null);
+          this._panelGizmo?.setVisible(false);
+          this._editPanel?.updateAnchorList();
+        }
+        return;
+      }
+
+      if (this._editMode) return;
+
+      // Card fly-to double click (normal mode)
+      if (isTap) {
+        const rect = this.canvas!.getBoundingClientRect();
+        const ndc = new THREE.Vector2(
+          ((e.clientX - rect.left) / rect.width) * 2 - 1,
+          -((e.clientY - rect.top) / rect.height) * 2 + 1,
+        );
+        const hitCardId = this._cardRenderer?.handleClick(ndc);
+        if (hitCardId) {
+          const now = e.timeStamp;
+          if (now - this._lastClickTime < 400 && this._lastClickCardId === hitCardId) {
+            if (this._cardFocusId === hitCardId) {
+              this._exitCardFocus();
+            } else {
+              this._enterCardFocus(hitCardId);
+            }
+            this._lastClickTime = 0;
+            this._lastClickCardId = null;
+          } else {
+            this._lastClickTime = now;
+            this._lastClickCardId = hitCardId;
+          }
+          return;
+        } else {
+          this._lastClickCardId = null;
+        }
+
+        // Tap to toggle overlays
+        if (this._config?.tap_to_toggle) {
+          this._toggleOverlays();
+        }
       }
     });
 
@@ -516,6 +782,14 @@ class Ha3dFloorplan extends HTMLElement {
       () => this._syncEditorLightsToScene(),
       () => this._requestRender(),
       () => this._rebuildNormalHUD(),
+      () => this._scene?.cards ?? [],
+      async (cards) => this._saveCardsDirect(cards),
+      () => this._selectedCardId,
+      (id) => {
+        this._selectedCardId = id;
+        this._cardRenderer?.setSelectedId(id);
+      },
+      (type) => this._startCardPlacement(type),
     );
 
     this._editor.onChanged = () => {
@@ -541,8 +815,13 @@ class Ha3dFloorplan extends HTMLElement {
       this._editPanel?.scheduleAutoSave();  // save once when drag finishes
     };
     this._editor.onSelectionChange = () => this._editPanel?.updateAnchorList();
+    this._editor.onToolChange = (_tool) => {
+      // Card placement is triggered from the sidebar, not from a tool button
+    };
     this._editor.setHass(this._hass);
     this._editor.activate(editable);
+
+    document.addEventListener('keydown', this._onCardKeyDown);
 
     this._editPanel.showToolbar();
     this._requestRender();
@@ -576,6 +855,18 @@ class Ha3dFloorplan extends HTMLElement {
       this.editBtn.style.boxShadow = 'none';
       this.editBtn.title = 'Editer les ancres';
     }
+
+    document.removeEventListener('keydown', this._onCardKeyDown);
+    this._selectedCardId = null;
+    this._cardGrabMode = false;
+    this._cardPlacementMode = false;
+    this._cardPlacementType = null;
+    this._gizmoDragAxis = null;
+    this._cardRenderer?.setSelectedId(null);
+    this._cardRenderer?.setHoveredId(null);
+    this._panelGizmo?.setVisible(false);
+    this._panelGizmo?.setHover(null);
+    if (this.controls) this.controls.enabled = !this._locked;
 
     // Flush pending auto-save immediately
     if (this._editPanel?.hasPendingSave) {
@@ -656,6 +947,188 @@ class Ha3dFloorplan extends HTMLElement {
     });
   }
 
+  // ── Panel keyboard handler ─────────────────────────────────────────────
+
+  private _onCardKeyDown = (e: KeyboardEvent) => {
+    if (!this._editMode) return;
+    let el: Element | null = document.activeElement;
+    while (el?.shadowRoot) el = el.shadowRoot.activeElement;
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(el?.tagName ?? '')) return;
+
+    // Escape cancels placement mode
+    if (e.key === 'Escape' && this._cardPlacementMode) {
+      this._cardPlacementMode = false;
+      this._cardPlacementType = null;
+      this._editPanel?.hideStatusBar();
+      this._editPanel?.updateAnchorList();
+      e.preventDefault();
+      return;
+    }
+
+    if (!this._selectedCardId) return;
+
+    if ((e.key === 'g' || e.key === 'G') && !this._cardGrabMode) {
+      const card = this._cardRenderer?.getCard(this._selectedCardId);
+      if (!card) return;
+      this._cardGrabMode = true;
+      this._cardGrabOrigin = [...card.position] as [number, number, number];
+      if (this.camera) {
+        const camFwd = new THREE.Vector3();
+        this.camera.getWorldDirection(camFwd);
+        camFwd.negate();
+        this._cardGrabPlane.setFromNormalAndCoplanarPoint(camFwd, new THREE.Vector3(...card.position));
+      } else {
+        this._cardGrabPlane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 0, 1), new THREE.Vector3(...card.position));
+      }
+      this._editPanel?.showStatusBar('Déplacer carte  ·  Entrée confirmer  ·  Esc annuler');
+      e.preventDefault();
+    }
+    if (this._cardGrabMode) {
+      if (e.key === 'Enter') { this._confirmCardGrab(); e.preventDefault(); }
+      if (e.key === 'Escape') { this._cancelCardGrab(); e.preventDefault(); }
+    }
+    if ((e.key === 'Delete' || e.key === 'x' || e.key === 'X') && !this._cardGrabMode) {
+      this._deleteSelectedCard();
+      e.preventDefault();
+    }
+  };
+
+  private _confirmCardGrab() {
+    if (!this._cardGrabMode || !this._selectedCardId) return;
+    this._cardGrabMode = false;
+    this._cardGrabOrigin = null;
+    if (this.controls) this.controls.enabled = !this._locked;
+    this._editPanel?.hideStatusBar();
+
+    const mesh = this._cardRenderer?.getMeshes().find((m) => m.userData.cardId === this._selectedCardId);
+    if (!mesh) return;
+    const newPos: [number, number, number] = [
+      +mesh.position.x.toFixed(4),
+      +mesh.position.y.toFixed(4),
+      +mesh.position.z.toFixed(4),
+    ];
+    this._panelGizmo?.setPosition(mesh.position);
+    this._panelGizmo?.setVisible(true);
+
+    const cards = (this._scene?.cards ?? []).map((c) =>
+      c.id === this._selectedCardId ? { ...c, position: newPos } : c,
+    );
+    this._saveCardsDirect(cards);
+  }
+
+  private _cancelCardGrab() {
+    if (!this._cardGrabMode || !this._selectedCardId || !this._cardGrabOrigin) return;
+    this._cardGrabMode = false;
+    const origPos = new THREE.Vector3(...this._cardGrabOrigin);
+    this._cardRenderer?.previewPosition(this._selectedCardId, origPos);
+    this._cardGrabOrigin = null;
+    if (this.controls) this.controls.enabled = !this._locked;
+    this._editPanel?.hideStatusBar();
+    this._panelGizmo?.setPosition(origPos);
+    this._panelGizmo?.setVisible(true);
+  }
+
+  private _deleteSelectedCard() {
+    if (!this._selectedCardId) return;
+    const cards = (this._scene?.cards ?? []).filter((c) => c.id !== this._selectedCardId);
+    this._selectedCardId = null;
+    this._cardRenderer?.setSelectedId(null);
+    this._panelGizmo?.setVisible(false);
+    this._editPanel?.updateAnchorList();
+    this._saveCardsDirect(cards);
+  }
+
+  /** Activate placement mode: next scene click places a card of the given type. */
+  startCardPlacement(type: SceneCardType) {
+    this._cardPlacementMode = true;
+    this._cardPlacementType = type;
+    this._editPanel?.showStatusBar('Cliquez dans la scène pour placer la carte  ·  Esc annuler');
+  }
+
+  private _startCardPlacement(type: SceneCardType) {
+    this.startCardPlacement(type);
+  }
+
+  private async _placeNewCard(type: SceneCardType, position: [number, number, number]) {
+    const defaults: Partial<SceneCard> = type === 'entity' ? { entity_id: '' } : {};
+    const newCard = {
+      id: `card_${Date.now()}`,
+      type,
+      name: type === 'room' ? 'Pièce' : type === 'entity' ? 'Entité' : 'Info',
+      position,
+      visible: true,
+      size: 'medium' as const,
+      ...defaults,
+    } as SceneCard;
+
+    const cards = [...(this._scene?.cards ?? []), newCard];
+    this._cardPlacementMode = false;
+    this._cardPlacementType = null;
+    this._editPanel?.hideStatusBar();
+
+    await this._saveCardsDirect(cards);
+
+    this._selectedCardId = newCard.id;
+    this._cardRenderer?.setSelectedId(newCard.id);
+    const cardPos = new THREE.Vector3(...position);
+    this._panelGizmo?.setPosition(cardPos);
+    this._panelGizmo?.setVisible(true);
+    if (this.camera) this._panelGizmo?.updateScale(this.camera);
+    this._editPanel?.updateAnchorList();
+  }
+
+  /** Save cards to backend and update local scene. */
+  private async _saveCardsDirect(cards: SceneCard[]) {
+    const sceneId = this._config?.scene_id;
+    const hass = this._hass;
+    const current = this._scene;
+    if (!sceneId || !hass) {
+      if (current) this._scene = { ...current, cards };
+      this._cardRenderer?.syncCards(cards, this._hass);
+      this._editPanel?.updateAnchorList();
+      return;
+    }
+    try {
+      const base = current ?? {
+        version: 1, scene_id: sceneId,
+        model_url: this._config?.model_url ?? '',
+        anchors: [], camera_views: [], cards: [], rules: [],
+      };
+      const updated = { ...base, cards };
+      await saveScene(hass, sceneId, updated);
+      this._scene = updated;
+    } catch (err) {
+      console.error('[Owlnest] Card save failed:', err);
+    }
+    this._cardRenderer?.syncCards(cards, this._hass);
+    this._editPanel?.updateAnchorList();
+  }
+
+  // ── Card fly-to ────────────────────────────────────────────────────────────
+
+  private _enterCardFocus(cardId: string) {
+    if (!this.camera || !this.controls) return;
+    const card = this._cardRenderer?.getCard(cardId);
+    if (!card) return;
+
+    this._preFocusPos = this.camera.position.clone();
+    this._preFocusTarget = this.controls.target.clone();
+    this._cardFocusId = cardId;
+
+    const cardPos = new THREE.Vector3(...card.position);
+    const dir = cardPos.clone().sub(this.camera.position).normalize();
+    const newCamPos = cardPos.clone().sub(dir.multiplyScalar(1.2));
+    this._camAnimTo = { pos: newCamPos, target: cardPos };
+  }
+
+  private _exitCardFocus() {
+    if (!this._preFocusPos || !this._preFocusTarget) return;
+    this._camAnimTo = { pos: this._preFocusPos.clone(), target: this._preFocusTarget.clone() };
+    this._cardFocusId = null;
+    this._preFocusPos = null;
+    this._preFocusTarget = null;
+  }
+
   // ── Rebuild normal HUD (called by EditPanel.hideToolbar) ───────────────
 
   private _rebuildNormalHUD() {
@@ -701,6 +1174,13 @@ class Ha3dFloorplan extends HTMLElement {
     this.scene.fog = rl.transparent_background ? null : new THREE.FogExp2(0x9fc8e8, rl.fog_density ?? 0.018);
 
     this.camera = new THREE.PerspectiveCamera(45, w / h, 0.01, 2000);
+
+    this._cardRenderer = new SceneCardRenderer(
+      this.scene,
+      this.camera,
+      () => this._requestRender(),
+    );
+    this._panelGizmo = new PanelGizmo(this.scene);
     this.camera.position.set(0, 5, 12);
     const shadows = rl.shadows !== false;
 
@@ -814,6 +1294,13 @@ class Ha3dFloorplan extends HTMLElement {
 
     const transitioning = stepTransitions(this.anchors, dt, this._effectiveConfig);
     if (transitioning) this._dirty = true;
+
+    this._cardRenderer?.update();
+
+    // Update gizmo screen-size scale each frame
+    if (this._panelGizmo?.visible && this.camera) {
+      this._panelGizmo.updateScale(this.camera);
+    }
 
     // Step weather particles via SimulationPanel
     this._sim?.step(dt);
@@ -930,6 +1417,13 @@ class Ha3dFloorplan extends HTMLElement {
     );
 
     this._viewMgr.buildHUDBar();
+
+    // Sync cards from scene
+    const cards = this._scene?.cards ?? [];
+    if (cards.length > 0) {
+      this._cardRenderer?.syncCards(cards, this._hass);
+    }
+
     this._requestRender();
   }
 
@@ -1139,6 +1633,10 @@ class Ha3dFloorplan extends HTMLElement {
     this._sim = null;
     this._viewMgr = null;
     this._editPanel = null;
+    this._cardRenderer?.dispose();
+    this._cardRenderer = null;
+    this._panelGizmo?.dispose();
+    this._panelGizmo = null;
     this._clusters.forEach((c) => c.destroy());
     this._clusters.clear();
     this.overlays.forEach((o) => o.destroy());

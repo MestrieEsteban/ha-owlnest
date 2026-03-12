@@ -1,4 +1,6 @@
 import type { Hass, CardConfig, EditableAnchor } from '../types';
+import type { SceneCard, SceneCardType } from '../cards/types';
+import { CARD_SCALE, CARD_DEFAULT_ACCENT, CARD_TYPE_LABELS } from '../cards/types';
 import type { AnchorEditor, EditorTool } from '../editor';
 
 export class EditPanel {
@@ -31,6 +33,11 @@ export class EditPanel {
     private syncLightsToScene: () => void,
     private requestRender: () => void,
     private rebuildNormalHUD: () => void,
+    private getCards?: () => SceneCard[],
+    private saveCards?: (cards: SceneCard[]) => Promise<void>,
+    private getSelectedCardId?: () => string | null,
+    private onSelectCard?: (id: string | null) => void,
+    private onStartCardPlacement?: (type: SceneCardType) => void,
   ) {}
 
   showToolbar() {
@@ -89,7 +96,13 @@ export class EditPanel {
     this.hudLeft.appendChild(redoBtn);
 
     const editor = this.getEditor();
-    if (editor) editor.onToolChange = (t) => setActiveTool(t);
+    if (editor) {
+      const prevOnToolChange = editor.onToolChange;
+      editor.onToolChange = (t) => {
+        setActiveTool(t);
+        prevOnToolChange?.(t);
+      };
+    }
 
     this.hudSep.style.display = 'block';
 
@@ -398,11 +411,83 @@ export class EditPanel {
       list.appendChild(row);
     });
 
-    // Always rebuild props pane content
+    // ── Cartes 3D section ────────────────────────────────────────────────
+    const cards = this.getCards ? this.getCards() : [];
+    const cardsSepRow = document.createElement('div');
+    cardsSepRow.style.cssText = 'display:flex;align-items:center;padding:10px 10px 5px;border-top:1px solid rgba(255,255,255,0.06);margin-top:4px;gap:6px;';
+    const cardsSepLabel = document.createElement('span');
+    cardsSepLabel.style.cssText = 'font-size:9px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.07em;flex:1;';
+    cardsSepLabel.textContent = 'Cartes 3D';
+    const addCardBtn = document.createElement('button');
+    addCardBtn.style.cssText = 'background:rgba(125,209,252,0.12);border:1px solid rgba(125,209,252,0.28);border-radius:6px;color:#7dd3fc;padding:3px 9px;font-size:10px;font-family:inherit;cursor:pointer;white-space:nowrap;transition:all .15s;';
+    addCardBtn.textContent = '+ Ajouter';
+    addCardBtn.addEventListener('click', () => this._showCardTemplatePicker(list, switchTab));
+    cardsSepRow.appendChild(cardsSepLabel);
+    cardsSepRow.appendChild(addCardBtn);
+    list.appendChild(cardsSepRow);
+
+    const devBanner = document.createElement('div');
+    devBanner.style.cssText = 'margin:0 8px 6px;padding:5px 9px;background:rgba(251,191,36,0.07);border:1px solid rgba(251,191,36,0.22);border-radius:6px;display:flex;align-items:center;gap:6px;';
+    devBanner.innerHTML = '<span style="font-size:11px;">⚠️</span><span style="font-size:9px;color:#fbbf24;line-height:1.4;">Fonctionnalité en développement — comportement sujet à changements.</span>';
+    list.appendChild(devBanner);
+
+    const CARD_ICONS: Record<SceneCardType, string> = { room: '🏠', entity: '📊', info: 'ℹ️' };
+    const CARD_COLORS: Record<SceneCardType, string> = { room: '#7dd3fc', entity: '#86efac', info: '#fbbf24' };
+
+    if (cards.length === 0) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'padding:10px 12px;font-size:10px;color:rgba(255,255,255,0.22);text-align:center;';
+      empty.textContent = 'Aucune carte. Cliquez + Ajouter.';
+      list.appendChild(empty);
+    } else {
+      cards.forEach((c) => {
+        const isSelected = this.getSelectedCardId ? this.getSelectedCardId() === c.id : false;
+        const row = document.createElement('div');
+        row.style.cssText = [
+          'display:flex', 'align-items:center', 'gap:8px',
+          'padding:6px 10px', 'cursor:pointer',
+          `background:${isSelected ? 'rgba(59,130,246,0.18)' : 'transparent'}`,
+          `border-left:2px solid ${isSelected ? '#3b82f6' : 'transparent'}`,
+          'transition:background .1s, border-color .1s',
+        ].join(';');
+        if (!isSelected) {
+          row.addEventListener('mouseenter', () => { row.style.background = 'rgba(255,255,255,0.05)'; });
+          row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
+        }
+
+        const iconEl = document.createElement('span');
+        iconEl.style.cssText = 'font-size:16px;flex-shrink:0;';
+        iconEl.textContent = CARD_ICONS[c.type] ?? '▦';
+
+        const col = document.createElement('div');
+        col.style.cssText = 'flex:1;min-width:0;';
+        const nameEl = document.createElement('div');
+        nameEl.style.cssText = 'font-size:12px;font-weight:500;color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.3;';
+        nameEl.textContent = c.name;
+        const subEl = document.createElement('div');
+        subEl.style.cssText = `font-size:10px;color:${CARD_COLORS[c.type] ?? '#7dd3fc'};opacity:0.65;line-height:1.3;`;
+        subEl.textContent = `${CARD_TYPE_LABELS[c.type] ?? c.type} · ${c.size ?? 'medium'}`;
+        col.appendChild(nameEl); col.appendChild(subEl);
+
+        row.appendChild(iconEl); row.appendChild(col);
+        row.addEventListener('click', () => {
+          if (this.onSelectCard) this.onSelectCard(c.id);
+          switchTab('props');
+        });
+        list.appendChild(row);
+      });
+    }
+
+    // ── Props pane content ───────────────────────────────────────────────
     if (selectedKey && anchors.has(selectedKey)) {
       this._buildPropsSection(propsPane, selectedKey, anchors.get(selectedKey)!);
+    } else if (this.getSelectedCardId?.()) {
+      const selId = this.getSelectedCardId()!;
+      const selCard = (this.getCards ? this.getCards() : []).find((x) => x.id === selId);
+      if (selCard) this._buildCardPropsSection(propsPane, selCard);
+      else propsPane.innerHTML = '<div style="padding:20px 12px;font-size:11px;color:rgba(255,255,255,0.25);text-align:center;">Sélectionne une ancre ou une carte</div>';
     } else {
-      propsPane.innerHTML = '<div style="padding:20px 12px;font-size:11px;color:rgba(255,255,255,0.25);text-align:center;">Sélectionne une ancre</div>';
+      propsPane.innerHTML = '<div style="padding:20px 12px;font-size:11px;color:rgba(255,255,255,0.25);text-align:center;">Sélectionne une ancre ou une carte</div>';
     }
   }
 
@@ -748,4 +833,415 @@ export class EditPanel {
   }
 
   get hasPendingSave() { return this._saveStatus === 'unsaved' && this._autoSaveTimer !== null; }
+
+  /** Show a template picker inside the list area; clicking places a card in the scene. */
+  private _showCardTemplatePicker(list: HTMLDivElement, switchTab: (tab: 'anchors' | 'props') => void) {
+    void switchTab; // may be used later for flow refinement
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'padding:10px;background:rgba(5,9,20,0.97);border-top:1px solid rgba(255,255,255,0.08);';
+
+    const title = document.createElement('div');
+    title.style.cssText = 'font-size:9px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px;';
+    title.textContent = 'Choisir un modèle';
+    overlay.appendChild(title);
+
+    const templates: { type: SceneCardType; icon: string; label: string; desc: string; color: string }[] = [
+      { type: 'room',   icon: '🏠', label: 'Pièce',  desc: 'Vue synthèse d\'une pièce',   color: '#7dd3fc' },
+      { type: 'entity', icon: '📊', label: 'Entité', desc: 'Focus sur une entité HA',     color: '#86efac' },
+      { type: 'info',   icon: 'ℹ️',  label: 'Info',   desc: 'Label contextuel décoratif', color: '#fbbf24' },
+    ];
+
+    templates.forEach(({ type, icon, label, desc, color }) => {
+      const btn = document.createElement('button');
+      btn.style.cssText = [
+        'display:flex', 'align-items:center', 'gap:10px',
+        'width:100%', 'padding:9px 10px', 'margin-bottom:5px',
+        'background:rgba(255,255,255,0.04)', 'border:1px solid rgba(255,255,255,0.08)',
+        'border-radius:8px', 'cursor:pointer', 'font-family:inherit',
+        'text-align:left', 'transition:all .15s',
+      ].join(';');
+      btn.innerHTML = `
+        <span style="font-size:22px;flex-shrink:0;">${icon}</span>
+        <span style="flex:1;min-width:0;">
+          <span style="display:block;font-size:11px;font-weight:700;color:${color};">${label}</span>
+          <span style="display:block;font-size:10px;color:rgba(255,255,255,0.38);margin-top:1px;">${desc}</span>
+        </span>
+        <span style="font-size:16px;color:rgba(255,255,255,0.2);">›</span>
+      `;
+      btn.addEventListener('mouseenter', () => { btn.style.background = 'rgba(255,255,255,0.08)'; btn.style.borderColor = `rgba(${color.slice(1).match(/../g)!.map(h => parseInt(h, 16)).join(',')},0.3)`; });
+      btn.addEventListener('mouseleave', () => { btn.style.background = 'rgba(255,255,255,0.04)'; btn.style.borderColor = 'rgba(255,255,255,0.08)'; });
+      btn.addEventListener('click', () => {
+        overlay.remove();
+        if (this.onStartCardPlacement) this.onStartCardPlacement(type);
+      });
+      overlay.appendChild(btn);
+    });
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.style.cssText = 'width:100%;padding:5px;background:none;border:none;color:rgba(255,255,255,0.3);font-size:10px;font-family:inherit;cursor:pointer;margin-top:2px;';
+    cancelBtn.textContent = 'Annuler';
+    cancelBtn.addEventListener('click', () => overlay.remove());
+    overlay.appendChild(cancelBtn);
+
+    // Insert after the cards sep row (before the first card row or empty state)
+    list.appendChild(overlay);
+  }
+
+  private _buildCardPropsSection(container: HTMLDivElement, card: SceneCard) {
+    container.innerHTML = '';
+
+    const inputStyle = 'width:100%;box-sizing:border-box;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:7px;color:#e2e8f0;padding:6px 9px;font-size:11px;outline:none;font-family:inherit;';
+    const secStyle = 'font-size:9px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.07em;margin:14px 0 7px;padding-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.06);';
+    const lblStyle = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;';
+
+    const hass = this.getHass();
+
+    // Title row
+    const typeIcons: Record<string, string> = { room: '🏠', entity: '💡', info: 'ℹ️' };
+    const title = document.createElement('div');
+    title.style.cssText = 'font-size:12px;font-weight:700;color:#7dd3fc;margin-bottom:2px;display:flex;align-items:center;gap:6px;';
+    title.innerHTML = `<span>${typeIcons[card.type] ?? '▦'}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${card.name}</span>`;
+    container.appendChild(title);
+
+    const sub = document.createElement('div');
+    sub.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.3);margin-bottom:2px;';
+    sub.textContent = `Carte 3D · ${CARD_TYPE_LABELS[card.type]}`;
+    container.appendChild(sub);
+
+    // ── Section: Général ───────────────────────────────────────────────────
+
+    const sec1 = document.createElement('div');
+    sec1.style.cssText = secStyle;
+    sec1.textContent = 'Général';
+    container.appendChild(sec1);
+
+    // Name input
+    const nameWrap = document.createElement('div');
+    nameWrap.style.cssText = 'margin-bottom:8px;';
+    const nameLbl = document.createElement('div');
+    nameLbl.style.cssText = lblStyle;
+    nameLbl.textContent = 'Nom';
+    const nameInp = document.createElement('input');
+    nameInp.value = card.name;
+    nameInp.placeholder = 'Nom de la carte';
+    nameInp.style.cssText = inputStyle;
+    nameInp.addEventListener('change', () => {
+      this._updateCard(card.id, { name: nameInp.value.trim() || 'Sans nom' });
+      title.querySelector('span:last-child')!.textContent = nameInp.value.trim() || 'Sans nom';
+    });
+    nameWrap.appendChild(nameLbl);
+    nameWrap.appendChild(nameInp);
+    container.appendChild(nameWrap);
+
+    // ── Section: Position ──────────────────────────────────────────────────
+
+    const secPos = document.createElement('div');
+    secPos.style.cssText = secStyle;
+    secPos.textContent = 'Position';
+    container.appendChild(secPos);
+
+    const axisLabels: ['X', 'Y', 'Z'] = ['X', 'Y', 'Z'];
+    const axisColors = ['#f87171', '#4ade80', '#60a5fa'];
+    const posRow = document.createElement('div');
+    posRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-bottom:8px;';
+    axisLabels.forEach((ax, i) => {
+      const cell = document.createElement('div');
+      cell.style.cssText = 'display:flex;flex-direction:column;gap:2px;';
+      const lbl = document.createElement('div');
+      lbl.style.cssText = `font-size:9px;font-weight:700;color:${axisColors[i]};text-transform:uppercase;letter-spacing:.06em;text-align:center;`;
+      lbl.textContent = ax;
+      const inp = document.createElement('input');
+      inp.type = 'number';
+      inp.step = '0.01';
+      inp.value = card.position[i].toFixed(3);
+      inp.style.cssText = 'width:100%;box-sizing:border-box;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#e2e8f0;padding:4px 6px;font-size:11px;outline:none;font-family:inherit;text-align:center;';
+      inp.addEventListener('change', () => {
+        const pos: [number, number, number] = [...card.position];
+        pos[i] = parseFloat(inp.value) || 0;
+        this._updateCard(card.id, { position: pos });
+      });
+      cell.appendChild(lbl);
+      cell.appendChild(inp);
+      posRow.appendChild(cell);
+    });
+    container.appendChild(posRow);
+
+    // ── Section: Apparence ─────────────────────────────────────────────────
+
+    const sec2 = document.createElement('div');
+    sec2.style.cssText = secStyle;
+    sec2.textContent = 'Apparence';
+    container.appendChild(sec2);
+
+    // Size presets (small / medium / large)
+    const sizeLbl = document.createElement('div');
+    sizeLbl.style.cssText = lblStyle;
+    sizeLbl.textContent = 'Taille';
+    container.appendChild(sizeLbl);
+
+    const sizeBtnRow = document.createElement('div');
+    sizeBtnRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin-bottom:10px;';
+    const sizePairs: [import('../cards/types').SceneCardSize, string][] = [
+      ['small', 'S (0.6m)'],
+      ['medium', 'M (1.0m)'],
+      ['large', 'L (1.5m)'],
+    ];
+    const sizeButtons: HTMLButtonElement[] = [];
+    sizePairs.forEach(([sz, label]) => {
+      const btn = document.createElement('button');
+      btn.textContent = label;
+      const active = card.size === sz || (!card.size && sz === 'medium');
+      btn.style.cssText = `background:${active ? 'rgba(125,211,252,0.15)' : 'rgba(255,255,255,0.04)'};border:1px solid ${active ? 'rgba(125,211,252,0.5)' : 'rgba(255,255,255,0.1)'};border-radius:6px;color:${active ? '#7dd3fc' : '#94a3b8'};padding:5px 2px;font-size:10px;font-family:inherit;cursor:pointer;transition:all .15s;`;
+      btn.addEventListener('click', () => {
+        this._updateCard(card.id, { size: sz });
+        sizeButtons.forEach((b, j) => {
+          const isSel = sizePairs[j][0] === sz;
+          b.style.background = isSel ? 'rgba(125,211,252,0.15)' : 'rgba(255,255,255,0.04)';
+          b.style.borderColor = isSel ? 'rgba(125,211,252,0.5)' : 'rgba(255,255,255,0.1)';
+          b.style.color = isSel ? '#7dd3fc' : '#94a3b8';
+        });
+      });
+      sizeButtons.push(btn);
+      sizeBtnRow.appendChild(btn);
+    });
+    container.appendChild(sizeBtnRow);
+
+    // Accent color
+    const colorWrap = document.createElement('div');
+    colorWrap.style.cssText = 'margin-bottom:10px;';
+    const colorLbl = document.createElement('div');
+    colorLbl.style.cssText = lblStyle;
+    colorLbl.textContent = 'Couleur accent';
+    const colorRow = document.createElement('div');
+    colorRow.style.cssText = 'display:flex;gap:6px;align-items:center;';
+    const colorInp = document.createElement('input');
+    colorInp.type = 'color';
+    colorInp.value = card.accentColor ?? CARD_DEFAULT_ACCENT[card.type];
+    colorInp.style.cssText = 'width:36px;height:28px;border:none;border-radius:6px;cursor:pointer;padding:2px;background:rgba(255,255,255,0.06);';
+    colorInp.addEventListener('change', () => {
+      colorText.value = colorInp.value;
+      this._updateCard(card.id, { accentColor: colorInp.value });
+    });
+    const colorText = document.createElement('input');
+    colorText.type = 'text';
+    colorText.value = card.accentColor ?? CARD_DEFAULT_ACCENT[card.type];
+    colorText.style.cssText = inputStyle + 'flex:1;padding:4px 8px;font-size:11px;';
+    colorText.addEventListener('change', () => {
+      const v = colorText.value.trim();
+      if (/^#[0-9a-fA-F]{6}$/.test(v)) { colorInp.value = v; this._updateCard(card.id, { accentColor: v }); }
+    });
+    colorInp.addEventListener('input', () => { colorText.value = colorInp.value; });
+    colorRow.appendChild(colorInp);
+    colorRow.appendChild(colorText);
+    colorWrap.appendChild(colorLbl);
+    colorWrap.appendChild(colorRow);
+    container.appendChild(colorWrap);
+
+    // ── Section: Template ──────────────────────────────────────────────────
+
+    const secTpl = document.createElement('div');
+    secTpl.style.cssText = secStyle;
+    secTpl.textContent = CARD_TYPE_LABELS[card.type as import('../cards/types').SceneCardType];
+    container.appendChild(secTpl);
+
+    const mkEntityInput = (val: string, id: string, onChange: (v: string) => void) => {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'margin-bottom:8px;';
+      const dlId = `dl-card-${card.id}-${id}`;
+      const inp = document.createElement('input');
+      inp.value = val;
+      inp.placeholder = 'entity_id…';
+      inp.setAttribute('list', dlId);
+      inp.style.cssText = inputStyle;
+      inp.addEventListener('change', () => onChange(inp.value.trim()));
+      const dl = document.createElement('datalist');
+      dl.id = dlId;
+      if (hass?.states) {
+        Object.keys(hass.states).sort().slice(0, 200).forEach((eid) => {
+          const opt = document.createElement('option'); opt.value = eid; dl.appendChild(opt);
+        });
+      }
+      wrap.appendChild(inp);
+      wrap.appendChild(dl);
+      return wrap;
+    };
+
+    const mkTextInput = (val: string, placeholder: string, onChange: (v: string) => void) => {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'margin-bottom:8px;';
+      const inp = document.createElement('input');
+      inp.value = val;
+      inp.placeholder = placeholder;
+      inp.style.cssText = inputStyle;
+      inp.addEventListener('change', () => onChange(inp.value));
+      wrap.appendChild(inp);
+      return wrap;
+    };
+
+    const mkFieldLabel = (text: string) => {
+      const l = document.createElement('div');
+      l.style.cssText = lblStyle;
+      l.textContent = text;
+      return l;
+    };
+
+    const mkToggle = (label: string, checked: boolean, onChange: (v: boolean) => void) => {
+      const row = document.createElement('label');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:11px;color:#94a3b8;cursor:pointer;margin-bottom:6px;';
+      const chk = document.createElement('input');
+      chk.type = 'checkbox';
+      chk.checked = checked;
+      chk.addEventListener('change', () => onChange(chk.checked));
+      row.appendChild(chk);
+      row.appendChild(document.createTextNode(label));
+      return row;
+    };
+
+    if (card.type === 'room') {
+      // Icon emoji
+      container.appendChild(mkFieldLabel('Icône (emoji)'));
+      container.appendChild(mkTextInput(card.icon ?? '', '🏠', (v) => this._updateCard(card.id, { icon: v || undefined } as Partial<import('../cards/types').RoomCard>)));
+
+      // Entities (up to 4)
+      const maxEntities = 4;
+      const entitiesWrap = document.createElement('div');
+      entitiesWrap.style.cssText = 'margin-bottom:8px;';
+      container.appendChild(mkFieldLabel(`Entités (max ${maxEntities})`));
+      container.appendChild(entitiesWrap);
+
+      const getFreshEntities = (): string[] => {
+        const fresh = (this.getCards?.() ?? []).find((c) => c.id === card.id) as import('../cards/types').RoomCard | undefined;
+        return fresh?.entities ?? [];
+      };
+
+      const renderEntityList = () => {
+        entitiesWrap.innerHTML = '';
+        const entities = getFreshEntities();
+        entities.forEach((eid, idx) => {
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex;gap:4px;align-items:center;margin-bottom:4px;';
+          const dlId = `dl-room-ent-${card.id}-${idx}`;
+          const inp = document.createElement('input');
+          inp.value = eid;
+          inp.placeholder = 'entity_id…';
+          inp.setAttribute('list', dlId);
+          inp.style.cssText = inputStyle + 'flex:1;';
+          inp.addEventListener('change', () => {
+            const newList = [...getFreshEntities()];
+            newList[idx] = inp.value.trim();
+            this._updateCard(card.id, { entities: newList.filter(Boolean) } as Partial<import('../cards/types').RoomCard>);
+          });
+          const dl = document.createElement('datalist');
+          dl.id = dlId;
+          if (hass?.states) {
+            Object.keys(hass.states).sort().slice(0, 200).forEach((e) => {
+              const opt = document.createElement('option'); opt.value = e; dl.appendChild(opt);
+            });
+          }
+          const rmBtn = document.createElement('button');
+          rmBtn.textContent = '×';
+          rmBtn.style.cssText = 'background:none;border:none;color:rgba(248,113,113,0.6);cursor:pointer;font-size:14px;padding:0 4px;line-height:1;';
+          rmBtn.addEventListener('click', () => {
+            const newList = getFreshEntities().filter((_, j) => j !== idx);
+            this._updateCard(card.id, { entities: newList } as Partial<import('../cards/types').RoomCard>);
+            renderEntityList();
+          });
+          row.appendChild(inp); row.appendChild(dl); row.appendChild(rmBtn);
+          entitiesWrap.appendChild(row);
+        });
+        if (entities.length < maxEntities) {
+          const addBtn = document.createElement('button');
+          addBtn.textContent = '+ Entité';
+          addBtn.style.cssText = 'background:rgba(255,255,255,0.04);border:1px dashed rgba(255,255,255,0.15);border-radius:6px;color:#64748b;padding:5px 10px;font-size:10px;font-family:inherit;cursor:pointer;width:100%;';
+          addBtn.addEventListener('click', () => {
+            const newList = [...getFreshEntities(), ''];
+            this._updateCard(card.id, { entities: newList } as Partial<import('../cards/types').RoomCard>);
+            renderEntityList();
+          });
+          entitiesWrap.appendChild(addBtn);
+        }
+      };
+      renderEntityList();
+
+      // Show toggles
+      container.appendChild(mkToggle('Afficher le nom', card.show?.name !== false, (v) => this._updateCard(card.id, { show: { ...card.show, name: v } } as Partial<import('../cards/types').RoomCard>)));
+      container.appendChild(mkToggle('Afficher les états', card.show?.entities !== false, (v) => this._updateCard(card.id, { show: { ...card.show, entities: v } } as Partial<import('../cards/types').RoomCard>)));
+
+    } else if (card.type === 'entity') {
+      // Entity ID
+      container.appendChild(mkFieldLabel('Entité'));
+      container.appendChild(mkEntityInput(card.entity_id ?? '', 'entity', (v) => this._updateCard(card.id, { entity_id: v } as Partial<import('../cards/types').EntityCard>)));
+
+      // Label override
+      container.appendChild(mkFieldLabel('Label (optionnel)'));
+      container.appendChild(mkTextInput(card.label ?? '', 'Automatique', (v) => this._updateCard(card.id, { label: v || undefined } as Partial<import('../cards/types').EntityCard>)));
+
+      // Show toggles
+      container.appendChild(mkToggle('Afficher le label', card.show?.label !== false, (v) => this._updateCard(card.id, { show: { ...card.show, label: v } } as Partial<import('../cards/types').EntityCard>)));
+      container.appendChild(mkToggle('Afficher l\'unité', card.show?.unit !== false, (v) => this._updateCard(card.id, { show: { ...card.show, unit: v } } as Partial<import('../cards/types').EntityCard>)));
+      container.appendChild(mkToggle('Bouton d\'action', card.show?.button === true, (v) => this._updateCard(card.id, { show: { ...card.show, button: v } } as Partial<import('../cards/types').EntityCard>)));
+
+    } else if (card.type === 'info') {
+      // Icon emoji
+      container.appendChild(mkFieldLabel('Icône (emoji)'));
+      container.appendChild(mkTextInput(card.icon ?? '', 'ℹ️', (v) => this._updateCard(card.id, { icon: v || undefined } as Partial<import('../cards/types').InfoCard>)));
+
+      // Subtitle
+      container.appendChild(mkFieldLabel('Sous-titre'));
+      container.appendChild(mkTextInput(card.subtitle ?? '', 'Texte…', (v) => this._updateCard(card.id, { subtitle: v || undefined } as Partial<import('../cards/types').InfoCard>)));
+
+      // Color override
+      container.appendChild(mkFieldLabel('Couleur texte (optionnel)'));
+      const colorOverrideWrap = document.createElement('div');
+      colorOverrideWrap.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:8px;';
+      const colorOInp = document.createElement('input');
+      colorOInp.type = 'color';
+      colorOInp.value = card.color ?? CARD_DEFAULT_ACCENT[card.type];
+      colorOInp.style.cssText = 'width:36px;height:28px;border:none;border-radius:6px;cursor:pointer;padding:2px;background:rgba(255,255,255,0.06);';
+      const colorOText = document.createElement('input');
+      colorOText.type = 'text';
+      colorOText.value = card.color ?? '';
+      colorOText.placeholder = 'Hérite de l\'accent';
+      colorOText.style.cssText = inputStyle + 'flex:1;padding:4px 8px;font-size:11px;';
+      colorOInp.addEventListener('change', () => {
+        colorOText.value = colorOInp.value;
+        this._updateCard(card.id, { color: colorOInp.value } as Partial<import('../cards/types').InfoCard>);
+      });
+      colorOInp.addEventListener('input', () => { colorOText.value = colorOInp.value; });
+      colorOText.addEventListener('change', () => {
+        const v = colorOText.value.trim();
+        if (!v) { this._updateCard(card.id, { color: undefined } as Partial<import('../cards/types').InfoCard>); return; }
+        if (/^#[0-9a-fA-F]{6}$/.test(v)) { colorOInp.value = v; this._updateCard(card.id, { color: v } as Partial<import('../cards/types').InfoCard>); }
+      });
+      colorOverrideWrap.appendChild(colorOInp);
+      colorOverrideWrap.appendChild(colorOText);
+      container.appendChild(colorOverrideWrap);
+
+      // Show toggles
+      container.appendChild(mkToggle('Afficher le nom', card.show?.name !== false, (v) => this._updateCard(card.id, { show: { ...card.show, name: v } } as Partial<import('../cards/types').InfoCard>)));
+      container.appendChild(mkToggle('Afficher le sous-titre', card.show?.subtitle !== false, (v) => this._updateCard(card.id, { show: { ...card.show, subtitle: v } } as Partial<import('../cards/types').InfoCard>)));
+    }
+
+    // ── Section: Actions ───────────────────────────────────────────────────
+
+    const sec3 = document.createElement('div');
+    sec3.style.cssText = secStyle;
+    sec3.textContent = 'Actions';
+    container.appendChild(sec3);
+
+    const delBtn = document.createElement('button');
+    delBtn.style.cssText = 'background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.25);border-radius:8px;color:#f87171;padding:7px 8px;font-size:10px;font-family:inherit;cursor:pointer;width:100%;';
+    delBtn.innerHTML = '✕ Supprimer la carte';
+    delBtn.addEventListener('click', () => {
+      const cards = (this.getCards ? this.getCards() : []).filter((x) => x.id !== card.id);
+      if (this.saveCards) this.saveCards(cards).then(() => { if (this.onSelectCard) this.onSelectCard(null); this.updateAnchorList(); });
+    });
+    container.appendChild(delBtn);
+  }
+
+  private _updateCard(id: string, changes: Partial<SceneCard>) {
+    const cards = (this.getCards ? this.getCards() : []).map((c) => c.id === id ? { ...c, ...changes } : c) as SceneCard[];
+    if (this.saveCards) this.saveCards(cards);
+  }
 }

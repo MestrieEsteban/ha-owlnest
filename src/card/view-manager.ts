@@ -297,7 +297,7 @@ export class ViewManager {
       const base: OwlnestScene = scene ?? {
         version: 1, scene_id: sceneId,
         model_url: this.getEffectiveConfig().model_url ?? '',
-        anchors: [], camera_views: [], panels: [], rules: [],
+        anchors: [], camera_views: [], cards: [], rules: [],
       };
       const updated: OwlnestScene = { ...base, camera_views: views };
       await saveScene(hass, sceneId, updated);
