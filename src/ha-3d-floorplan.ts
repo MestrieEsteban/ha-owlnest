@@ -9,9 +9,12 @@ import { loadGLTF, detectAnchors, buildAnchorsFromEditable, rebuildAnchorLight, 
 import { AnchorOverlay, SensorOverlay, ClusterOverlay } from './overlay';
 import type { ClusterItem } from './overlay';
 import { AnchorEditor } from './editor';
-import { loadScene, saveScene, sceneToEffectiveConfig, buildSceneFromEditor, captureCameraView, normalizeViews } from './scene';
-import type { CameraView } from './types';
+import { loadScene, saveScene, sceneToEffectiveConfig, buildSceneFromEditor } from './scene';
 import './card-editor';
+import { EnvironmentController } from './card/environment';
+import { SimulationPanel } from './card/simulation';
+import { ViewManager } from './card/view-manager';
+import { EditPanel } from './card/edit-panel';
 
 type AnyOverlay = AnchorOverlay | SensorOverlay;
 
@@ -36,7 +39,6 @@ class Ha3dFloorplan extends HTMLElement {
   private _hudSep: HTMLDivElement | null = null;
   private _hudRight: HTMLDivElement | null = null;
   private _simExpand: HTMLDivElement | null = null;
-  private _simOpen = false;
   private _lockOpenIcon = '🔓';
   private _lockClosedIcon = '🔒';
   private overlayContainer: HTMLDivElement | null = null;
@@ -70,28 +72,21 @@ class Ha3dFloorplan extends HTMLElement {
   private _sunLight: THREE.DirectionalLight | null = null;
   private _sky: Sky | null = null;
 
-  // Weather
-  private _weatherParticles: THREE.Object3D | null = null;
-  private _weatherType: 'none' | 'rain' | 'snow' = 'none';
   private _modelBox = new THREE.Box3();
 
-  // Day simulation
+  // Day simulation button
   private _simBtn: HTMLButtonElement | null = null;
-  private _simActive = false;
-  private _simHour = 12;
-  private _simWeather: 'clear' | 'cloudy' | 'rain' | 'snow' = 'clear';
 
   // Anchor editor
   private _editor: AnchorEditor | null = null;
   private _modelRoot: THREE.Object3D | null = null;
-  private _anchorListPanel: HTMLDivElement | null = null;
-  private _viewManagerPanel: HTMLDivElement | null = null;
-  private _viewsSaving = false;
-  private _autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
-  private _saveStatus: 'saved' | 'unsaved' | 'saving' = 'saved';
   private _savePending = false;  // true while a callWS is in flight
-  private _editorDragging = false;
-  private _gizmoDragging = false;  // true while XYZ gizmo arrow is held
+
+  // Modules
+  private _env: EnvironmentController | null = null;
+  private _sim: SimulationPanel | null = null;
+  private _viewMgr: ViewManager | null = null;
+  private _editPanel: EditPanel | null = null;
 
   private _requestRender() { this._dirty = true; }
 
@@ -147,7 +142,7 @@ class Ha3dFloorplan extends HTMLElement {
     if (this.modelLoaded && !this._editMode) {
       syncLights(this.anchors, hass, this._effectiveConfig);
       this._updateOverlayStates();
-      this._updateEnvironment();
+      this._env?.updateFromHass(hass);
       this._requestRender();
     }
   }
@@ -285,7 +280,6 @@ class Ha3dFloorplan extends HTMLElement {
     ].join(';');
     this._simExpand = simExpand;
     hud.appendChild(simExpand);
-    this._buildSimExpandContent();
 
     // Main glass pill bar
     const bar = document.createElement('div');
@@ -394,7 +388,7 @@ class Ha3dFloorplan extends HTMLElement {
     btn.style.cssText = this._hudBtnStyle();
     btn.textContent = icon;
     btn.title = 'Vues sauvegardées';
-    btn.addEventListener('click', (e) => { e.stopPropagation(); this._toggleViewManager(); });
+    btn.addEventListener('click', (e) => { e.stopPropagation(); this._viewMgr?.toggle(); });
     return btn;
   }
 
@@ -403,466 +397,8 @@ class Ha3dFloorplan extends HTMLElement {
     btn.style.cssText = this._hudBtnStyle();
     btn.textContent = icon;
     btn.title = 'Simuler la journée / météo';
-    btn.addEventListener('click', (e) => { e.stopPropagation(); this._toggleSim(); });
+    btn.addEventListener('click', (e) => { e.stopPropagation(); this._sim?.toggle(); });
     return btn;
-  }
-
-  private _toggleSim() {
-    this._simOpen = !this._simOpen;
-    if (!this._simExpand || !this._simBtn) return;
-    if (this._simOpen) {
-      this._simExpand.style.maxHeight = '160px';
-      this._simExpand.style.opacity = '1';
-      this._simExpand.style.pointerEvents = 'auto';
-      this._simBtn.style.boxShadow = '0 0 0 2px rgba(245,158,11,0.85)';
-    } else {
-      this._simExpand.style.maxHeight = '0';
-      this._simExpand.style.opacity = '0';
-      this._simExpand.style.pointerEvents = 'none';
-      this._simBtn.style.boxShadow = 'none';
-    }
-  }
-
-  private _buildSimExpandContent() {
-    if (!this._simExpand) return;
-    this._simExpand.innerHTML = '';
-
-    const inner = document.createElement('div');
-    inner.style.cssText = [
-      'background:rgba(8,12,24,0.82)',
-      'backdrop-filter:blur(12px)', '-webkit-backdrop-filter:blur(12px)',
-      'border:1px solid rgba(255,255,255,0.12)',
-      'border-radius:14px',
-      'padding:10px 14px',
-      'font-family:var(--primary-font-family,sans-serif)',
-      'color:#fff',
-      'user-select:none',
-    ].join(';');
-    this._simExpand.appendChild(inner);
-
-    const fmt = (h: number) =>
-      `${String(Math.floor(h)).padStart(2,'0')}:${String(Math.round((h%1)*60)).padStart(2,'0')}`;
-
-    // Row 1: time label + active toggle
-    const row1 = document.createElement('div');
-    row1.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;';
-
-    const timeLabel = document.createElement('div');
-    timeLabel.style.cssText = 'font-size:11px;color:#aac8e8;';
-    const timeValue = document.createElement('span');
-    timeValue.style.cssText = 'color:#fff;font-weight:600;';
-    timeValue.textContent = fmt(this._simHour);
-    timeLabel.appendChild(document.createTextNode('Heure\u00a0: '));
-    timeLabel.appendChild(timeValue);
-    row1.appendChild(timeLabel);
-
-    const activeToggle = document.createElement('label');
-    activeToggle.style.cssText = 'display:flex;align-items:center;gap:4px;font-size:11px;color:#888;cursor:pointer;';
-    const activeCheck = document.createElement('input');
-    activeCheck.type = 'checkbox';
-    activeCheck.checked = this._simActive;
-    activeCheck.style.cursor = 'pointer';
-    activeToggle.appendChild(activeCheck);
-    activeToggle.appendChild(document.createTextNode('Actif'));
-    row1.appendChild(activeToggle);
-    inner.appendChild(row1);
-
-    // Time slider
-    const timeSlider = document.createElement('input');
-    timeSlider.type = 'range';
-    timeSlider.min = '0'; timeSlider.max = '24'; timeSlider.step = '0.25';
-    timeSlider.value = String(this._simHour);
-    timeSlider.style.cssText = 'width:100%;accent-color:#f59e0b;cursor:pointer;margin-bottom:8px;display:block;';
-    timeSlider.addEventListener('input', () => {
-      this._simHour = parseFloat(timeSlider.value);
-      timeValue.textContent = fmt(this._simHour);
-      if (this._simActive) this._applySimulation();
-    });
-    inner.appendChild(timeSlider);
-
-    // Weather presets
-    const weatherRow = document.createElement('div');
-    weatherRow.style.cssText = 'display:flex;gap:4px;';
-    const presets: { emoji: string; label: string; value: 'clear' | 'cloudy' | 'rain' | 'snow' }[] = [
-      { emoji: '☀️', label: 'Soleil',  value: 'clear'  },
-      { emoji: '⛅', label: 'Nuageux', value: 'cloudy' },
-      { emoji: '🌧️', label: 'Pluie',   value: 'rain'   },
-      { emoji: '❄️', label: 'Neige',   value: 'snow'   },
-    ];
-    const weatherBtns: HTMLButtonElement[] = [];
-    const syncWeather = () => {
-      weatherBtns.forEach((b, i) => {
-        const on = presets[i].value === this._simWeather;
-        b.style.background = on ? 'rgba(245,158,11,0.35)' : 'rgba(255,255,255,0.07)';
-        b.style.boxShadow  = on ? '0 0 0 1.5px rgba(245,158,11,0.7)' : 'none';
-      });
-    };
-    for (const p of presets) {
-      const wb = document.createElement('button');
-      wb.title = p.label; wb.textContent = p.emoji;
-      wb.style.cssText = [
-        'flex:1', 'border:none', 'border-radius:8px',
-        'font-size:16px', 'padding:5px 0',
-        'cursor:pointer', 'color:#fff',
-        'background:rgba(255,255,255,0.07)',
-        'transition:background .15s, box-shadow .15s',
-      ].join(';');
-      wb.addEventListener('click', () => {
-        this._simWeather = p.value;
-        syncWeather();
-        if (this._simActive) this._applySimulation();
-      });
-      weatherBtns.push(wb);
-      weatherRow.appendChild(wb);
-    }
-    syncWeather();
-    inner.appendChild(weatherRow);
-
-    activeCheck.addEventListener('change', () => {
-      this._simActive = activeCheck.checked;
-      if (this._simActive) {
-        this._applySimulation();
-      } else {
-        this._removeWeatherParticles();
-        this._weatherType = 'none';
-        if (this.modelLoaded && this._hass) {
-          syncLights(this.anchors, this._hass, this._effectiveConfig);
-          this._updateOverlayStates();
-          this._requestRender();
-        }
-      }
-    });
-  }
-
-  /** Compute sun elevation from hour of day (0-24) */
-  private _simTimeToElevation(hour: number): number {
-    // -60 at midnight, 0 at sunrise(6h)/sunset(18h), 60 at noon
-    return 60 * Math.sin(Math.PI * (hour - 6) / 12);
-  }
-
-  private _applySimulation() {
-    const elevation = this._simTimeToElevation(this._simHour);
-    const azimuth = 180; // south at noon, simplified
-    this._applySunLight(elevation, azimuth);
-
-    // Apply weather
-    this._removeWeatherParticles();
-    this._weatherType = 'none';
-    if (this._simWeather === 'cloudy') {
-      if (this._hemiLight) this._hemiLight.intensity *= 0.5;
-      if (this._sunLight) this._sunLight.intensity *= 0.2;
-      this.scene?.fog?.color.setHex(0x8899aa);
-    } else if (this._simWeather === 'rain') {
-      this._applyWeather('rainy');
-    } else if (this._simWeather === 'snow') {
-      this._applyWeather('snowy');
-    }
-    this._requestRender();
-  }
-
-  // ── View Manager ──────────────────────────────────────────────────────────
-
-  private _toggleViewManager() {
-    if (this._viewManagerPanel) {
-      this._viewManagerPanel.remove();
-      this._viewManagerPanel = null;
-    } else {
-      this._showViewManager();
-    }
-  }
-
-  private _showViewManager() {
-    if (!this.overlayContainer) return;
-    this._viewManagerPanel?.remove();
-
-    const panel = document.createElement('div');
-    panel.style.cssText = [
-      'position:absolute', 'top:8px', 'left:8px',
-      'width:260px', 'max-height:calc(100% - 80px)',
-      'background:rgba(6,10,20,0.93)',
-      'backdrop-filter:blur(18px)', '-webkit-backdrop-filter:blur(18px)',
-      'border:1px solid rgba(255,255,255,0.09)',
-      'border-radius:14px', 'overflow:hidden',
-      'display:flex', 'flex-direction:column',
-      'z-index:15', 'pointer-events:auto',
-      'font-family:var(--primary-font-family,sans-serif)',
-      'box-shadow:0 8px 32px rgba(0,0,0,0.6)',
-    ].join(';');
-
-    // Stop typing from triggering editor shortcuts
-    panel.addEventListener('keydown', (e) => {
-      if (e.target instanceof HTMLInputElement) e.stopPropagation();
-    });
-
-    // Header
-    const header = document.createElement('div');
-    header.style.cssText = 'display:flex;align-items:center;padding:10px 12px 8px;border-bottom:1px solid rgba(255,255,255,0.07);flex-shrink:0;gap:6px;';
-    const headerTitle = document.createElement('span');
-    headerTitle.style.cssText = 'font-size:11px;font-weight:700;color:#7dd3fc;text-transform:uppercase;letter-spacing:.08em;flex:1;';
-    headerTitle.textContent = '📷 Vues caméra';
-    const closeBtn = document.createElement('button');
-    closeBtn.style.cssText = 'background:none;border:none;color:rgba(255,255,255,0.4);cursor:pointer;font-size:14px;padding:0 2px;line-height:1;';
-    closeBtn.textContent = '×';
-    closeBtn.addEventListener('click', () => { panel.remove(); this._viewManagerPanel = null; });
-    header.appendChild(headerTitle);
-    header.appendChild(closeBtn);
-    panel.appendChild(header);
-
-    // Capture button
-    const captureBar = document.createElement('div');
-    captureBar.style.cssText = 'padding:8px 10px;border-bottom:1px solid rgba(255,255,255,0.06);flex-shrink:0;';
-    const captureBtn = document.createElement('button');
-    captureBtn.style.cssText = [
-      'width:100%', 'background:rgba(59,130,246,0.15)',
-      'border:1px solid rgba(59,130,246,0.35)', 'border-radius:8px',
-      'color:#93c5fd', 'padding:7px 10px', 'cursor:pointer',
-      'font-size:11px', 'font-family:inherit', 'text-align:left',
-      'transition:all .15s',
-    ].join(';');
-    captureBtn.textContent = '＋  Sauvegarder la vue actuelle';
-    captureBtn.addEventListener('mouseenter', () => { captureBtn.style.background = 'rgba(59,130,246,0.28)'; captureBtn.style.borderColor = 'rgba(59,130,246,0.6)'; });
-    captureBtn.addEventListener('mouseleave', () => { captureBtn.style.background = 'rgba(59,130,246,0.15)'; captureBtn.style.borderColor = 'rgba(59,130,246,0.35)'; });
-    captureBtn.addEventListener('click', () => this._captureViewPrompt(listBody));
-    captureBar.appendChild(captureBtn);
-    panel.appendChild(captureBar);
-
-    // List body
-    const listBody = document.createElement('div');
-    listBody.style.cssText = 'overflow-y:auto;flex:1;min-height:0;padding:4px 0;';
-    panel.appendChild(listBody);
-
-    // No scene_id warning
-    if (!this._config?.scene_id) {
-      const warn = document.createElement('div');
-      warn.style.cssText = 'padding:10px 12px;font-size:10px;color:#f59e0b;background:rgba(245,158,11,0.08);border-top:1px solid rgba(245,158,11,0.15);flex-shrink:0;';
-      warn.textContent = '⚠ Pas de scene_id configuré — les vues ne seront pas persistées.';
-      panel.appendChild(warn);
-    }
-
-    this._viewManagerPanel = panel;
-    this.overlayContainer.appendChild(panel);
-    this._rebuildViewList(listBody);
-  }
-
-  /** Rebuild the scrollable view list in-place (no panel close/reopen). */
-  private _rebuildViewList(listBody: HTMLDivElement) {
-    listBody.innerHTML = '';
-    const views = normalizeViews(this._effectiveConfig.camera_views ?? []);
-
-    if (views.length === 0) {
-      const empty = document.createElement('div');
-      empty.style.cssText = 'padding:18px 12px;font-size:11px;color:rgba(255,255,255,0.28);text-align:center;line-height:1.7;';
-      empty.textContent = 'Aucune vue sauvegardée';
-      listBody.appendChild(empty);
-      return;
-    }
-
-    views.forEach((v) => {
-      const row = document.createElement('div');
-      row.style.cssText = 'display:flex;align-items:center;gap:4px;padding:6px 10px;transition:background .1s;';
-      row.addEventListener('mouseenter', () => { row.style.background = 'rgba(255,255,255,0.04)'; });
-      row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
-
-      // Label (click = fly to)
-      const lbl = document.createElement('span');
-      lbl.style.cssText = 'flex:1;font-size:12px;color:#e2e8f0;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-radius:4px;padding:2px 4px;transition:color .12s;';
-      lbl.textContent = v.label;
-      lbl.title = 'Aller à cette vue';
-      lbl.addEventListener('mouseenter', () => { lbl.style.color = '#7dd3fc'; });
-      lbl.addEventListener('mouseleave', () => { lbl.style.color = '#e2e8f0'; });
-      lbl.addEventListener('click', () => { this._flyToView(v); this._highlightViewBtn(v.id); });
-      row.appendChild(lbl);
-
-      const iconBtnStyle = 'background:none;border:none;cursor:pointer;padding:3px 5px;font-size:12px;color:rgba(255,255,255,0.3);border-radius:4px;transition:all .12s;line-height:1;flex-shrink:0;';
-
-      // Fly-to button
-      const flyBtn = document.createElement('button');
-      flyBtn.style.cssText = iconBtnStyle;
-      flyBtn.textContent = '→';
-      flyBtn.title = 'Aller à cette vue';
-      flyBtn.addEventListener('mouseenter', () => { flyBtn.style.color = '#7dd3fc'; flyBtn.style.background = 'rgba(125,211,252,0.1)'; });
-      flyBtn.addEventListener('mouseleave', () => { flyBtn.style.color = 'rgba(255,255,255,0.3)'; flyBtn.style.background = 'none'; });
-      flyBtn.addEventListener('click', () => { this._flyToView(v); this._highlightViewBtn(v.id); });
-      row.appendChild(flyBtn);
-
-      // Update (overwrite with current camera)
-      const updateBtn = document.createElement('button');
-      updateBtn.style.cssText = iconBtnStyle;
-      updateBtn.textContent = '⟳';
-      updateBtn.title = 'Écraser avec la vue actuelle';
-      updateBtn.addEventListener('mouseenter', () => { updateBtn.style.color = '#4ade80'; updateBtn.style.background = 'rgba(74,222,128,0.1)'; });
-      updateBtn.addEventListener('mouseleave', () => { updateBtn.style.color = 'rgba(255,255,255,0.3)'; updateBtn.style.background = 'none'; });
-      updateBtn.addEventListener('click', () => this._updateView(v.id!, listBody));
-      row.appendChild(updateBtn);
-
-      // Rename
-      const renameBtn = document.createElement('button');
-      renameBtn.style.cssText = iconBtnStyle;
-      renameBtn.textContent = '✎';
-      renameBtn.title = 'Renommer';
-      renameBtn.addEventListener('mouseenter', () => { renameBtn.style.color = '#fbbf24'; renameBtn.style.background = 'rgba(251,191,36,0.1)'; });
-      renameBtn.addEventListener('mouseleave', () => { renameBtn.style.color = 'rgba(255,255,255,0.3)'; renameBtn.style.background = 'none'; });
-      renameBtn.addEventListener('click', () => this._renameViewInline(lbl, v.id!, listBody));
-      row.appendChild(renameBtn);
-
-      // Delete
-      const delBtn = document.createElement('button');
-      delBtn.style.cssText = iconBtnStyle;
-      delBtn.textContent = '✕';
-      delBtn.title = 'Supprimer';
-      delBtn.addEventListener('mouseenter', () => { delBtn.style.color = '#f87171'; delBtn.style.background = 'rgba(248,113,113,0.1)'; });
-      delBtn.addEventListener('mouseleave', () => { delBtn.style.color = 'rgba(255,255,255,0.3)'; delBtn.style.background = 'none'; });
-      delBtn.addEventListener('click', () => this._deleteView(v.id!, listBody));
-      row.appendChild(delBtn);
-
-      listBody.appendChild(row);
-    });
-  }
-
-  /** Show inline name prompt inside the capture bar to add a new view. */
-  private _captureViewPrompt(listBody: HTMLDivElement) {
-    if (!this.camera || !this.controls) return;
-
-    // Replace capture button temporarily with an inline input
-    const captureBar = listBody.previousElementSibling as HTMLDivElement;
-    captureBar.innerHTML = '';
-
-    const inputStyle = 'flex:1;background:rgba(255,255,255,0.06);border:1px solid rgba(125,211,252,0.4);border-radius:7px;color:#e2e8f0;padding:5px 8px;font-size:11px;font-family:inherit;outline:none;';
-    const inp = document.createElement('input');
-    inp.placeholder = 'Nom de la vue (ex: Salon)…';
-    inp.style.cssText = inputStyle;
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex;gap:6px;';
-
-    const okBtn = document.createElement('button');
-    okBtn.textContent = '✓';
-    okBtn.style.cssText = 'background:rgba(59,130,246,0.8);border:none;border-radius:7px;color:#fff;padding:5px 10px;cursor:pointer;font-size:12px;font-family:inherit;';
-
-    const cancelBtn = document.createElement('button');
-    cancelBtn.textContent = '✕';
-    cancelBtn.style.cssText = 'background:none;border:1px solid rgba(255,255,255,0.15);border-radius:7px;color:rgba(255,255,255,0.4);padding:5px 8px;cursor:pointer;font-size:12px;';
-
-    const restore = () => {
-      captureBar.innerHTML = '';
-      const btn = document.createElement('button');
-      btn.style.cssText = 'width:100%;background:rgba(59,130,246,0.15);border:1px solid rgba(59,130,246,0.35);border-radius:8px;color:#93c5fd;padding:7px 10px;cursor:pointer;font-size:11px;font-family:inherit;text-align:left;transition:all .15s;';
-      btn.textContent = '＋  Sauvegarder la vue actuelle';
-      btn.addEventListener('click', () => this._captureViewPrompt(listBody));
-      captureBar.appendChild(btn);
-    };
-
-    const confirm = async () => {
-      const label = inp.value.trim() || 'Vue sans nom';
-      const pos = this.camera!.position.toArray() as [number, number, number];
-      const tgt = this.controls!.target.toArray() as [number, number, number];
-      const newView = captureCameraView(pos, tgt, label);
-      const views = normalizeViews([...(this._effectiveConfig.camera_views ?? []), newView]);
-      restore();
-      await this._saveViews(views, listBody);
-    };
-
-    okBtn.addEventListener('click', confirm);
-    cancelBtn.addEventListener('click', restore);
-    inp.addEventListener('keydown', (e) => {
-      e.stopPropagation();
-      if (e.key === 'Enter') confirm();
-      if (e.key === 'Escape') restore();
-    });
-
-    row.appendChild(inp); row.appendChild(okBtn); row.appendChild(cancelBtn);
-    captureBar.appendChild(row);
-    setTimeout(() => inp.focus(), 30);
-  }
-
-  /** Overwrite a view's position/target with the current camera state. */
-  private async _updateView(id: string, listBody: HTMLDivElement) {
-    if (!this.camera || !this.controls) return;
-    const pos = this.camera.position.toArray() as [number, number, number];
-    const tgt = this.controls.target.toArray() as [number, number, number];
-    const views = normalizeViews(this._effectiveConfig.camera_views ?? []).map((v) =>
-      v.id === id ? { ...v, position: pos.map((x) => +x.toFixed(4)) as [number, number, number], target: tgt.map((x) => +x.toFixed(4)) as [number, number, number] } : v,
-    );
-    await this._saveViews(views, listBody);
-  }
-
-  /** Turn a view label into an inline input for renaming. */
-  private _renameViewInline(lbl: HTMLSpanElement, id: string, listBody: HTMLDivElement) {
-    const current = lbl.textContent ?? '';
-    const inp = document.createElement('input');
-    inp.value = current;
-    inp.style.cssText = 'flex:1;background:rgba(255,255,255,0.06);border:1px solid rgba(251,191,36,0.4);border-radius:4px;color:#e2e8f0;padding:1px 5px;font-size:12px;font-family:inherit;outline:none;width:100%;box-sizing:border-box;';
-
-    const commit = async () => {
-      const label = inp.value.trim() || current;
-      const views = normalizeViews(this._effectiveConfig.camera_views ?? []).map((v) =>
-        v.id === id ? { ...v, label } : v,
-      );
-      await this._saveViews(views, listBody);
-    };
-
-    inp.addEventListener('keydown', (e) => {
-      e.stopPropagation();
-      if (e.key === 'Enter') commit();
-      if (e.key === 'Escape') { lbl.style.display = ''; inp.remove(); }
-    });
-    inp.addEventListener('blur', commit);
-
-    lbl.style.display = 'none';
-    lbl.parentElement!.insertBefore(inp, lbl);
-    setTimeout(() => { inp.focus(); inp.select(); }, 10);
-  }
-
-  /** Delete a view by id and save. */
-  private async _deleteView(id: string, listBody: HTMLDivElement) {
-    const views = normalizeViews(this._effectiveConfig.camera_views ?? []).filter((v) => v.id !== id);
-    await this._saveViews(views, listBody);
-  }
-
-  /**
-   * Persist updated views to the backend and refresh everything.
-   * Works independently of anchor editor state.
-   */
-  private async _saveViews(views: CameraView[], listBody?: HTMLDivElement) {
-    if (!this._config?.scene_id || !this._hass) {
-      // No backend — update in-memory scene and refresh UI only
-      if (this._scene) this._scene = { ...this._scene, camera_views: views };
-      if (listBody) this._rebuildViewList(listBody);
-      this._buildCameraViewBar();
-      return;
-    }
-    if (this._viewsSaving) return;
-    this._viewsSaving = true;
-    try {
-      // Build a scene object that preserves anchors but replaces camera_views
-      const base: OwlnestScene = this._scene ?? {
-        version: 1, scene_id: this._config.scene_id,
-        model_url: this._config.model_url ?? '',
-        anchors: [], camera_views: [], panels: [], rules: [],
-      };
-      const updated: OwlnestScene = { ...base, camera_views: views };
-      await saveScene(this._hass, this._config.scene_id, updated);
-      this._scene = updated;
-    } catch (err) {
-      console.error('[Owlnest] Failed to save views:', err);
-      this._showToast('✗ Erreur lors de la sauvegarde des vues', true);
-    } finally {
-      this._viewsSaving = false;
-    }
-    if (listBody) this._rebuildViewList(listBody);
-    this._buildCameraViewBar();
-  }
-
-  /** Briefly highlight the HUD button matching the given view id. */
-  private _highlightViewBtn(id?: string) {
-    if (!id || !this._hudLeft) return;
-    const views = normalizeViews(this._effectiveConfig.camera_views ?? []);
-    const idx = views.findIndex((v) => v.id === id);
-    const btn = this._hudLeft.children[idx] as HTMLButtonElement | undefined;
-    if (!btn) return;
-    const prev = btn.style.background;
-    btn.style.background = 'rgba(125,211,252,0.25)';
-    btn.style.color = '#fff';
-    setTimeout(() => { btn.style.background = prev; btn.style.color = 'rgba(255,255,255,0.72)'; }, 600);
   }
 
   private _hudBtnStyle(): string {
@@ -888,7 +424,7 @@ class Ha3dFloorplan extends HTMLElement {
 
   private _hideControls() {
     if (this._editMode) return;
-    if (this._simOpen) return; // keep visible while sim panel is open
+    if (this._sim?.isOpen) return; // keep visible while sim panel is open
     if (!this._hud) return;
     this._hud.style.opacity = '0';
     this._hud.style.pointerEvents = 'none';
@@ -961,33 +497,54 @@ class Ha3dFloorplan extends HTMLElement {
         this.overlayContainer!,
       );
     }
+
+    // Instantiate EditPanel now (needs editor, hud refs, and card container)
+    const card = this.querySelector('ha-card') as HTMLElement;
+    this._editPanel = new EditPanel(
+      this.overlayContainer!,
+      this._hud!,
+      this._hudLeft!,
+      this._hudRight!,
+      this._hudSep!,
+      card,
+      () => this._editor,
+      () => this._hass,
+      () => this._config,
+      () => this._config?.scene_id,
+      () => this._saveScene(),
+      () => this._exitEditMode(),
+      () => this._syncEditorLightsToScene(),
+      () => this._requestRender(),
+      () => this._rebuildNormalHUD(),
+    );
+
     this._editor.onChanged = () => {
       this._syncEditorLightsToScene();
       this._requestRender();
-      if (!this._editorDragging && !this._gizmoDragging) this._updateAnchorList();
+      if (!this._editPanel?.editorDragging && !this._editPanel?.gizmoDragging) this._editPanel?.updateAnchorList();
       // Don't schedule auto-save in the middle of a gizmo drag — wait for drag end
-      if (!this._gizmoDragging) this._scheduleAutoSave();
+      if (!this._editPanel?.gizmoDragging) this._editPanel?.scheduleAutoSave();
     };
     this._editor.onDragStart = (type) => {
-      this._gizmoDragging = true;
+      if (this._editPanel) this._editPanel.gizmoDragging = true;
       const texts: Record<string, string> = {
         grab:   'Déplacer  ·  X/Y/Z axe  ·  Entrée confirmer  ·  Esc annuler',
         rotate: 'Orienter  ·  Esc quitter',
         gizmo:  'Déplacer sur axe  ·  Relâcher pour confirmer',
       };
-      this._showStatusBar(texts[type] ?? '');
+      this._editPanel?.showStatusBar(texts[type] ?? '');
     };
     this._editor.onDragEnd = () => {
-      this._gizmoDragging = false;
-      this._hideStatusBar();
-      this._updateAnchorList();  // refresh Az/El readout etc.
-      this._scheduleAutoSave();  // save once when drag finishes
+      if (this._editPanel) this._editPanel.gizmoDragging = false;
+      this._editPanel?.hideStatusBar();
+      this._editPanel?.updateAnchorList();  // refresh Az/El readout etc.
+      this._editPanel?.scheduleAutoSave();  // save once when drag finishes
     };
-    this._editor.onSelectionChange = () => this._updateAnchorList();
+    this._editor.onSelectionChange = () => this._editPanel?.updateAnchorList();
     this._editor.setHass(this._hass);
     this._editor.activate(editable);
 
-    this._showEditorToolbar();
+    this._editPanel.showToolbar();
     this._requestRender();
 
     if (editable.size === 0) {
@@ -1021,14 +578,11 @@ class Ha3dFloorplan extends HTMLElement {
     }
 
     // Flush pending auto-save immediately
-    if (this._autoSaveTimer) {
-      clearTimeout(this._autoSaveTimer);
-      this._autoSaveTimer = null;
-      if (this._saveStatus === 'unsaved') {
-        this._saveScene();
-      }
+    if (this._editPanel?.hasPendingSave) {
+      this._editPanel.cancelPendingSave();
+      this._saveScene();
     }
-    this._saveStatus = 'saved';
+    this._editPanel?.markSaved();
 
     const editable = new Map<string, EditableAnchor>(this._editor!.anchors as Map<string, EditableAnchor>);
     this._editor!.deactivate();
@@ -1051,74 +605,12 @@ class Ha3dFloorplan extends HTMLElement {
       this._updateOverlayStates();
     }
 
-    this._removeEditorToolbar();
+    this._editPanel?.hideToolbar();
+    this._editPanel = null;
     this.overlays.forEach((o) => {
       o.el.style.display = this._overlaysVisible ? '' : 'none';
     });
     this._requestRender();
-  }
-
-  // ── Auto-save ─────────────────────────────────────────────────────────
-
-  private _scheduleAutoSave() {
-    if (!this._config?.scene_id) return;
-    this._saveStatus = 'unsaved';
-    this._updateSaveIndicator();
-    if (this._autoSaveTimer) clearTimeout(this._autoSaveTimer);
-    this._autoSaveTimer = setTimeout(async () => {
-      this._autoSaveTimer = null;
-      this._saveStatus = 'saving';
-      this._updateSaveIndicator();
-      await this._saveScene();
-      this._saveStatus = 'saved';
-      this._updateSaveIndicator();
-    }, 2000);
-  }
-
-  private _showStatusBar(text: string) {
-    let bar = this.shadowRoot?.querySelector<HTMLElement>('#editor-status-bar');
-    if (!bar) {
-      bar = document.createElement('div');
-      bar.id = 'editor-status-bar';
-      Object.assign(bar.style, {
-        position: 'absolute',
-        bottom: '48px',
-        left: '50%',
-        transform: 'translateX(-50%)',
-        background: 'rgba(0,0,0,0.75)',
-        color: '#fff',
-        fontSize: '12px',
-        padding: '4px 14px',
-        borderRadius: '20px',
-        pointerEvents: 'none',
-        whiteSpace: 'nowrap',
-        zIndex: '100',
-        letterSpacing: '0.03em',
-      });
-      this.shadowRoot?.querySelector('#card')?.appendChild(bar);
-    }
-    bar.textContent = text;
-    bar.style.display = 'block';
-  }
-
-  private _hideStatusBar() {
-    const bar = this.shadowRoot?.querySelector<HTMLElement>('#editor-status-bar');
-    if (bar) bar.style.display = 'none';
-  }
-
-  private _updateSaveIndicator() {
-    const el = this._anchorListPanel?.querySelector<HTMLElement>('#save-indicator');
-    if (!el) return;
-    if (this._saveStatus === 'unsaved') {
-      el.textContent = '● Non sauvé';
-      el.style.color = '#f59e0b';
-    } else if (this._saveStatus === 'saving') {
-      el.textContent = '⏳ Sauvegarde…';
-      el.style.color = '#94a3b8';
-    } else {
-      el.textContent = '✓ Sauvé';
-      el.style.color = '#22c55e';
-    }
   }
 
   // ── Real-time light sync from editor ──────────────────────────────────
@@ -1164,131 +656,9 @@ class Ha3dFloorplan extends HTMLElement {
     });
   }
 
-  // ── Editor toolbar ────────────────────────────────────────────────────
+  // ── Rebuild normal HUD (called by EditPanel.hideToolbar) ───────────────
 
-  private _showEditorToolbar() {
-    if (!this._hudLeft || !this._hudRight || !this._hudSep) return;
-
-    this._hudLeft.innerHTML = '';
-    this._hudRight.innerHTML = '';
-    this._hudSep.style.display = 'none';
-
-    // ── Tool buttons (left) ───────────────────────────────────────────
-    const tools: Array<{ id: string; label: string; title: string }> = [
-      { id: 'select', label: '↖', title: 'Sélectionner / Déplacer  (S)' },
-      { id: 'add',    label: '＋', title: 'Ajouter ancre  (A)' },
-    ];
-
-    const toolBtns = new Map<string, HTMLButtonElement>();
-    const setActiveTool = (id: string) => {
-      toolBtns.forEach((b, k) => {
-        const on = k === id;
-        b.style.background = on ? 'rgba(59,130,246,0.9)' : 'rgba(255,255,255,0.07)';
-        b.style.boxShadow  = on ? '0 0 0 1.5px rgba(59,130,246,0.5)' : 'none';
-        b.style.color = on ? '#fff' : 'rgba(255,255,255,0.55)';
-      });
-    };
-
-    tools.forEach(({ id, label, title }) => {
-      const btn = this._tbBtn(label, 'rgba(255,255,255,0.07)');
-      btn.style.color = 'rgba(255,255,255,0.55)';
-      btn.style.fontSize = '14px';
-      btn.style.minWidth = '30px';
-      btn.style.padding = '4px 8px';
-      btn.title = title;
-      btn.addEventListener('click', () => {
-        this._editor?.setTool(id as import('./editor').EditorTool);
-        setActiveTool(id);
-      });
-      toolBtns.set(id, btn);
-      this._hudLeft!.appendChild(btn);
-    });
-
-    // Separator
-    const sep1 = document.createElement('div');
-    sep1.style.cssText = 'width:1px;height:16px;background:rgba(255,255,255,0.12);margin:0 2px;';
-    this._hudLeft.appendChild(sep1);
-
-    // Undo / Redo
-    const undoBtn = this._tbBtn('↩', 'rgba(255,255,255,0.07)');
-    undoBtn.title = 'Annuler (Ctrl+Z)';
-    undoBtn.style.cssText += ';color:rgba(255,255,255,0.55);font-size:14px;min-width:28px;padding:4px 7px;';
-    undoBtn.addEventListener('click', () => this._editor?.undo());
-
-    const redoBtn = this._tbBtn('↪', 'rgba(255,255,255,0.07)');
-    redoBtn.title = 'Rétablir (Ctrl+Y)';
-    redoBtn.style.cssText += ';color:rgba(255,255,255,0.55);font-size:14px;min-width:28px;padding:4px 7px;';
-    redoBtn.addEventListener('click', () => this._editor?.redo());
-
-    this._hudLeft.appendChild(undoBtn);
-    this._hudLeft.appendChild(redoBtn);
-
-    if (this._editor) this._editor.onToolChange = (t) => setActiveTool(t);
-
-    this._hudSep.style.display = 'block';
-
-    // ── Right: close ─────────────────────────────────────────────────
-    const doneBtn = this._tbBtn('✓ Fermer', 'rgba(255,255,255,0.07)');
-    doneBtn.style.color = 'rgba(255,255,255,0.6)';
-    doneBtn.addEventListener('click', () => this._exitEditMode());
-    this._hudRight.appendChild(doneBtn);
-
-    setActiveTool('select');
-
-    // Shortcut hint bar at the bottom of the canvas
-    // Hint row — inserted above the pill bar inside _hud so it never overlaps
-    if (this._hud) {
-      const hintBar = document.createElement('div');
-      hintBar.id = 'editor-hint-bar';
-      hintBar.style.cssText = [
-        'display:flex', 'gap:8px', 'align-items:center', 'justify-content:center',
-        'font-size:10px', 'color:rgba(255,255,255,0.35)', 'pointer-events:none',
-        'white-space:nowrap', 'padding:0 4px',
-      ].join(';');
-      const kbdStyle = 'background:rgba(255,255,255,0.1);border-radius:3px;padding:1px 4px;color:rgba(255,255,255,0.6);font-weight:600;margin-right:3px;font-size:9px;';
-      const hint = (key: string, label: string) => {
-        const span = document.createElement('span');
-        span.innerHTML = `<span style="${kbdStyle}">${key}</span>${label}`;
-        return span;
-      };
-      hintBar.appendChild(hint('G', 'Saisir'));
-      hintBar.appendChild(hint('A', 'Ajouter'));
-      hintBar.appendChild(hint('X', 'Suppr.'));
-      hintBar.appendChild(hint('H', 'Masquer'));
-      hintBar.appendChild(hint('Ctrl+Z', 'Annuler'));
-      hintBar.appendChild(hint('Clic droit', 'Menu'));
-      // Insert before the last child (the pill bar) so it appears above it
-      this._hud.insertBefore(hintBar, this._hud.lastChild);
-    }
-
-    this._saveStatus = 'saved';
-    this._buildAnchorList();
-  }
-
-  private _tbBtn(label: string, bg: string): HTMLButtonElement {
-    const btn = document.createElement('button');
-    btn.textContent = label;
-    btn.style.cssText = [
-      `background:${bg}`,
-      'border:none',
-      'color:#fff',
-      'border-radius:8px',
-      'padding:5px 10px',
-      'cursor:pointer',
-      'font-size:12px',
-      'font-family:var(--primary-font-family,sans-serif)',
-      'transition:background .15s, box-shadow .15s',
-      'white-space:nowrap',
-    ].join(';');
-    return btn;
-  }
-
-  private _removeEditorToolbar() {
-    this._anchorListPanel?.remove();
-    this._anchorListPanel = null;
-    this._hud?.querySelector('#editor-hint-bar')?.remove();
-    // Restore HUD to normal camera view + action buttons
-    this._buildCameraViewBar();
+  private _rebuildNormalHUD() {
     if (!this._hudRight) return;
     this._hudRight.innerHTML = '';
     const ui = this._config?.ui ?? {};
@@ -1306,533 +676,13 @@ class Ha3dFloorplan extends HTMLElement {
       this._hudRight.appendChild(this.captureBtn);
     }
     // Update separator visibility
-    const hasViews = !!(this._config?.camera_views?.length);
+    const hasViews = !!(this._effectiveConfig.camera_views?.length);
     const hasActions = this._hudRight.children.length > 0;
     if (this._hudSep) this._hudSep.style.display = (hasViews && hasActions) ? 'block' : 'none';
     void icons; // silence unused warning
-  }
 
-  // ── Anchor list panel ────────────────────────────────────────────────
-
-  private _buildAnchorList() {
-    this._anchorListPanel?.remove();
-    if (!this.overlayContainer || !this._editor) return;
-
-    const panel = document.createElement('div');
-    panel.style.cssText = [
-      'position:absolute', 'top:8px', 'right:8px',
-      'width:264px', 'max-height:calc(100% - 80px)',
-      'background:rgba(6,10,20,0.93)',
-      'backdrop-filter:blur(18px)', '-webkit-backdrop-filter:blur(18px)',
-      'border:1px solid rgba(255,255,255,0.09)',
-      'border-radius:14px', 'overflow:hidden',
-      'display:flex', 'flex-direction:column',
-      'z-index:15', 'pointer-events:auto',
-      'font-family:var(--primary-font-family,sans-serif)',
-      'box-shadow:0 8px 32px rgba(0,0,0,0.6)',
-    ].join(';');
-
-    // Stop key events bubbling to HA shortcuts
-    panel.addEventListener('keydown', (e) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
-        e.stopPropagation();
-      }
-    });
-
-    // ── Tab bar ────────────────────────────────────────────────────
-    const tabBar = document.createElement('div');
-    tabBar.style.cssText = [
-      'display:flex', 'align-items:stretch',
-      'border-bottom:1px solid rgba(255,255,255,0.07)',
-      'flex-shrink:0', 'padding:0 6px', 'gap:2px',
-    ].join(';');
-
-    const makeTab = (label: string, id: 'anchors' | 'props') => {
-      const t = document.createElement('button');
-      t.dataset.tab = id;
-      t.style.cssText = [
-        'background:none', 'border:none', 'cursor:pointer',
-        'font-size:11px', 'font-family:inherit', 'font-weight:600',
-        'padding:9px 10px 7px', 'letter-spacing:.04em',
-        'border-bottom:2px solid transparent',
-        'color:rgba(255,255,255,0.4)', 'transition:all .15s',
-        'white-space:nowrap',
-      ].join(';');
-      t.textContent = label;
-      return t;
-    };
-
-    const tabAnchors = makeTab('Ancres', 'anchors');
-    const tabProps   = makeTab('Propriétés', 'props');
-    tabBar.appendChild(tabAnchors);
-    tabBar.appendChild(tabProps);
-
-    if (this._config?.scene_id) {
-      const saveInd = document.createElement('span');
-      saveInd.id = 'save-indicator';
-      saveInd.style.cssText = 'font-size:10px;color:#22c55e;transition:color .2s;margin-left:auto;align-self:center;padding-right:4px;';
-      saveInd.textContent = '✓';
-      tabBar.appendChild(saveInd);
-    }
-
-    panel.appendChild(tabBar);
-
-    // ── Tab: Anchors ───────────────────────────────────────────────
-    const tabAnchorsPane = document.createElement('div');
-    tabAnchorsPane.id = 'tab-pane-anchors';
-    tabAnchorsPane.style.cssText = 'display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;';
-
-    // Batch controls
-    const batchBar = document.createElement('div');
-    batchBar.style.cssText = 'display:flex;align-items:center;padding:5px 10px 3px;gap:4px;border-bottom:1px solid rgba(255,255,255,0.05);flex-shrink:0;';
-    const countLbl = document.createElement('span');
-    countLbl.id = 'anchor-count-lbl';
-    countLbl.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.3);flex:1;';
-    const batchBtnStyle = 'background:none;border:none;cursor:pointer;padding:3px 6px;border-radius:5px;font-size:11px;color:rgba(255,255,255,0.35);transition:all .15s;';
-    const showAllBtn = document.createElement('button');
-    showAllBtn.title = 'Tout afficher (●)';
-    showAllBtn.innerHTML = '● Tout';
-    showAllBtn.style.cssText = batchBtnStyle;
-    showAllBtn.addEventListener('mouseenter', () => { showAllBtn.style.color = '#4ade80'; });
-    showAllBtn.addEventListener('mouseleave', () => { showAllBtn.style.color = 'rgba(255,255,255,0.35)'; });
-    showAllBtn.addEventListener('click', () => this._editor?.updateAll({ hidden: false }));
-    const hideAllBtn = document.createElement('button');
-    hideAllBtn.title = 'Tout masquer (○)';
-    hideAllBtn.innerHTML = '○ Aucun';
-    hideAllBtn.style.cssText = batchBtnStyle;
-    hideAllBtn.addEventListener('mouseenter', () => { hideAllBtn.style.color = '#f87171'; });
-    hideAllBtn.addEventListener('mouseleave', () => { hideAllBtn.style.color = 'rgba(255,255,255,0.35)'; });
-    hideAllBtn.addEventListener('click', () => this._editor?.updateAll({ hidden: true }));
-    batchBar.appendChild(countLbl);
-    batchBar.appendChild(showAllBtn);
-    batchBar.appendChild(hideAllBtn);
-    tabAnchorsPane.appendChild(batchBar);
-
-    const list = document.createElement('div');
-    list.id = 'anchor-list-body';
-    list.style.cssText = 'overflow-y:auto;flex:1;min-height:0;padding:3px 0;';
-    tabAnchorsPane.appendChild(list);
-    panel.appendChild(tabAnchorsPane);
-
-    // ── Tab: Props ─────────────────────────────────────────────────
-    const tabPropsPane = document.createElement('div');
-    tabPropsPane.id = 'tab-pane-props';
-    tabPropsPane.style.cssText = 'display:none;flex:1;min-height:0;overflow-y:auto;padding:12px 12px 10px;';
-    panel.appendChild(tabPropsPane);
-
-    // Tab switching logic
-    const switchTab = (tab: 'anchors' | 'props') => {
-      const onA = tab === 'anchors';
-      tabAnchorsPane.style.display = onA ? 'flex' : 'none';
-      tabPropsPane.style.display   = onA ? 'none' : 'block';
-      const activeColor = '#7dd3fc';
-      tabAnchors.style.color = onA ? activeColor : 'rgba(255,255,255,0.4)';
-      tabAnchors.style.borderBottomColor = onA ? activeColor : 'transparent';
-      tabProps.style.color = !onA ? activeColor : 'rgba(255,255,255,0.4)';
-      tabProps.style.borderBottomColor = !onA ? activeColor : 'transparent';
-    };
-
-    tabAnchors.addEventListener('click', () => switchTab('anchors'));
-    tabProps.addEventListener('click', () => switchTab('props'));
-
-    this._anchorListPanel = panel;
-    this.overlayContainer.appendChild(panel);
-
-    switchTab('anchors');
-    this._fillAnchorList(list, tabPropsPane, countLbl, switchTab);
-  }
-
-  private _fillAnchorList(
-    list: HTMLDivElement,
-    propsPane: HTMLDivElement,
-    countLbl: HTMLElement,
-    switchTab: (tab: 'anchors' | 'props') => void,
-  ) {
-    list.innerHTML = '';
-    if (!this._editor) return;
-    const anchors = this._editor.anchors;
-    const selectedKey = this._editor.selectedKey;
-
-    countLbl.textContent = `${anchors.size} ancre${anchors.size !== 1 ? 's' : ''}`;
-
-    if (anchors.size === 0) {
-      const empty = document.createElement('div');
-      empty.style.cssText = 'padding:18px 12px;font-size:11px;color:rgba(255,255,255,0.28);text-align:center;line-height:1.7;';
-      empty.innerHTML = 'Aucune ancre<br><span style="font-size:10px;opacity:.7">Outil ＋ → clic sur le modèle</span>';
-      list.appendChild(empty);
-      return;
-    }
-
-    const DOMAIN_ICONS: Record<string, string> = {
-      light: '💡', switch: '🔌', cover: '🪟',
-      sensor: '📡', binary_sensor: '⬤', climate: '🌡️', media_player: '🔊',
-    };
-    const DOMAIN_COLORS: Record<string, string> = {
-      light: '#fbbf24', switch: '#4ade80', cover: '#fb923c',
-      sensor: '#60a5fa', binary_sensor: '#22d3ee',
-      climate: '#f87171', media_player: '#c084fc',
-    };
-
-    anchors.forEach((a, key) => {
-      const isSelected = key === selectedKey;
-      const domain = a.entity.split('.')[0];
-      const color = DOMAIN_COLORS[domain] ?? '#94a3b8';
-      const icon = DOMAIN_ICONS[domain] ?? '●';
-
-      const row = document.createElement('div');
-      row.style.cssText = [
-        'display:flex', 'align-items:center', 'gap:8px',
-        'padding:6px 10px', 'cursor:pointer',
-        `background:${isSelected ? 'rgba(59,130,246,0.18)' : 'transparent'}`,
-        `border-left:2px solid ${isSelected ? '#3b82f6' : 'transparent'}`,
-        'transition:background .1s, border-color .1s',
-      ].join(';');
-      if (!isSelected) {
-        row.addEventListener('mouseenter', () => {
-          row.style.background = 'rgba(255,255,255,0.05)';
-          row.style.borderLeftColor = 'rgba(255,255,255,0.12)';
-        });
-        row.addEventListener('mouseleave', () => {
-          row.style.background = 'transparent';
-          row.style.borderLeftColor = 'transparent';
-        });
-      }
-
-      const iconEl = document.createElement('span');
-      iconEl.style.cssText = `font-size:13px;flex-shrink:0;opacity:${a.hidden ? 0.2 : 0.9};`;
-      iconEl.textContent = icon;
-      row.appendChild(iconEl);
-
-      const col = document.createElement('div');
-      col.style.cssText = 'flex:1;min-width:0;';
-      const nameEl = document.createElement('div');
-      nameEl.style.cssText = `font-size:12px;font-weight:500;${a.hidden ? 'color:rgba(255,255,255,0.25);' : 'color:#e2e8f0;'}overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.3;`;
-      nameEl.textContent = a.label || a.entity.split('.')[1];
-      const entityEl = document.createElement('div');
-      entityEl.style.cssText = `font-size:10px;color:${a.hidden ? 'rgba(255,255,255,0.15)' : color};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.3;opacity:0.8;`;
-      entityEl.textContent = a.entity;
-      col.appendChild(nameEl); col.appendChild(entityEl);
-      row.appendChild(col);
-
-      const rowBtnStyle = 'background:none;border:none;cursor:pointer;padding:2px 4px;font-size:12px;flex-shrink:0;line-height:1;border-radius:4px;color:rgba(255,255,255,0.4);transition:all .12s;opacity:0;';
-      const showRowBtns = () => { eyeBtn.style.opacity = a.hidden ? '0.5' : '0.6'; dupBtn.style.opacity = '0.6'; };
-      const hideRowBtns = () => { eyeBtn.style.opacity = a.hidden ? '0.35' : '0'; dupBtn.style.opacity = '0'; };
-      if (!isSelected) {
-        row.addEventListener('mouseenter', () => { showRowBtns(); });
-        row.addEventListener('mouseleave', () => { hideRowBtns(); });
-      } else {
-        setTimeout(() => showRowBtns(), 0);
-      }
-
-      const eyeBtn = document.createElement('button');
-      eyeBtn.style.cssText = rowBtnStyle;
-      eyeBtn.textContent = a.hidden ? '🙈' : '👁';
-      eyeBtn.title = a.hidden ? 'Afficher (H)' : 'Masquer (H)';
-      if (a.hidden) eyeBtn.style.opacity = '0.45';
-      eyeBtn.addEventListener('mouseenter', () => { eyeBtn.style.opacity = '1'; eyeBtn.style.background = 'rgba(255,255,255,0.1)'; });
-      eyeBtn.addEventListener('mouseleave', () => { eyeBtn.style.opacity = a.hidden ? '0.5' : '0.6'; eyeBtn.style.background = 'none'; });
-      eyeBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this._editor?.updateAnchor(key, { hidden: !a.hidden });
-      });
-      row.appendChild(eyeBtn);
-
-      const dupBtn = document.createElement('button');
-      dupBtn.style.cssText = rowBtnStyle;
-      dupBtn.textContent = '⎘';
-      dupBtn.title = 'Dupliquer  (Ctrl+D)';
-      dupBtn.addEventListener('mouseenter', () => { dupBtn.style.opacity = '1'; dupBtn.style.background = 'rgba(255,255,255,0.1)'; });
-      dupBtn.addEventListener('mouseleave', () => { dupBtn.style.opacity = '0.6'; dupBtn.style.background = 'none'; });
-      dupBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this._editor?.selectAnchor(key);
-        this._editor?.duplicate();
-      });
-      row.appendChild(dupBtn);
-
-      row.addEventListener('click', () => {
-        this._editor?.selectAnchor(key);
-        switchTab('props');
-      });
-      list.appendChild(row);
-    });
-
-    // Always rebuild props pane content
-    if (selectedKey && anchors.has(selectedKey)) {
-      this._buildPropsSection(propsPane, selectedKey, anchors.get(selectedKey)!);
-    } else {
-      propsPane.innerHTML = '<div style="padding:20px 12px;font-size:11px;color:rgba(255,255,255,0.25);text-align:center;">Sélectionne une ancre</div>';
-    }
-  }
-
-  private _buildPropsSection(container: HTMLDivElement, key: string, anchor: import('./types').EditableAnchor) {
-    container.innerHTML = '';
-
-    const domain = anchor.entity.split('.')[0];
-    const isLight = domain === 'light';
-
-    // ── Section divider ──────────────────────────────────────────────
-    const secDiv = (label: string) => {
-      const d = document.createElement('div');
-      d.style.cssText = 'font-size:9px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.07em;margin:14px 0 7px;padding-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.06);';
-      d.textContent = label;
-      container.appendChild(d);
-    };
-
-    // ── Field helper ─────────────────────────────────────────────────
-    const field = (labelText: string, el: HTMLElement, parent = container) => {
-      const wrap = document.createElement('div');
-      wrap.style.cssText = 'margin-bottom:8px;';
-      const lbl = document.createElement('div');
-      lbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;';
-      lbl.textContent = labelText;
-      wrap.appendChild(lbl); wrap.appendChild(el);
-      parent.appendChild(wrap);
-    };
-
-    // ── Slider helper ────────────────────────────────────────────────
-    const sliderField = (labelText: string, min: number, max: number, step: number, value: number, color: string, fmt: (v: number) => string, onChange: (v: number) => void) => {
-      const wrap = document.createElement('div');
-      wrap.style.cssText = 'margin-bottom:8px;';
-      const hdr = document.createElement('div');
-      hdr.style.cssText = 'display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px;';
-      const lbl = document.createElement('span');
-      lbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;';
-      lbl.textContent = labelText;
-      const val = document.createElement('span');
-      val.style.cssText = 'font-size:10px;color:#e2e8f0;font-weight:600;';
-      val.textContent = fmt(value);
-      hdr.appendChild(lbl); hdr.appendChild(val);
-      const sl = document.createElement('input');
-      sl.type = 'range'; sl.min = String(min); sl.max = String(max); sl.step = String(step); sl.value = String(value);
-      sl.style.cssText = `width:100%;cursor:pointer;margin:0;accent-color:${color};`;
-      sl.addEventListener('pointerdown', () => { this._editorDragging = true; });
-      sl.addEventListener('pointerup', () => { this._editorDragging = false; this._scheduleAutoSave(); });
-      sl.addEventListener('input', () => {
-        const v = parseFloat(sl.value);
-        val.textContent = fmt(v);
-        onChange(v);
-        this._syncEditorLightsToScene();
-        this._requestRender();
-      });
-      wrap.appendChild(hdr); wrap.appendChild(sl);
-      container.appendChild(wrap);
-    };
-
-    const inputStyle = [
-      'width:100%', 'box-sizing:border-box',
-      'background:rgba(255,255,255,0.04)', 'border:1px solid rgba(255,255,255,0.1)',
-      'border-radius:7px', 'color:#e2e8f0', 'padding:6px 9px',
-      'font-size:11px', 'outline:none', 'font-family:inherit',
-      'transition:border-color .15s',
-    ].join(';');
-
-    // Title
-    const title = document.createElement('div');
-    title.style.cssText = 'font-size:12px;font-weight:700;color:#7dd3fc;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-    title.textContent = anchor.label || anchor.entity.split('.')[1];
-    container.appendChild(title);
-    const subtitle = document.createElement('div');
-    subtitle.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.3);margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-    subtitle.textContent = anchor.entity;
-    container.appendChild(subtitle);
-
-    // ── Section: Liaison HA ──────────────────────────────────────────
-    secDiv('Liaison HA');
-
-    const entityWrap = document.createElement('div');
-    entityWrap.style.cssText = 'position:relative;';
-    const entityInput = document.createElement('input');
-    const dlId = `owlnest-dl-${key}`;
-    entityInput.setAttribute('list', dlId);
-    entityInput.value = anchor.entity;
-    entityInput.placeholder = 'light.salon, switch.tv…';
-    entityInput.style.cssText = inputStyle;
-    entityInput.addEventListener('focus', () => { entityInput.style.borderColor = 'rgba(125,209,252,0.5)'; });
-    entityInput.addEventListener('blur', () => { entityInput.style.borderColor = 'rgba(255,255,255,0.1)'; });
-    entityInput.addEventListener('change', () => {
-      const v = entityInput.value.trim();
-      if (v) this._editor?.updateAnchor(key, { entity: v });
-    });
-    const datalist = document.createElement('datalist');
-    datalist.id = dlId;
-    if (this._hass?.states) {
-      for (const eid of Object.keys(this._hass.states).sort()) {
-        const opt = document.createElement('option');
-        opt.value = eid;
-        const fn = (this._hass.states[eid] as any)?.attributes?.friendly_name;
-        if (fn) opt.label = fn;
-        datalist.appendChild(opt);
-      }
-    }
-    entityWrap.appendChild(entityInput); entityWrap.appendChild(datalist);
-    field('Entité', entityWrap);
-
-    const labelInput = document.createElement('input');
-    labelInput.value = anchor.label;
-    labelInput.placeholder = 'Nom affiché…';
-    labelInput.style.cssText = inputStyle;
-    labelInput.addEventListener('focus', () => { labelInput.style.borderColor = 'rgba(125,209,252,0.5)'; });
-    labelInput.addEventListener('blur', () => { labelInput.style.borderColor = 'rgba(255,255,255,0.1)'; });
-    labelInput.addEventListener('change', () => {
-      this._editor?.updateAnchor(key, { label: labelInput.value.trim() || anchor.entity.split('.')[1] });
-    });
-    field('Nom', labelInput);
-
-    // ── Section: Lumière ─────────────────────────────────────────────
-    if (isLight) {
-      secDiv('Lumière');
-
-      sliderField('Intensité', 0.1, 3, 0.1, anchor.lightIntensity ?? 1, '#fbbf24',
-        (v) => `×${v.toFixed(1)}`,
-        (v) => this._editor?.updateAnchor(key, { lightIntensity: v }),
-      );
-
-      // Style buttons
-      const styleRow = document.createElement('div');
-      styleRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin-bottom:4px;';
-      const styleConfigs: { id: import('./types').LightStyle; label: string; icon: string }[] = [
-        { id: 'point', label: 'Ambiante', icon: '○' },
-        { id: 'spot',  label: 'Spot',     icon: '◎' },
-        { id: 'beam',  label: 'Rayon',    icon: '⊙' },
-      ];
-      let currentStyle = anchor.lightStyle ?? 'point';
-      const styleBtns: HTMLButtonElement[] = [];
-      let dirSection: HTMLDivElement | null = null;
-
-      const syncStyleBtns = () => {
-        styleBtns.forEach((b, i) => {
-          const on = styleConfigs[i].id === currentStyle;
-          b.style.background = on ? 'rgba(251,191,36,0.2)' : 'rgba(255,255,255,0.05)';
-          b.style.color = on ? '#fbbf24' : 'rgba(255,255,255,0.4)';
-          b.style.borderColor = on ? 'rgba(251,191,36,0.5)' : 'rgba(255,255,255,0.08)';
-        });
-      };
-
-      styleConfigs.forEach(({ id, label, icon }) => {
-        const btn = document.createElement('button');
-        btn.style.cssText = [
-          'border:1px solid rgba(255,255,255,0.08)',
-          'border-radius:7px', 'padding:5px 2px', 'cursor:pointer',
-          'font-size:10px', 'font-family:inherit', 'line-height:1.3',
-          'transition:all .15s', 'color:rgba(255,255,255,0.4)',
-          'background:rgba(255,255,255,0.05)',
-          'display:flex', 'flex-direction:column', 'align-items:center', 'gap:2px',
-        ].join(';');
-        btn.innerHTML = `<span style="font-size:14px">${icon}</span><span>${label}</span>`;
-        btn.addEventListener('click', () => {
-          currentStyle = id;
-          syncStyleBtns();
-          this._editor?.updateAnchor(key, { lightStyle: id });
-          if (dirSection) dirSection.style.display = (id === 'spot' || id === 'beam') ? 'block' : 'none';
-        });
-        styleBtns.push(btn);
-        styleRow.appendChild(btn);
-      });
-      syncStyleBtns();
-      container.appendChild(styleRow);
-
-      // ── Section: Orientation ─────────────────────────────────────
-      dirSection = document.createElement('div');
-      dirSection.style.display = (currentStyle === 'spot' || currentStyle === 'beam') ? 'block' : 'none';
-
-      const dirHeader = document.createElement('div');
-      dirHeader.style.cssText = 'font-size:9px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.07em;margin:14px 0 7px;padding-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.06);';
-      dirHeader.textContent = 'Orientation';
-      dirSection.appendChild(dirHeader);
-
-      // Read-only Az/El display
-      const dirDisplay = document.createElement('div');
-      dirDisplay.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px;';
-
-      const dirReadout = document.createElement('span');
-      dirReadout.style.cssText = 'font-size:11px;color:#e2e8f0;font-weight:600;font-variant-numeric:tabular-nums;flex:1;';
-      const dirToAzElStr = (dir?: [number, number, number]) => {
-        const [dx, dy, dz] = dir ?? [0, -1, 0];
-        const elRad = Math.asin(Math.max(-1, Math.min(1, -dy)));
-        const elDeg = elRad * 180 / Math.PI;
-        const az = Math.atan2(dx, dz);
-        const azDeg = Math.round(((az * 180 / Math.PI) + 360) % 360);
-        const sign = elDeg >= 0 ? '↓' : '↑';
-        return `Az ${azDeg}°  ${sign}${Math.abs(Math.round(elDeg))}°`;
-      };
-      dirReadout.textContent = dirToAzElStr(anchor.lightDirection);
-      dirDisplay.appendChild(dirReadout);
-
-      const gizmoBtn = document.createElement('button');
-      gizmoBtn.style.cssText = [
-        'background:rgba(125,209,252,0.1)', 'border:1px solid rgba(125,209,252,0.3)',
-        'border-radius:8px', 'color:#7dd3fc', 'padding:5px 9px',
-        'font-size:10px', 'font-family:inherit', 'cursor:pointer',
-        'transition:all .15s', 'white-space:nowrap',
-      ].join(';');
-      gizmoBtn.innerHTML = '◎ Gizmo <kbd style="opacity:.6;font-size:9px">R</kbd>';
-      gizmoBtn.title = 'Activer le gizmo de rotation (R)';
-      gizmoBtn.addEventListener('mouseenter', () => { gizmoBtn.style.background = 'rgba(125,209,252,0.2)'; gizmoBtn.style.borderColor = 'rgba(125,209,252,0.6)'; });
-      gizmoBtn.addEventListener('mouseleave', () => { gizmoBtn.style.background = 'rgba(125,209,252,0.1)'; gizmoBtn.style.borderColor = 'rgba(125,209,252,0.3)'; });
-      gizmoBtn.addEventListener('click', () => this._editor?.setTool('rotate'));
-      dirDisplay.appendChild(gizmoBtn);
-
-      dirSection.appendChild(dirDisplay);
-      container.appendChild(dirSection);
-    }
-
-    // ── Section: Actions ─────────────────────────────────────────────
-    secDiv('Actions');
-
-    const actRow = document.createElement('div');
-    actRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:6px;';
-
-    const dupBtn = document.createElement('button');
-    dupBtn.style.cssText = [
-      'background:rgba(255,255,255,0.06)', 'border:1px solid rgba(255,255,255,0.12)',
-      'border-radius:8px', 'color:#e2e8f0', 'padding:7px 4px',
-      'font-size:10px', 'font-family:inherit', 'cursor:pointer',
-      'transition:all .15s',
-    ].join(';');
-    dupBtn.innerHTML = '⎘ Dupliquer';
-    dupBtn.title = 'Ctrl+D';
-    dupBtn.addEventListener('mouseenter', () => { dupBtn.style.background = 'rgba(255,255,255,0.12)'; });
-    dupBtn.addEventListener('mouseleave', () => { dupBtn.style.background = 'rgba(255,255,255,0.06)'; });
-    dupBtn.addEventListener('click', () => this._editor?.duplicate());
-
-    const delBtn = document.createElement('button');
-    delBtn.style.cssText = [
-      'background:rgba(239,68,68,0.1)', 'border:1px solid rgba(239,68,68,0.25)',
-      'border-radius:8px', 'color:#f87171', 'padding:7px 4px',
-      'font-size:10px', 'font-family:inherit', 'cursor:pointer',
-      'transition:all .15s',
-    ].join(';');
-    delBtn.innerHTML = '✕ Supprimer';
-    delBtn.title = 'X — Supprimer l\'ancre';
-    delBtn.addEventListener('mouseenter', () => { delBtn.style.background = 'rgba(239,68,68,0.25)'; delBtn.style.borderColor = 'rgba(239,68,68,0.5)'; });
-    delBtn.addEventListener('mouseleave', () => { delBtn.style.background = 'rgba(239,68,68,0.1)'; delBtn.style.borderColor = 'rgba(239,68,68,0.25)'; });
-    delBtn.addEventListener('click', () => this._editor?.deleteSelected());
-
-    actRow.appendChild(dupBtn); actRow.appendChild(delBtn);
-    container.appendChild(actRow);
-  }
-
-  private _updateAnchorList() {
-    if (!this._anchorListPanel) return;
-    const list = this._anchorListPanel.querySelector<HTMLDivElement>('#anchor-list-body');
-    const propsPane = this._anchorListPanel.querySelector<HTMLDivElement>('#tab-pane-props');
-    const countLbl = this._anchorListPanel.querySelector<HTMLElement>('#anchor-count-lbl');
-    if (!list || !propsPane || !countLbl) return;
-
-    // Rebuild tab switching closure from current DOM state
-    const tabAnchorsPane = this._anchorListPanel.querySelector<HTMLElement>('#tab-pane-anchors');
-    const tabAnchorsBtn = this._anchorListPanel.querySelector<HTMLButtonElement>('[data-tab="anchors"]');
-    const tabPropsBtn   = this._anchorListPanel.querySelector<HTMLButtonElement>('[data-tab="props"]');
-    const switchTab = (tab: 'anchors' | 'props') => {
-      const onA = tab === 'anchors';
-      if (tabAnchorsPane) tabAnchorsPane.style.display = onA ? 'flex' : 'none';
-      propsPane.style.display = onA ? 'none' : 'block';
-      const activeColor = '#7dd3fc';
-      if (tabAnchorsBtn) { tabAnchorsBtn.style.color = onA ? activeColor : 'rgba(255,255,255,0.4)'; tabAnchorsBtn.style.borderBottomColor = onA ? activeColor : 'transparent'; }
-      if (tabPropsBtn)   { tabPropsBtn.style.color = !onA ? activeColor : 'rgba(255,255,255,0.4)'; tabPropsBtn.style.borderBottomColor = !onA ? activeColor : 'transparent'; }
-    };
-    this._fillAnchorList(list, propsPane, countLbl, switchTab);
+    // Also rebuild view bar in hudLeft
+    this._viewMgr?.buildHUDBar();
   }
 
   // ── Three.js init ─────────────────────────────────────────────────────
@@ -1909,37 +759,26 @@ class Ha3dFloorplan extends HTMLElement {
       su['rayleigh'].value = 1.2;
       su['mieCoefficient'].value = 0.005;
       su['mieDirectionalG'].value = 0.85;
-      this._setSkyPos(rl.sky_elevation ?? 60, 180);
+    }
+
+    // Instantiate EnvironmentController
+    this._env = new EnvironmentController(
+      this.scene,
+      this._hemiLight,
+      this._sunLight,
+      this._sky,
+      () => this._modelBox,
+      () => this._effectiveConfig,
+      () => this._requestRender(),
+    );
+
+    // Set initial sky position
+    if (useSky) {
+      this._env.setSkyPos(rl.sky_elevation ?? 60, 180);
     }
 
     this._lastTime = performance.now();
     this._loop();
-  }
-
-  private _setSkyPos(elevation: number, azimuth = 180) {
-    if (!this._sky) return;
-    const phi = THREE.MathUtils.degToRad(90 - elevation);
-    const theta = THREE.MathUtils.degToRad(azimuth - 180);
-    const sunPos = new THREE.Vector3().setFromSphericalCoords(1, phi, theta);
-    this._sky.material.uniforms['sunPosition'].value.copy(sunPos);
-    // Adjust haziness near horizon / sunset
-    const t = Math.max(0, Math.min(1, elevation / 30));
-    this._sky.material.uniforms['turbidity'].value = THREE.MathUtils.lerp(10, 3, t);
-    this._sky.material.uniforms['rayleigh'].value = THREE.MathUtils.lerp(3, 1.2, t);
-    // Night: hide sky, use dark bg
-    const transparentBg = this._config?.rendering?.transparent_background === true;
-    if (transparentBg) {
-      this._sky.visible = false;
-    } else if (elevation < -5) {
-      this._sky.visible = false;
-      this.scene!.background = new THREE.Color(0x05080f);
-      if (this.scene!.fog) (this.scene!.fog as THREE.FogExp2).color.setHex(0x05080f);
-    } else {
-      this._sky.visible = true;
-      this.scene!.background = null;
-      const fogHex = elevation > 20 ? 0x9fc8e8 : 0xd4845a;
-      if (this.scene!.fog) (this.scene!.fog as THREE.FogExp2).color.setHex(fogHex);
-    }
   }
 
   // ── Render loop ───────────────────────────────────────────────────────
@@ -1976,10 +815,9 @@ class Ha3dFloorplan extends HTMLElement {
     const transitioning = stepTransitions(this.anchors, dt, this._effectiveConfig);
     if (transitioning) this._dirty = true;
 
-    if (this._weatherParticles) {
-      this._stepParticles(dt);
-      this._dirty = true;
-    }
+    // Step weather particles via SimulationPanel
+    this._sim?.step(dt);
+    if (this._env?.weatherParticles) this._dirty = true;
 
     if ((moved || this._dirty) && this.camera && this.canvas) {
       const w = this.canvas.offsetWidth;
@@ -2043,7 +881,9 @@ class Ha3dFloorplan extends HTMLElement {
     this.controls!.update();
     this.scene.add(model);
     this._modelRoot = model;
-    if (ec.rendering?.transparent_background !== true) this._addGround(box);
+    if (ec.rendering?.transparent_background !== true && this._env) {
+      this._env.addGround(box, this._config!);
+    }
 
     this.anchors = detectAnchors(model, this.scene, ec);
     this._createOverlays();
@@ -2054,58 +894,43 @@ class Ha3dFloorplan extends HTMLElement {
     if (this._hass) {
       syncLights(this.anchors, this._hass, ec);
       this._updateOverlayStates();
-      this._updateEnvironment();
+      this._env?.updateFromHass(this._hass);
     }
 
-    this._buildCameraViewBar();
+    // Instantiate SimulationPanel now that everything is ready
+    if (this._simBtn && this._simExpand) {
+      this._sim = new SimulationPanel(
+        this._simExpand,
+        this._simBtn,
+        this._env!,
+        () => this._requestRender(),
+        () => this._hass,
+        () => this.anchors,
+        () => this._effectiveConfig,
+        () => this._updateOverlayStates(),
+      );
+      this._sim.buildContent();
+    }
+
+    // Instantiate ViewManager
+    this._viewMgr = new ViewManager(
+      this.overlayContainer!,
+      this._hudLeft!,
+      this._hudSep!,
+      () => this.camera,
+      () => this.controls,
+      () => this._effectiveConfig,
+      () => this._hass,
+      () => this._config?.scene_id,
+      () => this._scene,
+      (scene) => { this._scene = scene; },
+      (msg, err) => this._showToast(msg, err),
+      (pos, target) => { this._camAnimTo = { pos, target }; },
+      () => this._hudRight,
+    );
+
+    this._viewMgr.buildHUDBar();
     this._requestRender();
-  }
-
-  // ── Camera views ──────────────────────────────────────────────────────
-
-  private _buildCameraViewBar() {
-    if (!this._hudLeft) return;
-    this._hudLeft.innerHTML = '';
-
-    const views = this._effectiveConfig.camera_views;
-    const hasViews = !!(views?.length);
-    const hasActions = !!(this._hudRight && this._hudRight.children.length > 0);
-    if (this._hudSep) this._hudSep.style.display = (hasViews && hasActions) ? 'block' : 'none';
-    if (!hasViews) return;
-
-    views!.forEach((v) => {
-      const btn = document.createElement('button');
-      btn.textContent = v.label;
-      btn.style.cssText = [
-        'background:transparent', 'border:none',
-        'color:rgba(255,255,255,0.72)', 'cursor:pointer',
-        'padding:3px 9px', 'font-size:12px',
-        'font-family:var(--primary-font-family,sans-serif)',
-        'border-radius:14px',
-        'transition:background .15s, color .15s',
-        'white-space:nowrap',
-      ].join(';');
-      btn.addEventListener('mouseenter', () => {
-        btn.style.background = 'rgba(255,255,255,0.12)';
-        btn.style.color = '#fff';
-      });
-      btn.addEventListener('mouseleave', () => {
-        btn.style.background = 'transparent';
-        btn.style.color = 'rgba(255,255,255,0.72)';
-      });
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this._flyToView(v);
-      });
-      this._hudLeft!.appendChild(btn);
-    });
-  }
-
-  private _flyToView(v: CameraView) {
-    this._camAnimTo = {
-      pos: new THREE.Vector3(...v.position),
-      target: new THREE.Vector3(...(v.target ?? [0, 0, 0])),
-    };
   }
 
   // ── Overlay positioning + clustering ──────────────────────────────────
@@ -2287,231 +1112,6 @@ class Ha3dFloorplan extends HTMLElement {
     }));
   }
 
-  // ── Environment (sun + weather) ───────────────────────────────────────
-
-  private _updateEnvironment() {
-    if (!this._hass) return;
-    if (this._simActive) return; // simulation overrides HA sun/weather
-    const cfg = this._config;
-
-    if (cfg?.sun_entity) {
-      const sunState = this._hass.states[cfg.sun_entity];
-      if (sunState) {
-        const elevation = (sunState.attributes.elevation as number) ?? 0;
-        const azimuth = (sunState.attributes.azimuth as number) ?? 180;
-        this._applySunLight(elevation, azimuth);
-      }
-    }
-
-    if (cfg?.weather_entity) {
-      const weatherState = this._hass.states[cfg.weather_entity];
-      if (weatherState) this._applyWeather(weatherState.state);
-    }
-  }
-
-  private _applySunLight(elevation: number, azimuth: number) {
-    if (!this._hemiLight || !this._sunLight || !this.scene) return;
-
-    const t = Math.max(0, Math.min(1, (elevation + 10) / 30));
-    const isNight = elevation < -2;
-
-    this._hemiLight.intensity = isNight ? 0.45 : THREE.MathUtils.lerp(0.15, 0.7, t);
-    this._hemiLight.color.setHex(isNight ? 0x3a5080 : (t < 0.5 ? 0xee8833 : 0xfff4e0));
-    this._hemiLight.groundColor.setHex(isNight ? 0x0d1a2e : (t > 0.5 ? 0x1a1a2e : 0x0d1020));
-
-    this._sunLight.intensity = Math.max(0, elevation / 60) * 0.9;
-    const azRad = ((azimuth - 180) * Math.PI) / 180;
-    const elRad = (elevation * Math.PI) / 180;
-    this._sunLight.position.set(
-      Math.sin(azRad) * Math.cos(elRad) * 10,
-      Math.sin(elRad) * 10,
-      Math.cos(azRad) * Math.cos(elRad) * 10,
-    );
-
-    this._setSkyPos(elevation, azimuth);
-    this._requestRender();
-  }
-
-  private _applyWeather(weatherState: string) {
-    const rainy = ['rainy', 'pouring', 'lightning', 'lightning-rainy'].includes(weatherState);
-    const snowy = ['snowy', 'snowy-rainy'].includes(weatherState);
-    const wanted: 'rain' | 'snow' | 'none' = rainy ? 'rain' : snowy ? 'snow' : 'none';
-
-    if (wanted === this._weatherType) return;
-    this._weatherType = wanted;
-    this._removeWeatherParticles();
-
-    if (this.scene) {
-      if (wanted === 'rain') {
-        this.scene.fog?.color.setHex(0x0a1020);
-        if (this._hemiLight) this._hemiLight.intensity *= 0.6;
-      } else if (wanted === 'snow') {
-        this.scene.fog?.color.setHex(0x1a2030);
-        if (this._hemiLight) this._hemiLight.intensity *= 0.8;
-      }
-    }
-
-    if (wanted !== 'none') this._createWeatherParticles(wanted);
-    this._requestRender();
-  }
-
-  private _addGround(originalBox: THREE.Box3) {
-    if (!this.scene) return;
-    const size = originalBox.getSize(new THREE.Vector3());
-    const spread = Math.max(size.x, size.z) * 6;
-    const groundY = -size.y / 2 - 0.01;
-    const geo = new THREE.PlaneGeometry(spread, spread);
-    const groundHex = this._config?.rendering?.ground_color
-      ? parseInt(this._config.rendering.ground_color.replace('#', ''), 16)
-      : 0x4a6741;
-    const mat = new THREE.MeshStandardMaterial({ color: groundHex, roughness: 1, metalness: 0 });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.position.y = groundY;
-    mesh.receiveShadow = true;
-    this.scene.add(mesh);
-  }
-
-  // ── Weather particles ─────────────────────────────────────────────────
-
-  private _createWeatherParticles(type: 'rain' | 'snow') {
-    if (!this.scene) return;
-
-    const box = this._modelBox;
-    const size = box.getSize(new THREE.Vector3());
-    const cx = (box.min.x + box.max.x) / 2;
-    const cz = (box.min.z + box.max.z) / 2;
-    const spreadX = Math.max(size.x * 2, 12);
-    const spreadZ = Math.max(size.z * 2, 12);
-    const yTop = box.max.y + 5;
-    const yBot = box.min.y - 0.5;
-    const modelMinX = box.min.x;
-    const modelMaxX = box.max.x;
-    const modelMinZ = box.min.z;
-    const modelMaxZ = box.max.z;
-    const meta = { type, spreadX, spreadZ, cx, cz, yTop, yBot, modelMinX, modelMaxX, modelMinZ, modelMaxZ };
-
-    const spawnXZ = (): [number, number] => {
-      let x: number, z: number, tries = 0;
-      do {
-        x = cx + (Math.random() - 0.5) * spreadX;
-        z = cz + (Math.random() - 0.5) * spreadZ;
-        tries++;
-      } while (tries < 30 && x > modelMinX && x < modelMaxX && z > modelMinZ && z < modelMaxZ);
-      return [x, z];
-    };
-
-    if (type === 'rain') {
-      const COUNT = 700;
-      const pos = new Float32Array(COUNT * 6);
-      for (let i = 0; i < COUNT; i++) {
-        const [x, z] = spawnXZ();
-        const y = yBot + Math.random() * (yTop - yBot);
-        const len = 0.25 + Math.random() * 0.2;
-        const wx = -0.06;
-        pos[i * 6 + 0] = x;       pos[i * 6 + 1] = y;        pos[i * 6 + 2] = z;
-        pos[i * 6 + 3] = x + wx;  pos[i * 6 + 4] = y - len;  pos[i * 6 + 5] = z;
-      }
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-      const mat = new THREE.LineBasicMaterial({ color: 0xaac8e8, transparent: true, opacity: 0.45 });
-      const mesh = new THREE.LineSegments(geo, mat);
-      mesh.userData = meta;
-      this._weatherParticles = mesh;
-      this.scene.add(mesh);
-    } else {
-      const COUNT = 350;
-      const pos = new Float32Array(COUNT * 3);
-      for (let i = 0; i < COUNT; i++) {
-        const [x, z] = spawnXZ();
-        pos[i * 3 + 0] = x;
-        pos[i * 3 + 1] = yBot + Math.random() * (yTop - yBot);
-        pos[i * 3 + 2] = z;
-      }
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-      const mat = new THREE.PointsMaterial({
-        color: 0xddeeff,
-        size: 0.12,
-        transparent: true,
-        opacity: 0.82,
-        depthWrite: false,
-        sizeAttenuation: true,
-      });
-      const mesh = new THREE.Points(geo, mat);
-      mesh.userData = meta;
-      this._weatherParticles = mesh;
-      this.scene.add(mesh);
-    }
-  }
-
-  private _stepParticles(dt: number) {
-    const obj = this._weatherParticles;
-    if (!obj) return;
-    const { type, spreadX, spreadZ, cx, cz, yTop, yBot, modelMinX, modelMaxX, modelMinZ, modelMaxZ } = obj.userData as {
-      type: string; spreadX: number; spreadZ: number;
-      cx: number; cz: number; yTop: number; yBot: number;
-      modelMinX: number; modelMaxX: number; modelMinZ: number; modelMaxZ: number;
-    };
-
-    const spawnXZ = (): [number, number] => {
-      let x: number, z: number, tries = 0;
-      do {
-        x = cx + (Math.random() - 0.5) * spreadX;
-        z = cz + (Math.random() - 0.5) * spreadZ;
-        tries++;
-      } while (tries < 30 && x > modelMinX && x < modelMaxX && z > modelMinZ && z < modelMaxZ);
-      return [x, z];
-    };
-
-    const geo = (obj as THREE.LineSegments | THREE.Points).geometry;
-    const pos = geo.getAttribute('position') as THREE.BufferAttribute;
-    const arr = pos.array as Float32Array;
-
-    if (type === 'rain') {
-      const speed = 5.5;
-      const wx = -0.06 * speed * dt;
-      for (let i = 0; i < arr.length; i += 6) {
-        arr[i + 1] -= speed * dt;
-        arr[i + 4] -= speed * dt;
-        arr[i + 0] += wx; arr[i + 3] += wx;
-        if (arr[i + 4] < yBot) {
-          const [x, z] = spawnXZ();
-          const len = 0.25 + Math.random() * 0.2;
-          arr[i + 0] = x;        arr[i + 1] = yTop;       arr[i + 2] = z;
-          arr[i + 3] = x - 0.06; arr[i + 4] = yTop - len; arr[i + 5] = z;
-        }
-      }
-    } else {
-      const speed = 0.5 + Math.random() * 0.1;
-      const driftAmp = 0.15;
-      for (let i = 0; i < arr.length; i += 3) {
-        arr[i + 1] -= speed * dt;
-        arr[i + 0] += (Math.random() - 0.5) * driftAmp * dt;
-        arr[i + 2] += (Math.random() - 0.5) * driftAmp * dt;
-        if (arr[i + 1] < yBot) {
-          const [x, z] = spawnXZ();
-          arr[i + 0] = x;
-          arr[i + 1] = yTop;
-          arr[i + 2] = z;
-        }
-      }
-    }
-    pos.needsUpdate = true;
-  }
-
-  private _removeWeatherParticles() {
-    if (!this._weatherParticles) return;
-    this.scene?.remove(this._weatherParticles);
-    const obj = this._weatherParticles as THREE.LineSegments | THREE.Points;
-    obj.geometry.dispose();
-    (obj.material as THREE.Material).dispose();
-    this._weatherParticles = null;
-
-    this._setSkyPos(60, 180);
-    if (this._hemiLight) this._hemiLight.intensity = 0.7;
-  }
-
   // ── Resize ────────────────────────────────────────────────────────────
 
   private _onResize() {
@@ -2534,7 +1134,11 @@ class Ha3dFloorplan extends HTMLElement {
     if (this._editMode) this._editor?.deactivate();
     this.controls?.dispose();
     this.renderer?.dispose();
-    this._removeWeatherParticles();
+    this._env?.removeWeatherParticles();
+    this._env = null;
+    this._sim = null;
+    this._viewMgr = null;
+    this._editPanel = null;
     this._clusters.forEach((c) => c.destroy());
     this._clusters.clear();
     this.overlays.forEach((o) => o.destroy());
@@ -2550,7 +1154,6 @@ class Ha3dFloorplan extends HTMLElement {
     this._hudSep = null;
     this._hudRight = null;
     this._simExpand = null;
-    this._simOpen = false;
     if (this._controlsHideTimer) clearTimeout(this._controlsHideTimer);
     this.modelLoaded = false;
     this._editMode = false;
