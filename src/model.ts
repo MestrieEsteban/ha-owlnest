@@ -117,6 +117,7 @@ export function detectAnchors(
         lightStyle: ac.lightStyle,
         lightIntensity: ac.lightIntensity,
         lightDirection: ac.lightDirection,
+        visibleIf: ac.visibleIf,
       });
     });
     return anchors;
@@ -172,6 +173,7 @@ export function buildAnchorsFromEditable(
       lightStyle: ea.lightStyle,
       lightIntensity: ea.lightIntensity,
       lightDirection: ea.lightDirection,
+      visibleIf: ea.visibleIf,
     });
   });
   return anchors;

@@ -78,6 +78,7 @@ export function sceneToEffectiveConfig(scene: OwlnestScene, base: CardConfig): C
       lightStyle: a.lightStyle,
       lightIntensity: a.lightIntensity,
       lightDirection: a.lightDirection,
+      visibleIf: a.visibleIf,
     })),
     camera_views: scene.camera_views?.length
       ? normalizeViews(scene.camera_views)
@@ -114,6 +115,7 @@ export function buildSceneFromEditor(
       lightStyle: a.lightStyle,
       lightIntensity: a.lightIntensity,
       lightDirection: a.lightDirection,
+      visibleIf: a.visibleIf,
     });
   });
 

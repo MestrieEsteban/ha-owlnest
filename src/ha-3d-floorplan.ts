@@ -9,7 +9,7 @@ import { loadGLTF, detectAnchors, buildAnchorsFromEditable, rebuildAnchorLight, 
 import { AnchorOverlay, SensorOverlay, ClusterOverlay } from './overlay';
 import type { ClusterItem } from './overlay';
 import { AnchorEditor } from './editor';
-import { loadScene, saveScene, sceneToEffectiveConfig, buildSceneFromEditor } from './scene';
+import { loadScene, saveScene, sceneToEffectiveConfig, buildSceneFromEditor, normalizeViews } from './scene';
 import './card-editor';
 import { EnvironmentController } from './card/environment';
 import { SimulationPanel } from './card/simulation';
@@ -18,6 +18,8 @@ import { EditPanel } from './card/edit-panel';
 import { SceneCardRenderer } from './cards/renderer';
 import { PanelGizmo } from './panels/gizmo';
 import type { SceneCard, SceneCardType } from './cards/types';
+import { evalCondition, triggerFired, conditionsMet } from './rules/engine';
+import type { OwlnestRule, Action } from './rules/types';
 
 type AnyOverlay = AnchorOverlay | SensorOverlay;
 
@@ -69,6 +71,9 @@ class Ha3dFloorplan extends HTMLElement {
 
   // Camera animation
   private _camAnimTo: { pos: THREE.Vector3; target: THREE.Vector3 } | null = null;
+
+  // Rules engine — tracks previous states to detect transitions
+  private _prevEntityStates = new Map<string, string>();
 
   // Environment lights
   private _hemiLight: THREE.HemisphereLight | null = null;
@@ -169,11 +174,14 @@ class Ha3dFloorplan extends HTMLElement {
     if (this.modelLoaded && !this._editMode) {
       syncLights(this.anchors, hass, this._effectiveConfig);
       this._updateOverlayStates();
-      this._env?.updateFromHass(hass);
+      // Skip real-entity weather/sun when simulation is overriding
+      if (!this._sim?.isActive) this._env?.updateFromHass(hass);
       const cards = this._scene?.cards ?? [];
       if (cards.length > 0) {
         this._cardRenderer?.updateStates(hass);
       }
+      this._evaluateRules();
+      this._evaluatePassiveConditions();
       this._requestRender();
     }
   }
@@ -704,6 +712,8 @@ class Ha3dFloorplan extends HTMLElement {
 
   // ── Overlay toggle ─────────────────────────────────────────────────────
 
+  private _overlayHideBadge: HTMLDivElement | null = null;
+
   private _toggleOverlays() {
     this._overlaysVisible = !this._overlaysVisible;
     this.overlays.forEach((o) => {
@@ -712,6 +722,36 @@ class Ha3dFloorplan extends HTMLElement {
     this._clusters.forEach((c) => {
       if (!this._overlaysVisible) c.hide();
     });
+    this._syncOverlayHideBadge();
+  }
+
+  private _syncOverlayHideBadge() {
+    if (!this.overlayContainer) return;
+    if (this._overlaysVisible) {
+      if (this._overlayHideBadge) {
+        this._overlayHideBadge.style.opacity = '0';
+        setTimeout(() => { this._overlayHideBadge?.remove(); this._overlayHideBadge = null; }, 250);
+      }
+      return;
+    }
+    if (!this._overlayHideBadge) {
+      const badge = document.createElement('div');
+      badge.style.cssText = [
+        'position:absolute', 'top:10px', 'left:50%', 'transform:translateX(-50%)',
+        'background:rgba(0,0,0,0.72)', 'backdrop-filter:blur(8px)',
+        'border:1px solid rgba(255,255,255,0.15)', 'border-radius:20px',
+        'color:rgba(255,255,255,0.7)', 'font-size:11px',
+        'font-family:var(--primary-font-family,sans-serif)',
+        'padding:4px 12px', 'pointer-events:none', 'z-index:20',
+        'display:flex', 'align-items:center', 'gap:5px',
+        'opacity:0', 'transition:opacity .2s ease',
+        'white-space:nowrap',
+      ].join(';');
+      badge.innerHTML = '<span style="font-size:13px">🙈</span> Overlays masqués — tapez pour afficher';
+      this.overlayContainer.appendChild(badge);
+      this._overlayHideBadge = badge;
+      requestAnimationFrame(() => { badge.style.opacity = '1'; });
+    }
   }
 
   private _toggleLock(force?: boolean) {
@@ -751,6 +791,7 @@ class Ha3dFloorplan extends HTMLElement {
         lightStyle: entry.lightStyle,
         lightIntensity: entry.lightIntensity,
         lightDirection: entry.lightDirection,
+        visibleIf: entry.visibleIf,
       });
     });
 
@@ -790,10 +831,14 @@ class Ha3dFloorplan extends HTMLElement {
         this._cardRenderer?.setSelectedId(id);
       },
       (type) => this._startCardPlacement(type),
+      () => this._scene?.rules ?? [],
+      async (rules) => this._saveRulesDirect(rules),
+      () => normalizeViews(this._scene?.camera_views ?? []),
     );
 
     this._editor.onChanged = () => {
       this._syncEditorLightsToScene();
+      this._evaluatePassiveConditions();
       this._requestRender();
       if (!this._editPanel?.editorDragging && !this._editPanel?.gizmoDragging) this._editPanel?.updateAnchorList();
       // Don't schedule auto-save in the middle of a gizmo drag — wait for drag end
@@ -914,6 +959,7 @@ class Ha3dFloorplan extends HTMLElement {
 
       // Always sync position (gizmo drag)
       entry.worldPos.copy(ea.position);
+      entry.visibleIf = ea.visibleIf;
       if (entry.light) entry.light.position.copy(ea.position);
       if (entry.lightTarget) {
         entry.lightTarget.position.copy(lightTargetPos(ea.position, ea.lightDirection));
@@ -960,6 +1006,7 @@ class Ha3dFloorplan extends HTMLElement {
       this._cardPlacementMode = false;
       this._cardPlacementType = null;
       this._editPanel?.hideStatusBar();
+      if (this.canvas) this.canvas.style.cursor = '';
       this._editPanel?.updateAnchorList();
       e.preventDefault();
       return;
@@ -1042,7 +1089,8 @@ class Ha3dFloorplan extends HTMLElement {
   startCardPlacement(type: SceneCardType) {
     this._cardPlacementMode = true;
     this._cardPlacementType = type;
-    this._editPanel?.showStatusBar('Cliquez dans la scène pour placer la carte  ·  Esc annuler');
+    this._editPanel?.showStatusBar('🎯 Cliquez sur le modèle pour placer la carte  ·  Esc pour annuler');
+    if (this.canvas) this.canvas.style.cursor = 'crosshair';
   }
 
   private _startCardPlacement(type: SceneCardType) {
@@ -1065,6 +1113,7 @@ class Ha3dFloorplan extends HTMLElement {
     this._cardPlacementMode = false;
     this._cardPlacementType = null;
     this._editPanel?.hideStatusBar();
+    if (this.canvas) this.canvas.style.cursor = '';
 
     await this._saveCardsDirect(cards);
 
@@ -1104,6 +1153,28 @@ class Ha3dFloorplan extends HTMLElement {
     this._editPanel?.updateAnchorList();
   }
 
+  private async _saveRulesDirect(rules: OwlnestRule[]) {
+    const sceneId = this._config?.scene_id;
+    const hass = this._hass;
+    const current = this._scene;
+    if (!sceneId || !hass) {
+      if (current) this._scene = { ...current, rules };
+      return;
+    }
+    try {
+      const base = current ?? {
+        version: 1, scene_id: sceneId,
+        model_url: this._config?.model_url ?? '',
+        anchors: [], camera_views: [], cards: [], rules: [],
+      };
+      const updated = { ...base, rules };
+      await saveScene(hass, sceneId, updated);
+      this._scene = updated;
+    } catch (err) {
+      console.error('[Owlnest] Rules save failed:', err);
+    }
+  }
+
   // ── Card fly-to ────────────────────────────────────────────────────────────
 
   private _enterCardFocus(cardId: string) {
@@ -1134,6 +1205,11 @@ class Ha3dFloorplan extends HTMLElement {
   private _rebuildNormalHUD() {
     if (!this._hudRight) return;
     this._hudRight.innerHTML = '';
+    // Restore hudSep to its original 1px separator style (may have been repurposed by edit mode)
+    if (this._hudSep) {
+      this._hudSep.innerHTML = '';
+      this._hudSep.style.cssText = 'width:1px;height:18px;background:rgba(255,255,255,0.15);margin:0 4px;flex-shrink:0;display:none;';
+    }
     const ui = this._config?.ui ?? {};
     const icons = ui.icons ?? {};
     if (ui.show_simulation !== false && this._simBtn) {
@@ -1302,9 +1378,12 @@ class Ha3dFloorplan extends HTMLElement {
       this._panelGizmo.updateScale(this.camera);
     }
 
-    // Step weather particles via SimulationPanel
     this._sim?.step(dt);
-    if (this._env?.weatherParticles) this._dirty = true;
+    // Animate weather particles + lightning every frame regardless of simulation state
+    if (this._env?.needsStep) {
+      this._env.stepParticles(dt);
+      this._dirty = true;
+    }
 
     if ((moved || this._dirty) && this.camera && this.canvas) {
       const w = this.canvas.offsetWidth;
@@ -1323,13 +1402,31 @@ class Ha3dFloorplan extends HTMLElement {
     const ec = this._effectiveConfig;
     if (!ec.model_url || !this.scene) return;
 
+    // Show loading indicator
+    const loadingEl = document.createElement('div');
+    loadingEl.style.cssText = [
+      'position:absolute', 'inset:0', 'display:flex', 'flex-direction:column',
+      'align-items:center', 'justify-content:center', 'z-index:50',
+      'pointer-events:none', 'gap:10px',
+    ].join(';');
+    loadingEl.innerHTML = `
+      <div style="width:32px;height:32px;border:3px solid rgba(255,255,255,0.12);border-top-color:rgba(125,209,252,0.8);border-radius:50%;animation:owlnest-spin 0.8s linear infinite;"></div>
+      <div style="font-size:11px;color:rgba(255,255,255,0.35);font-family:var(--primary-font-family,sans-serif);letter-spacing:.04em;">Chargement du modèle…</div>
+    `;
+    const styleEl = document.createElement('style');
+    styleEl.textContent = '@keyframes owlnest-spin{to{transform:rotate(360deg)}}';
+    loadingEl.appendChild(styleEl);
+    this.overlayContainer?.appendChild(loadingEl);
+
     let model: THREE.Group;
     try {
       model = await loadGLTF(ec.model_url);
     } catch (err) {
       console.error('[Owlnest] model load failed:', err);
+      loadingEl.innerHTML = `<div style="font-size:11px;color:#f87171;font-family:var(--primary-font-family,sans-serif);">⚠ Échec du chargement du modèle</div>`;
       return;
     }
+    loadingEl.remove();
 
     // Enable shadows on all meshes
     model.traverse((obj) => {
@@ -1382,6 +1479,14 @@ class Ha3dFloorplan extends HTMLElement {
       syncLights(this.anchors, this._hass, ec);
       this._updateOverlayStates();
       this._env?.updateFromHass(this._hass);
+      // Seed rule engine immediately so the first real state change fires correctly.
+      // Without this, the first hass update after load would be consumed by seeding.
+      if (!this._prevStatesInitialized) {
+        for (const [id, s] of Object.entries(this._hass.states)) {
+          this._prevEntityStates.set(id, s.state);
+        }
+        this._prevStatesInitialized = true;
+      }
     }
 
     // Instantiate SimulationPanel now that everything is ready
@@ -1566,6 +1671,102 @@ class Ha3dFloorplan extends HTMLElement {
       default:
         return () => this._openMoreInfo(entry.entityId);
     }
+  }
+
+  // ── Rules engine ────────────────────────────────────────────────────────
+
+  // True once _prevEntityStates has been seeded with the initial snapshot
+  private _prevStatesInitialized = false;
+
+  private _evaluateRules() {
+    if (!this._hass || !this._scene) return;
+
+    // On first call: seed prev states without evaluating rules (avoid false triggers on load)
+    if (!this._prevStatesInitialized) {
+      for (const [id, s] of Object.entries(this._hass.states)) {
+        this._prevEntityStates.set(id, s.state);
+      }
+      this._prevStatesInitialized = true;
+      return;
+    }
+
+    const rules = this._scene.rules as OwlnestRule[];
+    if (rules.length === 0) return;
+
+    for (const rule of rules) {
+      if (rule.enabled === false) continue;
+      if (!triggerFired(rule, this._prevEntityStates, this._hass)) continue;
+      if (!conditionsMet(rule, this._hass)) continue;
+      console.debug('[Owlnest] Rule fired:', rule.label ?? rule.id, rule.actions);
+      for (const action of rule.actions) this._executeAction(action);
+    }
+    // Update prev states AFTER evaluation so transitions are detected correctly
+    for (const [id, s] of Object.entries(this._hass.states)) {
+      this._prevEntityStates.set(id, s.state);
+    }
+  }
+
+  private _executeAction(action: Action) {
+    if (!this._hass) return;
+    switch (action.type) {
+      case 'go_to_view': {
+        const views = normalizeViews(this._scene?.camera_views ?? []);
+        const view = views.find((v) => v.id === action.view_id);
+        if (view) {
+          console.debug('[Owlnest] go_to_view:', view.label);
+          this._camAnimTo = {
+            pos:    new THREE.Vector3(...view.position),
+            target: new THREE.Vector3(...view.target),
+          };
+        } else {
+          console.warn('[Owlnest] go_to_view: view not found:', action.view_id, 'available:', views.map(v => v.id));
+        }
+        break;
+      }
+      case 'show_card':
+      case 'hide_card': {
+        const visible = action.type === 'show_card';
+        const cards = (this._scene?.cards ?? []).map((c) =>
+          c.id === action.card_id ? { ...c, visible } : c,
+        ) as SceneCard[];
+        void this._saveCardsDirect(cards);
+        break;
+      }
+      case 'call_service':
+        this._hass.callService(action.domain, action.service, action.service_data ?? {});
+        break;
+    }
+  }
+
+  private _evaluatePassiveConditions() {
+    if (!this._hass) return;
+
+    // ── Cards (needs _scene) ──────────────────────────────────────────
+    if (this._scene) {
+      const cards = this._scene.cards;
+      let cardsChanged = false;
+      for (const card of cards) {
+        if (!card.visibleIf) continue;
+        const shouldBeVisible = evalCondition(card.visibleIf, this._hass);
+        const isVisible = card.visible !== false;
+        if (shouldBeVisible !== isVisible) {
+          (card as { visible: boolean }).visible = shouldBeVisible;
+          cardsChanged = true;
+        }
+      }
+      if (cardsChanged) this._cardRenderer?.syncCards(cards, this._hass);
+    }
+
+    // ── Anchors (only needs this.anchors) ────────────────────────────
+    this.anchors.forEach((entry, key) => {
+      const overlay = this.overlays.get(key);
+      if (!overlay || !('conditionHidden' in overlay)) return;
+      if (!entry.visibleIf) {
+        overlay.conditionHidden = false;
+        return;
+      }
+      overlay.conditionHidden = !evalCondition(entry.visibleIf, this._hass!);
+    });
   }
 
   private _updateOverlayStates() {

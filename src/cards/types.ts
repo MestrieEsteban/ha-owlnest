@@ -44,9 +44,10 @@ interface SceneCardBase {
   type: SceneCardType;
   name: string;
   position: [number, number, number];
-  visible?: boolean;            // default true
+  visible?: boolean;            // default true (persisted editorial value)
   size?: SceneCardSize;         // default 'medium'
   accentColor?: string;         // overrides template default
+  visibleIf?: import('../rules/types').EntityCondition; // runtime show/hide — not persisted
 }
 
 // ── Room card ───────────────────────────────────────────────────────────────

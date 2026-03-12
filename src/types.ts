@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 export type { SceneCard, RoomCard, EntityCard, InfoCard, SceneCardType, SceneCardSize } from './cards/types';
+export type { OwlnestRule, EntityCondition, Action, Trigger } from './rules/types';
 
 export type EntityDomain =
   | 'light'
@@ -42,6 +43,7 @@ export interface AnchorConfig {
   lightStyle?: LightStyle;
   lightIntensity?: number;
   lightDirection?: [number, number, number];
+  visibleIf?: import('./rules/types').EntityCondition;
 }
 
 // ── Owlnest scene (backend-persisted) ─────────────────────────────────────
@@ -57,6 +59,7 @@ export interface OwlnestAnchor {
   lightStyle?: LightStyle;
   lightIntensity?: number;
   lightDirection?: [number, number, number];
+  visibleIf?: import('./rules/types').EntityCondition; // show/hide overlay based on entity state
 }
 
 /** A full Owlnest scene, persisted by the backend integration. */
@@ -67,7 +70,7 @@ export interface OwlnestScene {
   anchors: OwlnestAnchor[];
   camera_views: CameraView[];
   cards: import('./cards/types').SceneCard[];
-  rules: unknown[];
+  rules: import('./rules/types').OwlnestRule[];
 }
 
 // ── Lovelace card config ───────────────────────────────────────────────────
@@ -138,6 +141,7 @@ export interface AnchorEntry {
   lightStyle?: LightStyle;
   lightIntensity?: number;
   lightDirection?: [number, number, number];
+  visibleIf?: import('./rules/types').EntityCondition;
 }
 
 export interface SavedView {
@@ -155,4 +159,5 @@ export interface EditableAnchor {
   lightStyle?: LightStyle;
   lightIntensity?: number;
   lightDirection?: [number, number, number];
+  visibleIf?: import('./rules/types').EntityCondition;
 }

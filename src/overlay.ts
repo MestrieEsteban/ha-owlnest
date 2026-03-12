@@ -27,6 +27,7 @@ function getIcon(domain: EntityDomain): string {
 
 export class AnchorOverlay {
   readonly el: HTMLDivElement;
+  conditionHidden = false;
   private _label: HTMLDivElement;
   private _pressTimer: ReturnType<typeof setTimeout> | null = null;
   private _pressing = false;
@@ -117,12 +118,38 @@ export class AnchorOverlay {
     this.el.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
+  private _pressRing: SVGSVGElement | null = null;
+
   private _startPress(_onShortClick: () => void, onLongPress: () => void) {
     this._pressing = true;
+    // Show a circular progress ring to signal that long press is being detected
+    this._pressRing = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as unknown as SVGSVGElement;
+    const svg = this._pressRing;
+    svg.setAttribute('viewBox', '0 0 36 36');
+    svg.setAttribute('width', '42');
+    svg.setAttribute('height', '42');
+    (svg as unknown as HTMLElement).style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:1;';
+    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circle.setAttribute('cx', '18');
+    circle.setAttribute('cy', '18');
+    circle.setAttribute('r', '16');
+    circle.setAttribute('fill', 'none');
+    circle.setAttribute('stroke', 'rgba(255,255,255,0.7)');
+    circle.setAttribute('stroke-width', '2');
+    circle.setAttribute('stroke-dasharray', '100.5');
+    circle.setAttribute('stroke-dashoffset', '100.5');
+    circle.setAttribute('stroke-linecap', 'round');
+    circle.style.cssText = 'transform-origin:18px 18px;transform:rotate(-90deg);transition:stroke-dashoffset 0.48s linear;';
+    svg.appendChild(circle);
+    this.el.appendChild(svg);
+    requestAnimationFrame(() => { circle.setAttribute('stroke-dashoffset', '0'); });
+
     this._pressTimer = setTimeout(() => {
       if (!this._pressing) return;
       this._pressing = false;
       this.el.style.transform = 'translate(-50%,-50%) scale(1)';
+      svg.remove();
+      this._pressRing = null;
       onLongPress();
     }, 500);
   }
@@ -132,17 +159,19 @@ export class AnchorOverlay {
     this._pressing = false;
     clearTimeout(this._pressTimer!);
     this._pressTimer = null;
+    if (this._pressRing) { this._pressRing.remove(); this._pressRing = null; }
     onShortClick();
   }
 
   private _cancel() {
     this._pressing = false;
     if (this._pressTimer) { clearTimeout(this._pressTimer); this._pressTimer = null; }
+    if (this._pressRing) { this._pressRing.remove(); this._pressRing = null; }
   }
 
   updatePosition(worldPos: THREE.Vector3, camera: THREE.Camera, w: number, h: number) {
     const p = worldPos.clone().project(camera);
-    if (p.z >= 1) { this.el.style.display = 'none'; return; }
+    if (p.z >= 1 || this.conditionHidden) { this.el.style.display = 'none'; return; }
     this.el.style.display = 'flex';
     this.el.style.left = `${((p.x + 1) / 2) * w}px`;
     this.el.style.top = `${((-p.y + 1) / 2) * h}px`;
@@ -172,6 +201,7 @@ export class AnchorOverlay {
 
 export class SensorOverlay {
   readonly el: HTMLDivElement;
+  conditionHidden = false;
 
   constructor(container: HTMLElement, onClick: () => void) {
     this.el = document.createElement('div');
@@ -215,7 +245,7 @@ export class SensorOverlay {
 
   updatePosition(worldPos: THREE.Vector3, camera: THREE.Camera, w: number, h: number) {
     const p = worldPos.clone().project(camera);
-    if (p.z >= 1) { this.el.style.display = 'none'; return; }
+    if (p.z >= 1 || this.conditionHidden) { this.el.style.display = 'none'; return; }
     this.el.style.display = 'block';
     this.el.style.left = `${((p.x + 1) / 2) * w}px`;
     this.el.style.top = `${((-p.y + 1) / 2) * h}px`;

@@ -273,14 +273,15 @@ export class AnchorEditor {
   private _addMarker(key: string, pos: THREE.Vector3, hidden = false) {
     const geo = new THREE.SphereGeometry(this._markerRadius, 14, 10);
     const mat = new THREE.MeshBasicMaterial({
-      color: hidden ? 0x888888 : 0xFFDD00,
+      color: hidden ? 0x555555 : 0xFFDD00,
       depthTest: false,
-      transparent: !!hidden,
-      opacity: hidden ? 0.25 : 1,
+      transparent: true,
+      opacity: hidden ? 0.2 : 1,
     });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.copy(pos);
     mesh.userData.anchorKey = key;
+    mesh.userData.hidden = hidden;
     mesh.renderOrder = 999;
     this._scene.add(mesh);
     this._markers.set(key, mesh);
@@ -900,6 +901,16 @@ export class AnchorEditor {
         if (hits.length > 0 && hits[0].object.userData.gizmoAxis) {
           e.stopImmediatePropagation();
           this._startDrag(e, hits[0].object.userData.gizmoAxis as string);
+          return;
+        }
+      }
+      // Rotation gizmo — also interactive in select mode for directional lights
+      if (this._rotGizmoGroup) {
+        const rotHits = this._raycaster.intersectObjects(this._rotGizmoGroup.children, false);
+        const rotHit = rotHits.find(h => h.object.userData.rotAxis);
+        if (rotHit) {
+          e.stopImmediatePropagation();
+          this._startRotDrag(e, rotHit.object.userData.rotAxis as 'x' | 'y' | 'z');
           return;
         }
       }

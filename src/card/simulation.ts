@@ -1,11 +1,12 @@
 import { syncLights } from '../lights';
 import type { Hass, AnchorEntry, CardConfig } from '../types';
 import { EnvironmentController } from './environment';
+import type { WeatherEffect } from './environment';
 
 export class SimulationPanel {
   private _simActive = false;
   private _simHour = 12;
-  private _simWeather: 'clear' | 'cloudy' | 'rain' | 'snow' = 'clear';
+  private _simWeather: 'clear' | 'cloudy' | 'rain' | 'storm' | 'hail' | 'snow' | 'fog' | 'wind' = 'clear';
   private _simOpen = false;
 
   constructor(
@@ -25,15 +26,29 @@ export class SimulationPanel {
   toggle() {
     this._simOpen = !this._simOpen;
     if (this._simOpen) {
-      this.simExpand.style.maxHeight = '160px';
+      this.simExpand.style.maxHeight = '200px';
       this.simExpand.style.opacity = '1';
       this.simExpand.style.pointerEvents = 'auto';
-      this.simBtn.style.boxShadow = '0 0 0 2px rgba(245,158,11,0.85)';
     } else {
       this.simExpand.style.maxHeight = '0';
       this.simExpand.style.opacity = '0';
       this.simExpand.style.pointerEvents = 'none';
+    }
+    this._syncSimBtn();
+  }
+
+  private _syncSimBtn() {
+    if (this._simOpen) {
+      // Panel ouvert — ring orange vif
+      this.simBtn.style.boxShadow = '0 0 0 2px rgba(245,158,11,0.85)';
+      this.simBtn.style.background = 'rgba(245,158,11,0.22)';
+    } else if (this._simActive) {
+      // Panel fermé mais simulation active — ring orange discret + dot
+      this.simBtn.style.boxShadow = '0 0 0 2px rgba(245,158,11,0.5)';
+      this.simBtn.style.background = 'rgba(245,158,11,0.12)';
+    } else {
       this.simBtn.style.boxShadow = 'none';
+      this.simBtn.style.background = '';
     }
   }
 
@@ -93,14 +108,17 @@ export class SimulationPanel {
     });
     inner.appendChild(timeSlider);
 
-    // Weather presets
-    const weatherRow = document.createElement('div');
-    weatherRow.style.cssText = 'display:flex;gap:4px;';
-    const presets: { emoji: string; label: string; value: 'clear' | 'cloudy' | 'rain' | 'snow' }[] = [
-      { emoji: '☀️', label: 'Soleil',  value: 'clear'  },
-      { emoji: '⛅', label: 'Nuageux', value: 'cloudy' },
-      { emoji: '🌧️', label: 'Pluie',   value: 'rain'   },
-      { emoji: '❄️', label: 'Neige',   value: 'snow'   },
+    // Weather presets — 2 rows of 4
+    type SimWeather = 'clear' | 'cloudy' | 'rain' | 'storm' | 'hail' | 'snow' | 'fog' | 'wind';
+    const presets: { emoji: string; label: string; value: SimWeather }[] = [
+      { emoji: '☀️', label: 'Soleil',      value: 'clear'  },
+      { emoji: '⛅', label: 'Nuageux',     value: 'cloudy' },
+      { emoji: '🌧️', label: 'Pluie',       value: 'rain'   },
+      { emoji: '⛈️', label: 'Orage',       value: 'storm'  },
+      { emoji: '🌨️', label: 'Grêle',       value: 'hail'   },
+      { emoji: '❄️', label: 'Neige',       value: 'snow'   },
+      { emoji: '🌫️', label: 'Brouillard',  value: 'fog'    },
+      { emoji: '💨', label: 'Vent',         value: 'wind'   },
     ];
     const weatherBtns: HTMLButtonElement[] = [];
     const syncWeather = () => {
@@ -110,11 +128,13 @@ export class SimulationPanel {
         b.style.boxShadow  = on ? '0 0 0 1.5px rgba(245,158,11,0.7)' : 'none';
       });
     };
+    const weatherGrid = document.createElement('div');
+    weatherGrid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:4px;';
     for (const p of presets) {
       const wb = document.createElement('button');
       wb.title = p.label; wb.textContent = p.emoji;
       wb.style.cssText = [
-        'flex:1', 'border:none', 'border-radius:8px',
+        'border:none', 'border-radius:8px',
         'font-size:16px', 'padding:5px 0',
         'cursor:pointer', 'color:#fff',
         'background:rgba(255,255,255,0.07)',
@@ -126,13 +146,14 @@ export class SimulationPanel {
         if (this._simActive) this.applySimulation();
       });
       weatherBtns.push(wb);
-      weatherRow.appendChild(wb);
+      weatherGrid.appendChild(wb);
     }
     syncWeather();
-    inner.appendChild(weatherRow);
+    inner.appendChild(weatherGrid);
 
     activeCheck.addEventListener('change', () => {
       this._simActive = activeCheck.checked;
+      this._syncSimBtn();
       if (this._simActive) {
         this.applySimulation();
       } else {
@@ -158,22 +179,26 @@ export class SimulationPanel {
     const azimuth = 180; // south at noon, simplified
     this.env.applySunLight(elevation, azimuth);
 
-    // Apply weather
+    // Apply weather — map sim presets to HA weather states
     this.env.removeWeatherParticles();
     this.env.weatherType = 'none';
-    if (this._simWeather === 'cloudy') {
-      this.env.hemiLight.intensity *= 0.5;
-      this.env.sunLight.intensity *= 0.2;
-      this.env.scene.fog?.color.setHex(0x8899aa);
-    } else if (this._simWeather === 'rain') {
-      this.env.applyWeather('rainy');
-    } else if (this._simWeather === 'snow') {
-      this.env.applyWeather('snowy');
-    }
+    const haState: Record<typeof this._simWeather, string> = {
+      clear:  '',
+      cloudy: 'cloudy',
+      rain:   'rainy',
+      storm:  'lightning-rainy',
+      hail:   'hail',
+      snow:   'snowy',
+      fog:    'fog',
+      wind:   'windy',
+    };
+    const state = haState[this._simWeather];
+    if (state) this.env.applyWeather(state);
     this.requestRender();
   }
 
-  step(dt: number) {
-    if (this._simActive && this.env.weatherParticles) this.env.stepParticles(dt);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  step(_dt: number) {
+    // Weather particle stepping handled by main loop (environment always animated)
   }
 }

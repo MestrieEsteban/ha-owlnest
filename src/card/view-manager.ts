@@ -150,9 +150,30 @@ export class ViewManager {
       updateBtn.style.cssText = iconBtnStyle;
       updateBtn.textContent = '⟳';
       updateBtn.title = 'Écraser avec la vue actuelle';
-      updateBtn.addEventListener('mouseenter', () => { updateBtn.style.color = '#4ade80'; updateBtn.style.background = 'rgba(74,222,128,0.1)'; });
-      updateBtn.addEventListener('mouseleave', () => { updateBtn.style.color = 'rgba(255,255,255,0.3)'; updateBtn.style.background = 'none'; });
-      updateBtn.addEventListener('click', () => this._updateView(v.id!, listBody));
+      updateBtn.addEventListener('mouseenter', () => { if (!updateBtn.dataset.confirm) { updateBtn.style.color = '#4ade80'; updateBtn.style.background = 'rgba(74,222,128,0.1)'; } });
+      updateBtn.addEventListener('mouseleave', () => { if (!updateBtn.dataset.confirm) { updateBtn.style.color = 'rgba(255,255,255,0.3)'; updateBtn.style.background = 'none'; } });
+      updateBtn.addEventListener('click', () => {
+        if (updateBtn.dataset.confirm === '1') {
+          updateBtn.dataset.confirm = '';
+          updateBtn.textContent = '⟳';
+          updateBtn.style.color = 'rgba(255,255,255,0.3)';
+          updateBtn.style.background = 'none';
+          this._updateView(v.id!, listBody);
+        } else {
+          updateBtn.dataset.confirm = '1';
+          updateBtn.textContent = '✓?';
+          updateBtn.style.color = '#4ade80';
+          updateBtn.style.background = 'rgba(74,222,128,0.18)';
+          setTimeout(() => {
+            if (updateBtn.dataset.confirm === '1') {
+              updateBtn.dataset.confirm = '';
+              updateBtn.textContent = '⟳';
+              updateBtn.style.color = 'rgba(255,255,255,0.3)';
+              updateBtn.style.background = 'none';
+            }
+          }, 3000);
+        }
+      });
       row.appendChild(updateBtn);
 
       // Rename
@@ -170,9 +191,28 @@ export class ViewManager {
       delBtn.style.cssText = iconBtnStyle;
       delBtn.textContent = '✕';
       delBtn.title = 'Supprimer';
-      delBtn.addEventListener('mouseenter', () => { delBtn.style.color = '#f87171'; delBtn.style.background = 'rgba(248,113,113,0.1)'; });
-      delBtn.addEventListener('mouseleave', () => { delBtn.style.color = 'rgba(255,255,255,0.3)'; delBtn.style.background = 'none'; });
-      delBtn.addEventListener('click', () => this._deleteView(v.id!, listBody));
+      delBtn.addEventListener('mouseenter', () => { if (!delBtn.dataset.confirm) { delBtn.style.color = '#f87171'; delBtn.style.background = 'rgba(248,113,113,0.1)'; } });
+      delBtn.addEventListener('mouseleave', () => { if (!delBtn.dataset.confirm) { delBtn.style.color = 'rgba(255,255,255,0.3)'; delBtn.style.background = 'none'; } });
+      delBtn.addEventListener('click', () => {
+        if (delBtn.dataset.confirm === '1') {
+          this._deleteView(v.id!, listBody);
+        } else {
+          delBtn.dataset.confirm = '1';
+          delBtn.textContent = '⚠';
+          delBtn.title = 'Cliquer à nouveau pour confirmer';
+          delBtn.style.color = '#f87171';
+          delBtn.style.background = 'rgba(248,113,113,0.2)';
+          setTimeout(() => {
+            if (delBtn.dataset.confirm === '1') {
+              delBtn.dataset.confirm = '';
+              delBtn.textContent = '✕';
+              delBtn.title = 'Supprimer';
+              delBtn.style.color = 'rgba(255,255,255,0.3)';
+              delBtn.style.background = 'none';
+            }
+          }, 3000);
+        }
+      });
       row.appendChild(delBtn);
 
       listBody.appendChild(row);
