@@ -26,6 +26,39 @@ export async function listScenes(hass: Hass): Promise<string[]> {
   return res.scenes;
 }
 
+// ── Camera view utilities ──────────────────────────────────────────────────
+
+/**
+ * Capture the current camera state as a named CameraView.
+ * Accepts raw arrays so scene.ts stays free from Three.js imports.
+ */
+export function captureCameraView(
+  position: [number, number, number],
+  target: [number, number, number],
+  label: string,
+): CameraView {
+  const fmt = (v: number) => +v.toFixed(4);
+  return {
+    id: `view_${Date.now()}`,
+    label,
+    position: position.map(fmt) as [number, number, number],
+    target:   target.map(fmt)   as [number, number, number],
+  };
+}
+
+/**
+ * Ensure every CameraView has a stable id and a target.
+ * Safe to call on YAML-defined views that predate the id field.
+ */
+export function normalizeViews(views: CameraView[]): CameraView[] {
+  let n = 0;
+  return views.map((v) => ({
+    ...v,
+    id:     v.id     ?? `view_legacy_${n++}`,
+    target: v.target ?? [0, 0, 0],
+  }));
+}
+
 // ── Scene ↔ CardConfig bridge ──────────────────────────────────────────────
 
 /**
@@ -46,7 +79,9 @@ export function sceneToEffectiveConfig(scene: OwlnestScene, base: CardConfig): C
       lightIntensity: a.lightIntensity,
       lightDirection: a.lightDirection,
     })),
-    camera_views: scene.camera_views?.length ? scene.camera_views : base.camera_views,
+    camera_views: scene.camera_views?.length
+      ? normalizeViews(scene.camera_views)
+      : (base.camera_views ? normalizeViews(base.camera_views) : []),
   };
 }
 
@@ -58,6 +93,7 @@ export function buildSceneFromEditor(
   editableAnchors: Map<string, EditableAnchor>,
   current: OwlnestScene | null,
   baseConfig: CardConfig,
+  cameraViews?: CameraView[],   // When provided, overrides scene.camera_views
 ): OwlnestScene {
   const anchors: OwlnestAnchor[] = [];
   let idx = 0;
@@ -85,7 +121,7 @@ export function buildSceneFromEditor(
     scene_id: sceneId,
     model_url: current?.model_url ?? baseConfig.model_url ?? '',
     anchors,
-    camera_views: (current?.camera_views ?? []) as CameraView[],
+    camera_views: cameraViews ?? (current?.camera_views ?? []),
     panels: current?.panels ?? [],
     rules: current?.rules ?? [],
   };

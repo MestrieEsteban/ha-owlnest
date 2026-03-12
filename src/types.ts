@@ -24,11 +24,12 @@ export interface Hass {
   callWS<T = unknown>(msg: Record<string, unknown>): Promise<T>;
 }
 
-/** Named camera preset */
+/** Named camera preset — saved in OwlnestScene.camera_views */
 export interface CameraView {
+  id?: string;                         // Stable identifier (auto-generated if absent)
   label: string;
   position: [number, number, number];
-  target?: [number, number, number];
+  target: [number, number, number];    // Always required (defaults [0,0,0] on old data)
 }
 
 /** Anchor config stored in YAML (legacy) or derived from an OwlnestScene */
