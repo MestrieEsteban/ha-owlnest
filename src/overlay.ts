@@ -25,6 +25,15 @@ function getIcon(domain: EntityDomain): string {
   return ICONS[domain] ?? ICONS.default;
 }
 
+/** Render an icon element: ha-icon web component when an MDI string is given, SVG otherwise. */
+function renderIconHTML(domain: EntityDomain, icon?: string): string {
+  if (icon) {
+    // ha-icon is registered by the HA frontend; it handles mdi:xxx, hass:xxx, etc.
+    return `<ha-icon icon="${icon}" style="--mdi-icon-size:18px;width:18px;height:18px;display:flex;align-items:center;justify-content:center;pointer-events:none;"></ha-icon>`;
+  }
+  return getIcon(domain);
+}
+
 export class AnchorOverlay {
   readonly el: HTMLDivElement;
   conditionHidden = false;
@@ -38,6 +47,7 @@ export class AnchorOverlay {
     labelText: string,
     onShortClick: () => void,
     onLongPress: () => void,
+    icon?: string,
   ) {
     this.el = document.createElement('div');
     this.el.style.cssText = [
@@ -62,7 +72,7 @@ export class AnchorOverlay {
       'pointer-events:auto',
     ].join(';');
 
-    this.el.innerHTML = getIcon(domain);
+    this.el.innerHTML = renderIconHTML(domain, icon);
 
     // Tooltip label
     this._label = document.createElement('div');
@@ -113,6 +123,7 @@ export class AnchorOverlay {
     }, { passive: true });
     this.el.addEventListener('touchend', (e) => {
       e.stopPropagation();
+      e.preventDefault(); // prevent synthetic mousedown/mouseup that would re-trigger _endPress
       this._endPress(onShortClick);
     });
     this.el.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -122,36 +133,41 @@ export class AnchorOverlay {
 
   private _startPress(_onShortClick: () => void, onLongPress: () => void) {
     this._pressing = true;
-    // Show a circular progress ring to signal that long press is being detected
-    this._pressRing = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as unknown as SVGSVGElement;
-    const svg = this._pressRing;
-    svg.setAttribute('viewBox', '0 0 36 36');
-    svg.setAttribute('width', '42');
-    svg.setAttribute('height', '42');
-    (svg as unknown as HTMLElement).style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:1;';
-    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    circle.setAttribute('cx', '18');
-    circle.setAttribute('cy', '18');
-    circle.setAttribute('r', '16');
-    circle.setAttribute('fill', 'none');
-    circle.setAttribute('stroke', 'rgba(255,255,255,0.7)');
-    circle.setAttribute('stroke-width', '2');
-    circle.setAttribute('stroke-dasharray', '100.5');
-    circle.setAttribute('stroke-dashoffset', '100.5');
-    circle.setAttribute('stroke-linecap', 'round');
-    circle.style.cssText = 'transform-origin:18px 18px;transform:rotate(-90deg);transition:stroke-dashoffset 0.48s linear;';
-    svg.appendChild(circle);
-    this.el.appendChild(svg);
-    requestAnimationFrame(() => { circle.setAttribute('stroke-dashoffset', '0'); });
+    const LONG_PRESS_MS = 650;
+    const RING_DELAY_MS = 200;   // ring only visible after 200 ms — normal taps stay clean
+    const RING_ANIM_MS  = LONG_PRESS_MS - RING_DELAY_MS; // ~450 ms to fill
 
     this._pressTimer = setTimeout(() => {
       if (!this._pressing) return;
       this._pressing = false;
       this.el.style.transform = 'translate(-50%,-50%) scale(1)';
-      svg.remove();
+      this._pressRing?.remove();
       this._pressRing = null;
       onLongPress();
-    }, 500);
+    }, LONG_PRESS_MS);
+
+    // Show ring only after RING_DELAY_MS so quick taps never see it
+    setTimeout(() => {
+      if (!this._pressing) return;
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as unknown as SVGSVGElement;
+      this._pressRing = svg;
+      svg.setAttribute('viewBox', '0 0 36 36');
+      svg.setAttribute('width', '42');
+      svg.setAttribute('height', '42');
+      (svg as unknown as HTMLElement).style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:1;';
+      const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      circle.setAttribute('cx', '18'); circle.setAttribute('cy', '18');
+      circle.setAttribute('r', '16'); circle.setAttribute('fill', 'none');
+      circle.setAttribute('stroke', 'rgba(255,255,255,0.7)');
+      circle.setAttribute('stroke-width', '2');
+      circle.setAttribute('stroke-dasharray', '100.5');
+      circle.setAttribute('stroke-dashoffset', '100.5');
+      circle.setAttribute('stroke-linecap', 'round');
+      circle.style.cssText = `transform-origin:18px 18px;transform:rotate(-90deg);transition:stroke-dashoffset ${RING_ANIM_MS}ms linear;`;
+      svg.appendChild(circle);
+      this.el.appendChild(svg);
+      requestAnimationFrame(() => { circle.setAttribute('stroke-dashoffset', '0'); });
+    }, RING_DELAY_MS);
   }
 
   private _endPress(onShortClick: () => void) {
@@ -178,14 +194,17 @@ export class AnchorOverlay {
   }
 
   updateState(on: boolean, color: THREE.Color, labelText: string) {
-    const path = this.el.querySelector('path,circle,rect') as SVGElement | null;
+    const haIcon = this.el.querySelector('ha-icon') as HTMLElement | null;
+    const path = !haIcon ? (this.el.querySelector('path,circle,rect') as SVGElement | null) : null;
     if (on) {
       const hex = `#${color.getHexString()}`;
-      if (path) path.style.fill = hex;
+      if (haIcon) haIcon.style.color = hex;
+      else if (path) path.style.fill = hex;
       this.el.style.boxShadow = `0 0 14px 3px ${hex}99, 0 2px 8px rgba(0,0,0,0.5)`;
       this.el.style.borderColor = `${hex}55`;
     } else {
-      if (path) path.style.fill = '#555';
+      if (haIcon) haIcon.style.color = '#555';
+      else if (path) path.style.fill = '#555';
       this.el.style.boxShadow = '0 2px 8px rgba(0,0,0,0.5)';
       this.el.style.borderColor = 'rgba(255,255,255,0.12)';
     }
@@ -311,7 +330,7 @@ export class ClusterOverlay {
     this.el.addEventListener('mouseleave', () => {
       if (!this._menu) this.el.style.transform = 'translate(-50%,-50%) scale(1)';
     });
-    this.el.addEventListener('mousedown', (e) => e.stopPropagation());
+    this.el.addEventListener('pointerdown', (e) => e.stopPropagation());
     this.el.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
     this.el.addEventListener('click', (e) => { e.stopPropagation(); this._toggleMenu(); });
     this.el.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -360,13 +379,16 @@ export class ClusterOverlay {
   private _openMenu() {
     this.el.style.transform = 'translate(-50%,-50%) scale(1.1)';
 
-    // Backdrop — closes menu when clicking elsewhere
+    // Backdrop — closes menu when clicking elsewhere.
+    // Delayed by one tick so the opening click doesn't immediately close it.
     this._backdrop = document.createElement('div');
     this._backdrop.style.cssText = 'position:absolute;inset:0;z-index:4;pointer-events:auto;';
-    this._backdrop.addEventListener('pointerdown', (e) => {
-      e.stopPropagation();
-      this._closeMenu();
-    });
+    setTimeout(() => {
+      this._backdrop?.addEventListener('pointerdown', (e) => {
+        e.stopPropagation();
+        this._closeMenu();
+      });
+    }, 0);
     this._container.appendChild(this._backdrop);
 
     this._rebuildMenu();
@@ -445,7 +467,7 @@ export class ClusterOverlay {
       el.style.transform = `${base} scale(1)`;
       label.style.opacity = '0';
     });
-    el.addEventListener('mousedown', (e) => e.stopPropagation());
+    el.addEventListener('pointerdown', (e) => e.stopPropagation());
     el.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
     el.addEventListener('click', (e) => {
       e.stopPropagation();

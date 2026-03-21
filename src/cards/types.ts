@@ -4,6 +4,7 @@
  * Replaces the free-form Panel3D / PanelBlock builder with typed templates.
  * Three templates for V1: room, entity, info.
  */
+import { t } from '../i18n';
 
 export type SceneCardType = 'room' | 'entity' | 'info';
 
@@ -31,10 +32,10 @@ export const CARD_DEFAULT_ACCENT: Record<SceneCardType, string> = {
 };
 
 /** Labels for UI display */
-export const CARD_TYPE_LABELS: Record<SceneCardType, string> = {
-  room:   'Pièce',
-  entity: 'Entité',
-  info:   'Info',
+export const CARD_TYPE_LABELS: Record<SceneCardType, () => string> = {
+  room:   () => t('cardTypeRoom'),
+  entity: () => t('cardTypeEntity'),
+  info:   () => t('cardTypeInfo'),
 };
 
 // ── Base ────────────────────────────────────────────────────────────────────

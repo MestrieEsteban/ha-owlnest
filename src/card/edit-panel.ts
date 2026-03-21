@@ -1,8 +1,9 @@
-import type { Hass, CardConfig, EditableAnchor, CameraView } from '../types';
+import type { Hass, CardConfig, EditableAnchor, CameraView, SceneSettings } from '../types';
 import type { SceneCard, SceneCardType } from '../cards/types';
-import { CARD_SCALE, CARD_DEFAULT_ACCENT, CARD_TYPE_LABELS } from '../cards/types';
+import { CARD_DEFAULT_ACCENT, CARD_TYPE_LABELS } from '../cards/types';
 import type { AnchorEditor, EditorTool } from '../editor';
 import type { OwlnestRule, Action } from '../rules/types';
+import { t, setLang } from '../i18n';
 
 export class EditPanel {
   private _panel: HTMLDivElement | null = null;
@@ -10,6 +11,13 @@ export class EditPanel {
   private _editorDragging = false;
   private _gizmoDragging = false;
   private _autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  private _activeInspectorTab: string | null = null;
+
+  // ── Card / Rule undo-redo stacks ──────────────────────────────────────────
+  private _cardUndoStack: SceneCard[][] = [];
+  private _cardRedoStack: SceneCard[][] = [];
+  private _ruleUndoStack: OwlnestRule[][] = [];
+  private _ruleRedoStack: OwlnestRule[][] = [];
 
   get panel() { return this._panel; }
   get editorDragging() { return this._editorDragging; }
@@ -42,7 +50,55 @@ export class EditPanel {
     private getRules?: () => OwlnestRule[],
     private saveRules?: (rules: OwlnestRule[]) => Promise<void>,
     private getViews?: () => CameraView[],
+    private getSim?: () => { buildContentInto: (c: HTMLElement) => void } | null,
+    private getViewMgr?: () => { buildViewsSection: (c: HTMLElement) => void } | null,
+    private getSceneSettings?: () => SceneSettings,
+    private onSceneSettingsChange?: (s: SceneSettings, reloadScene?: boolean) => void,
+    private listScenesFn?: () => Promise<string[]>,
   ) {}
+
+  // ── Card undo/redo ────────────────────────────────────────────────────────
+  private _snapCards(): SceneCard[] { return JSON.parse(JSON.stringify(this.getCards?.() ?? [])); }
+  private _snapRules(): OwlnestRule[] { return JSON.parse(JSON.stringify(this.getRules?.() ?? [])); }
+
+  private _pushCardSnap() {
+    this._cardUndoStack.push(this._snapCards());
+    if (this._cardUndoStack.length > 50) this._cardUndoStack.shift();
+    this._cardRedoStack = [];
+  }
+  /** Public — called from ha-3d-floorplan before a 3D card move or placement commit. */
+  pushCardSnapshot() { this._pushCardSnap(); }
+
+  private _pushRuleSnap() {
+    this._ruleUndoStack.push(this._snapRules());
+    if (this._ruleUndoStack.length > 50) this._ruleUndoStack.shift();
+    this._ruleRedoStack = [];
+  }
+
+  private _undoCards(): boolean {
+    if (!this._cardUndoStack.length) return false;
+    this._cardRedoStack.push(this._snapCards());
+    this.saveCards?.(this._cardUndoStack.pop()!).then(() => this.updateAnchorList());
+    return true;
+  }
+  private _redoCards(): boolean {
+    if (!this._cardRedoStack.length) return false;
+    this._cardUndoStack.push(this._snapCards());
+    this.saveCards?.(this._cardRedoStack.pop()!).then(() => this.updateAnchorList());
+    return true;
+  }
+  private _undoRules(): boolean {
+    if (!this._ruleUndoStack.length) return false;
+    this._ruleRedoStack.push(this._snapRules());
+    this.saveRules?.(this._ruleUndoStack.pop()!).then(() => this.updateAnchorList());
+    return true;
+  }
+  private _redoRules(): boolean {
+    if (!this._ruleRedoStack.length) return false;
+    this._ruleUndoStack.push(this._snapRules());
+    this.saveRules?.(this._ruleRedoStack.pop()!).then(() => this.updateAnchorList());
+    return true;
+  }
 
   showToolbar() {
     // Preserve existing view buttons so they stay visible in edit mode
@@ -53,8 +109,7 @@ export class EditPanel {
 
     // ── Tool buttons (left) ───────────────────────────────────────────
     const tools: Array<{ id: string; label: string; title: string }> = [
-      { id: 'select', label: '↖', title: 'Sélectionner / Déplacer  (S)' },
-      { id: 'add',    label: '＋', title: 'Ajouter ancre  (A)' },
+      { id: 'select', label: t('toolSelect'), title: t('toolSelectTitle') },
     ];
 
     const toolBtns = new Map<string, HTMLButtonElement>();
@@ -89,12 +144,12 @@ export class EditPanel {
 
     // Undo / Redo
     const undoBtn = this._btn('↩', 'rgba(255,255,255,0.07)');
-    undoBtn.title = 'Annuler (Ctrl+Z)';
+    undoBtn.title = t('undoTitle');
     undoBtn.style.cssText += ';color:rgba(255,255,255,0.55);font-size:14px;min-width:28px;padding:4px 7px;';
     undoBtn.addEventListener('click', () => this.getEditor()?.undo());
 
     const redoBtn = this._btn('↪', 'rgba(255,255,255,0.07)');
-    redoBtn.title = 'Rétablir (Ctrl+Y)';
+    redoBtn.title = t('redoTitle');
     redoBtn.style.cssText += ';color:rgba(255,255,255,0.55);font-size:14px;min-width:28px;padding:4px 7px;';
     redoBtn.addEventListener('click', () => this.getEditor()?.redo());
 
@@ -117,12 +172,15 @@ export class EditPanel {
         setActiveTool(t);
         prevOnToolChange?.(t);
       };
+      // Chain card/rule undo into anchor editor fallback so Ctrl+Z and buttons both work
+      editor.onUndoFallback = () => { if (!this._undoCards()) this._undoRules(); };
+      editor.onRedoFallback = () => { if (!this._redoCards()) this._redoRules(); };
     }
 
     // ── Right: close ─────────────────────────────────────────────────
-    const doneBtn = this._btn('Terminé', 'rgba(255,255,255,0.07)');
+    const doneBtn = this._btn(t('doneBtn'), 'rgba(255,255,255,0.07)');
     doneBtn.style.color = 'rgba(255,255,255,0.6)';
-    doneBtn.title = 'Quitter le mode édition (les modifications sont auto-sauvegardées)';
+    doneBtn.title = t('doneBtnTitle');
     doneBtn.addEventListener('click', () => this.onClose());
     this.hudRight.appendChild(doneBtn);
 
@@ -142,17 +200,17 @@ export class EditPanel {
       span.innerHTML = `<span style="${kbdStyle}">${key}</span>${label}`;
       return span;
     };
-    hintBar.appendChild(hint('S', 'Sélect.'));
-    hintBar.appendChild(hint('A', 'Ajouter'));
-    hintBar.appendChild(hint('G', 'Saisir'));
-    hintBar.appendChild(hint('G→X/Y/Z', 'axe'));
-    hintBar.appendChild(hint('R', 'Rotation'));
-    hintBar.appendChild(hint('X', 'Suppr.'));
-    hintBar.appendChild(hint('H', 'Masquer'));
-    hintBar.appendChild(hint('Ctrl+D', 'Dupliquer'));
-    hintBar.appendChild(hint('Ctrl+Z', 'Annuler'));
-    hintBar.appendChild(hint('Esc', 'Désélect.'));
-    hintBar.appendChild(hint('Clic droit', 'Menu'));
+    hintBar.appendChild(hint('S', t('hintSelect')));
+    hintBar.appendChild(hint('A', t('hintAdd')));
+    hintBar.appendChild(hint('G', t('hintGrab')));
+    hintBar.appendChild(hint('G→X/Y/Z', t('hintAxis')));
+    hintBar.appendChild(hint('R', t('hintRotate')));
+    hintBar.appendChild(hint('X', t('hintDelete')));
+    hintBar.appendChild(hint('H', t('hintHide')));
+    hintBar.appendChild(hint('Ctrl+D', t('hintDup')));
+    hintBar.appendChild(hint('Ctrl+Z', t('hintUndo')));
+    hintBar.appendChild(hint('Esc', t('hintEsc')));
+    hintBar.appendChild(hint(t('hintRClickKey'), t('hintRClick')));
     // Insert before the last child (the pill bar) so it appears above it
     this.hud.insertBefore(hintBar, this.hud.lastChild);
 
@@ -216,13 +274,13 @@ export class EditPanel {
     header.style.cssText = 'display:flex;align-items:center;padding:9px 12px 8px;border-bottom:1px solid rgba(255,255,255,0.07);flex-shrink:0;gap:6px;';
     const headerTitle = document.createElement('span');
     headerTitle.style.cssText = 'font-size:11px;font-weight:700;color:#7dd3fc;text-transform:uppercase;letter-spacing:.08em;flex:1;';
-    headerTitle.textContent = 'Scène';
+    headerTitle.textContent = t('inspectorTitle');
     header.appendChild(headerTitle);
     if (this.getSceneId()) {
       const saveInd = document.createElement('span');
       saveInd.id = 'save-indicator';
       saveInd.style.cssText = 'font-size:10px;color:#22c55e;transition:color .2s;';
-      saveInd.textContent = '✓ Sauvé';
+      saveInd.textContent = t('saveIndicator_saved');
       header.appendChild(saveInd);
     }
     panel.appendChild(header);
@@ -235,7 +293,7 @@ export class EditPanel {
         'background:rgba(245,158,11,0.08)', 'border-bottom:1px solid rgba(245,158,11,0.18)',
         'line-height:1.5', 'flex-shrink:0',
       ].join(';');
-      warn.textContent = '⚠ Aucun scene_id configuré — les modifications ne seront pas persistées.';
+      warn.textContent = t('warnNoSceneId');
       panel.appendChild(warn);
     }
 
@@ -296,72 +354,171 @@ export class EditPanel {
     const cards = this.getCards ? this.getCards() : [];
     const rulesCount = (this.getRules?.() ?? []).length;
 
-    // ── Tab header ────────────────────────────────────────────────────
+    // ── Sidebar + content layout ──────────────────────────────────────
+    listView.style.flexDirection = 'row';
+
     const TAB_DEFS = [
-      { id: 'anchors', label: `Ancres${anchors.size > 0 ? ` (${anchors.size})` : ''}` },
-      { id: 'cards',   label: `Cartes${cards.length > 0 ? ` (${cards.length})` : ''}` },
-      { id: 'rules',   label: `Règles${rulesCount > 0 ? ` (${rulesCount})` : ''}` },
+      { id: 'anchors', icon: '⊕', label: anchors.size > 0 ? `${t('tabAnchors')} (${anchors.size})` : t('tabAnchors') },
+      { id: 'cards',   icon: '☰', label: cards.length > 0  ? `${t('tabCards')} (${cards.length})`  : t('tabCards') },
+      { id: 'rules',   icon: '⚡', label: rulesCount > 0    ? `${t('tabRules')} (${rulesCount})`    : t('tabRules') },
+      { id: 'camera',  icon: '◎', label: t('tabCamera') },
+      { id: 'weather', icon: '☁', label: t('tabWeather') },
+      { id: 'config',  icon: '⚙', label: t('tabConfig') },
     ] as const;
     type TabId = typeof TAB_DEFS[number]['id'];
 
-    // Determine which tab should be active by default
     const defaultTab: TabId = this.getSelectedCardId?.() ? 'cards' : 'anchors';
-    let activeTab: TabId = defaultTab;
+    let activeTab: TabId = (TAB_DEFS.find(d => d.id === this._activeInspectorTab) ? this._activeInspectorTab as TabId : null) ?? defaultTab;
 
-    const tabBar = document.createElement('div');
-    tabBar.style.cssText = 'display:flex;border-bottom:1px solid rgba(255,255,255,0.07);flex-shrink:0;';
+    // Left icon rail
+    const sidebar = document.createElement('div');
+    sidebar.style.cssText = [
+      'width:36px', 'flex-shrink:0',
+      'display:flex', 'flex-direction:column', 'align-items:center',
+      'background:rgba(0,0,0,0.22)',
+      'border-right:1px solid rgba(255,255,255,0.06)',
+      'padding:4px 0', 'gap:1px',
+    ].join(';');
+
+    // Right content area
+    const contentArea = document.createElement('div');
+    contentArea.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden;';
 
     const tabBtns = new Map<TabId, HTMLButtonElement>();
     const tabPanes = new Map<TabId, HTMLDivElement>();
 
     const switchTab = (id: TabId) => {
       activeTab = id;
+      this._activeInspectorTab = id;
       tabBtns.forEach((b, k) => {
         const on = k === id;
-        b.style.color = on ? '#7dd3fc' : 'rgba(255,255,255,0.3)';
-        b.style.borderBottom = on ? '2px solid #7dd3fc' : '2px solid transparent';
-        b.style.background = on ? 'rgba(125,209,252,0.06)' : 'transparent';
+        b.style.color      = on ? '#7dd3fc' : 'rgba(255,255,255,0.22)';
+        b.style.borderLeft = on ? '2px solid #7dd3fc' : '2px solid transparent';
+        b.style.background = on ? 'rgba(125,209,252,0.1)' : 'transparent';
       });
       tabPanes.forEach((p, k) => { p.style.display = k === id ? 'flex' : 'none'; });
     };
 
-    TAB_DEFS.forEach(({ id, label }) => {
+    TAB_DEFS.forEach(({ id, icon, label }) => {
       const btn = document.createElement('button');
-      btn.style.cssText = 'flex:1;background:transparent;border:none;border-bottom:2px solid transparent;padding:7px 4px 5px;font-size:10px;font-weight:600;font-family:inherit;cursor:pointer;color:rgba(255,255,255,0.3);transition:all .15s;letter-spacing:.03em;';
-      btn.textContent = label;
+      btn.style.cssText = [
+        'width:32px', 'height:32px',
+        'background:transparent',
+        'border:none', 'border-left:2px solid transparent',
+        'border-radius:6px',
+        'cursor:pointer', 'color:rgba(255,255,255,0.22)',
+        'font-size:14px', 'line-height:1',
+        'display:flex', 'align-items:center', 'justify-content:center',
+        'transition:all .15s', 'flex-shrink:0',
+      ].join(';');
+      btn.textContent = icon;
+      btn.title = label;
       btn.addEventListener('click', () => switchTab(id));
       tabBtns.set(id, btn);
-      tabBar.appendChild(btn);
+      sidebar.appendChild(btn);
 
       const pane = document.createElement('div');
       pane.style.cssText = 'flex-direction:column;flex:1;min-height:0;overflow:hidden;display:none;';
       tabPanes.set(id, pane);
     });
 
-    listView.appendChild(tabBar);
-    tabPanes.forEach(p => listView.appendChild(p));
+    // Sidebar tooltip (floats to the right of the icon rail)
+    listView.style.position = 'relative';
+    const sidebarTooltip = document.createElement('div');
+    sidebarTooltip.style.cssText = [
+      'position:absolute', 'left:42px', 'z-index:30',
+      'background:rgba(15,23,42,0.97)', 'border:1px solid rgba(255,255,255,0.1)',
+      'border-radius:7px', 'padding:4px 9px',
+      'font-size:10px', 'font-weight:600', 'color:#e2e8f0',
+      'white-space:nowrap', 'pointer-events:none',
+      'opacity:0', 'transition:opacity .12s',
+      'font-family:var(--primary-font-family,sans-serif)',
+      'box-shadow:0 4px 12px rgba(0,0,0,0.5)',
+    ].join(';');
+    listView.appendChild(sidebarTooltip);
+
+    tabBtns.forEach((btn, id) => {
+      const def = TAB_DEFS.find(d => d.id === id)!;
+      btn.addEventListener('mouseenter', () => {
+        const br = btn.getBoundingClientRect();
+        const lr = listView.getBoundingClientRect();
+        sidebarTooltip.style.top = `${br.top - lr.top + br.height / 2 - 11}px`;
+        sidebarTooltip.textContent = def.label;
+        sidebarTooltip.style.opacity = '1';
+      });
+      btn.addEventListener('mouseleave', () => { sidebarTooltip.style.opacity = '0'; });
+    });
+
+    // Uniform tab pane header helper
+    const buildTabHeader = (
+      pane: HTMLElement,
+      title: string,
+      desc: string,
+      action?: { label: string; onClick: () => void; badge?: string },
+    ): void => {
+      const hdr = document.createElement('div');
+      hdr.style.cssText = 'padding:8px 10px 6px;border-bottom:1px solid rgba(255,255,255,0.06);flex-shrink:0;';
+
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:3px;';
+
+      const titleEl = document.createElement('span');
+      titleEl.style.cssText = 'font-size:10px;font-weight:700;color:#e2e8f0;text-transform:uppercase;letter-spacing:.06em;flex:1;';
+      titleEl.textContent = title;
+      row.appendChild(titleEl);
+
+      if (action?.badge) {
+        const badge = document.createElement('span');
+        badge.style.cssText = 'font-size:8px;font-weight:700;background:rgba(251,191,36,0.15);border:1px solid rgba(251,191,36,0.3);color:#fbbf24;border-radius:3px;padding:1px 4px;';
+        badge.textContent = action.badge;
+        row.appendChild(badge);
+      }
+
+      if (action) {
+        const btn = document.createElement('button');
+        btn.style.cssText = 'background:rgba(125,209,252,0.12);border:1px solid rgba(125,209,252,0.28);border-radius:6px;color:#7dd3fc;padding:2px 8px;font-size:10px;font-family:inherit;cursor:pointer;white-space:nowrap;flex-shrink:0;transition:all .15s;';
+        btn.textContent = action.label;
+        btn.addEventListener('click', action.onClick);
+        row.appendChild(btn);
+      }
+
+      hdr.appendChild(row);
+
+      const descEl = document.createElement('div');
+      descEl.style.cssText = 'font-size:9px;color:rgba(255,255,255,0.25);line-height:1.4;';
+      descEl.textContent = desc;
+      hdr.appendChild(descEl);
+
+      pane.appendChild(hdr);
+    };
+
+    listView.appendChild(sidebar);
+    listView.appendChild(contentArea);
+    tabPanes.forEach(p => contentArea.appendChild(p));
 
     // ── Anchors pane ─────────────────────────────────────────────────
     const anchorsPane = tabPanes.get('anchors')!;
 
+    buildTabHeader(anchorsPane, t('tabAnchors'), t('tabAnchorsDesc'), {
+      label: t('addAnchor'),
+      onClick: () => this.getEditor()?.setTool('add'),
+    });
+
+    // Batch visibility bar
     const batchBar = document.createElement('div');
-    batchBar.style.cssText = 'display:flex;align-items:center;padding:5px 10px 3px;gap:4px;border-bottom:1px solid rgba(255,255,255,0.05);flex-shrink:0;';
-    const countLbl = document.createElement('span');
-    countLbl.id = 'anchor-count-lbl';
-    countLbl.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.3);flex:1;';
-    countLbl.textContent = `${anchors.size} ancre${anchors.size !== 1 ? 's' : ''}`;
+    batchBar.style.cssText = 'display:flex;align-items:center;padding:3px 10px 3px;gap:4px;border-bottom:1px solid rgba(255,255,255,0.04);flex-shrink:0;';
     const batchBtnStyle = 'background:none;border:none;cursor:pointer;padding:3px 6px;border-radius:5px;font-size:11px;color:rgba(255,255,255,0.35);transition:all .15s;';
     const showAllBtn = document.createElement('button');
-    showAllBtn.title = 'Tout afficher'; showAllBtn.innerHTML = '● Tout'; showAllBtn.style.cssText = batchBtnStyle;
+    showAllBtn.title = t('showAll'); showAllBtn.innerHTML = t('showAll'); showAllBtn.style.cssText = batchBtnStyle;
     showAllBtn.addEventListener('mouseenter', () => { showAllBtn.style.color = '#4ade80'; });
     showAllBtn.addEventListener('mouseleave', () => { showAllBtn.style.color = 'rgba(255,255,255,0.35)'; });
     showAllBtn.addEventListener('click', () => this.getEditor()?.updateAll({ hidden: false }));
     const hideAllBtn = document.createElement('button');
-    hideAllBtn.title = 'Tout masquer'; hideAllBtn.innerHTML = '○ Aucun'; hideAllBtn.style.cssText = batchBtnStyle;
+    hideAllBtn.title = t('hideAll'); hideAllBtn.innerHTML = t('hideAll'); hideAllBtn.style.cssText = batchBtnStyle;
     hideAllBtn.addEventListener('mouseenter', () => { hideAllBtn.style.color = '#f87171'; });
     hideAllBtn.addEventListener('mouseleave', () => { hideAllBtn.style.color = 'rgba(255,255,255,0.35)'; });
     hideAllBtn.addEventListener('click', () => this.getEditor()?.updateAll({ hidden: true }));
-    batchBar.appendChild(countLbl); batchBar.appendChild(showAllBtn); batchBar.appendChild(hideAllBtn);
+    batchBar.appendChild(showAllBtn); batchBar.appendChild(hideAllBtn);
     anchorsPane.appendChild(batchBar);
 
     const anchorsScroll = document.createElement('div');
@@ -372,7 +529,7 @@ export class EditPanel {
     if (anchors.size === 0) {
       const empty = document.createElement('div');
       empty.style.cssText = 'padding:14px 12px;font-size:11px;color:rgba(255,255,255,0.28);text-align:center;line-height:1.7;';
-      empty.innerHTML = 'Aucune ancre<br><span style="font-size:10px;opacity:.7">Outil ＋ → clic sur le modèle</span>';
+      empty.innerHTML = `${t('anchorEmpty')}<br><span style="font-size:10px;opacity:.7">${t('anchorEmptyHint')}</span>`;
       anchorsScroll.appendChild(empty);
     } else {
       anchors.forEach((a, key) => {
@@ -412,7 +569,7 @@ export class EditPanel {
         const eyeBtn = document.createElement('button');
         eyeBtn.style.cssText = rowBtnStyle;
         eyeBtn.textContent = a.hidden ? '🙈' : '👁';
-        eyeBtn.title = a.hidden ? 'Afficher (H)' : 'Masquer (H)';
+        eyeBtn.title = a.hidden ? t('anchorShow') : t('anchorHide');
         if (a.hidden) eyeBtn.style.opacity = '0.45';
         eyeBtn.addEventListener('mouseenter', () => { eyeBtn.style.opacity = '1'; eyeBtn.style.background = 'rgba(255,255,255,0.1)'; });
         eyeBtn.addEventListener('mouseleave', () => { eyeBtn.style.opacity = a.hidden ? '0.5' : '0.6'; eyeBtn.style.background = 'none'; });
@@ -420,7 +577,7 @@ export class EditPanel {
 
         const dupBtn = document.createElement('button');
         dupBtn.style.cssText = rowBtnStyle;
-        dupBtn.textContent = '⎘'; dupBtn.title = 'Dupliquer (Ctrl+D)';
+        dupBtn.textContent = '⎘'; dupBtn.title = t('anchorDup');
         dupBtn.addEventListener('mouseenter', () => { dupBtn.style.opacity = '1'; dupBtn.style.background = 'rgba(255,255,255,0.1)'; });
         dupBtn.addEventListener('mouseleave', () => { dupBtn.style.opacity = '0.6'; dupBtn.style.background = 'none'; });
         dupBtn.addEventListener('click', (e) => { e.stopPropagation(); this.getEditor()?.selectAnchor(key); this.getEditor()?.duplicate(); });
@@ -444,22 +601,15 @@ export class EditPanel {
     const cardsPane = tabPanes.get('cards')!;
     cardsPane.style.cssText += ';overflow:hidden;';
 
-    const cardsHeader = document.createElement('div');
-    cardsHeader.style.cssText = 'display:flex;align-items:center;padding:6px 10px 4px;border-bottom:1px solid rgba(255,255,255,0.05);flex-shrink:0;gap:6px;';
-    const cardsHeaderLabel = document.createElement('span');
-    cardsHeaderLabel.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.3);flex:1;';
-    cardsHeaderLabel.innerHTML = `${cards.length} carte${cards.length !== 1 ? 's' : ''} <span style="font-size:8px;font-weight:700;background:rgba(251,191,36,0.15);border:1px solid rgba(251,191,36,0.3);color:#fbbf24;border-radius:3px;padding:1px 4px;margin-left:4px;">BETA</span>`;
-    const addCardBtn = document.createElement('button');
-    addCardBtn.style.cssText = 'background:rgba(125,209,252,0.12);border:1px solid rgba(125,209,252,0.28);border-radius:6px;color:#7dd3fc;padding:3px 9px;font-size:10px;font-family:inherit;cursor:pointer;white-space:nowrap;transition:all .15s;';
-    addCardBtn.textContent = '+ Ajouter';
-    cardsHeader.appendChild(cardsHeaderLabel); cardsHeader.appendChild(addCardBtn);
-    cardsPane.appendChild(cardsHeader);
+    buildTabHeader(cardsPane, t('tabCards'), t('tabCardsDesc'), {
+      label: t('addCard'),
+      badge: 'BETA',
+      onClick: () => this._showCardTemplatePicker(cardsScroll),
+    });
 
     const cardsScroll = document.createElement('div');
     cardsScroll.style.cssText = 'overflow-y:auto;flex:1;min-height:0;padding:3px 0;';
     cardsPane.appendChild(cardsScroll);
-
-    addCardBtn.addEventListener('click', () => this._showCardTemplatePicker(cardsScroll));
 
     const CARD_ICONS: Record<SceneCardType, string> = { room: '🏠', entity: '📊', info: 'ℹ️' };
     const CARD_COLORS: Record<SceneCardType, string> = { room: '#7dd3fc', entity: '#86efac', info: '#fbbf24' };
@@ -467,7 +617,7 @@ export class EditPanel {
     if (cards.length === 0) {
       const empty = document.createElement('div');
       empty.style.cssText = 'padding:14px 12px;font-size:11px;color:rgba(255,255,255,0.28);text-align:center;line-height:1.7;';
-      empty.innerHTML = 'Aucune carte<br><span style="font-size:10px;opacity:.7">Cliquez + Ajouter</span>';
+      empty.innerHTML = `${t('cardEmptyList')}<br><span style="font-size:10px;opacity:.7">${t('cardEmptyListHint')}</span>`;
       cardsScroll.appendChild(empty);
     } else {
       cards.forEach((c) => {
@@ -494,7 +644,7 @@ export class EditPanel {
         nameEl.textContent = c.name;
         const subEl = document.createElement('div');
         subEl.style.cssText = `font-size:10px;color:${CARD_COLORS[c.type] ?? '#7dd3fc'};opacity:0.65;line-height:1.3;`;
-        subEl.textContent = `${CARD_TYPE_LABELS[c.type] ?? c.type} · ${c.size ?? 'medium'}`;
+        subEl.textContent = `${(CARD_TYPE_LABELS[c.type] ?? (() => c.type))()} · ${c.size ?? 'medium'}`;
         col.appendChild(nameEl); col.appendChild(subEl);
         row.appendChild(iconEl); row.appendChild(col);
         row.addEventListener('click', () => {
@@ -510,33 +660,331 @@ export class EditPanel {
     const rulesPane = tabPanes.get('rules')!;
     rulesPane.style.cssText += ';overflow:hidden;';
 
-    const rulesHeader = document.createElement('div');
-    rulesHeader.style.cssText = 'display:flex;align-items:center;padding:6px 10px 4px;border-bottom:1px solid rgba(255,255,255,0.05);flex-shrink:0;gap:6px;';
-    const rulesHeaderLabel = document.createElement('span');
-    rulesHeaderLabel.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.3);flex:1;';
-    const rulesCountBadge = '<span style="font-size:8px;font-weight:700;background:rgba(251,191,36,0.15);border:1px solid rgba(251,191,36,0.3);color:#fbbf24;border-radius:3px;padding:1px 4px;margin-left:4px;">BETA</span>';
-    rulesHeaderLabel.innerHTML = `${rulesCount} règle${rulesCount !== 1 ? 's' : ''}${rulesCountBadge}`;
-    const rulesAddBtn = document.createElement('button');
-    rulesAddBtn.style.cssText = 'background:rgba(125,209,252,0.12);border:1px solid rgba(125,209,252,0.28);border-radius:6px;color:#7dd3fc;padding:3px 9px;font-size:10px;font-family:inherit;cursor:pointer;white-space:nowrap;transition:all .15s;';
-    rulesAddBtn.textContent = '+ Ajouter';
-    rulesHeader.appendChild(rulesHeaderLabel); rulesHeader.appendChild(rulesAddBtn);
-    rulesPane.appendChild(rulesHeader);
+    buildTabHeader(rulesPane, t('tabRules'), t('tabRulesDesc'), {
+      label: t('addRule'),
+      badge: 'BETA',
+      onClick: () => this._openRuleModal(null, () => this._fillRulesList(rulesBody)),
+    });
 
     const rulesBody = document.createElement('div');
     rulesBody.style.cssText = 'overflow-y:auto;flex:1;min-height:0;';
     rulesPane.appendChild(rulesBody);
     this._fillRulesList(rulesBody);
 
-    rulesAddBtn.addEventListener('click', () => {
-      this._openRuleModal(null, () => {
-        this._fillRulesList(rulesBody);
-        const newCount = (this.getRules?.() ?? []).length;
-        rulesHeaderLabel.innerHTML = `${newCount} règle${newCount !== 1 ? 's' : ''}${rulesCountBadge}`;
-      });
-    });
+    // ── Camera pane ───────────────────────────────────────────────────
+    const cameraPane = tabPanes.get('camera')!;
+    cameraPane.style.cssText += ';overflow-y:auto;';
+    buildTabHeader(cameraPane, t('tabCamera'), t('tabCameraDesc'));
+    const viewsContainer = document.createElement('div');
+    viewsContainer.style.cssText = 'padding:4px 12px 8px;';
+    cameraPane.appendChild(viewsContainer);
+    const viewMgr = this.getViewMgr?.();
+    if (viewMgr) {
+      viewMgr.buildViewsSection(viewsContainer);
+    }
+
+    // ── Weather pane ──────────────────────────────────────────────────
+    const weatherPane = tabPanes.get('weather')!;
+    weatherPane.style.cssText += ';overflow-y:auto;';
+    buildTabHeader(weatherPane, t('tabWeather'), t('tabWeatherDesc'));
+    this._buildWeatherTab(weatherPane);
+
+    // ── Config pane ──────────────────────────────────────────────────
+    const configPane = tabPanes.get('config')!;
+    configPane.style.cssText += ';overflow-y:auto;';
+    buildTabHeader(configPane, t('tabConfig'), t('tabConfigDesc'));
+    this._buildConfigTab(configPane);
 
     // Activate default tab
     switchTab(activeTab);
+  }
+
+  private _buildConfigTab(container: HTMLElement) {
+    const settings = this.getSceneSettings?.() ?? {};
+    const rendering = settings.rendering ?? {};
+
+    const inputStyle = [
+      'width:100%', 'box-sizing:border-box',
+      'background:rgba(255,255,255,0.04)', 'border:1px solid rgba(255,255,255,0.1)',
+      'border-radius:7px', 'color:#e2e8f0', 'padding:6px 9px',
+      'font-size:11px', 'outline:none', 'font-family:inherit',
+      'transition:border-color .15s',
+    ].join(';');
+
+    const root = document.createElement('div');
+    root.style.cssText = 'padding:10px 12px 14px;display:flex;flex-direction:column;gap:0;';
+    container.appendChild(root);
+
+    // Section divider helper
+    const sec = (label: string) => {
+      const d = document.createElement('div');
+      d.style.cssText = 'font-size:9px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.07em;margin:14px 0 7px;padding-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.06);';
+      d.textContent = label;
+      root.appendChild(d);
+    };
+
+    // Text input helper
+    const textInput = (value: string, placeholder: string, onChange: (v: string) => void): HTMLInputElement => {
+      const inp = document.createElement('input');
+      inp.value = value; inp.placeholder = placeholder;
+      inp.style.cssText = inputStyle;
+      inp.addEventListener('focus', () => { inp.style.borderColor = 'rgba(125,209,252,0.5)'; });
+      inp.addEventListener('blur',  () => { inp.style.borderColor = 'rgba(255,255,255,0.1)'; });
+      inp.addEventListener('change', () => onChange(inp.value.trim()));
+      return inp;
+    };
+
+    // Slider field helper
+    const sliderField = (labelText: string, min: number, max: number, step: number, value: number, fmt: (v: number) => string, onChange: (v: number) => void) => {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'margin-bottom:8px;';
+      const hdr = document.createElement('div');
+      hdr.style.cssText = 'display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px;';
+      const lbl = document.createElement('span');
+      lbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;';
+      lbl.textContent = labelText;
+      const val = document.createElement('span');
+      val.style.cssText = 'font-size:10px;color:#e2e8f0;font-weight:600;';
+      val.textContent = fmt(value);
+      hdr.appendChild(lbl); hdr.appendChild(val);
+      const sl = document.createElement('input');
+      sl.type = 'range'; sl.min = String(min); sl.max = String(max); sl.step = String(step); sl.value = String(value);
+      sl.style.cssText = 'width:100%;cursor:pointer;margin:0;accent-color:#7dd3fc;';
+      sl.addEventListener('input', () => { val.textContent = fmt(parseFloat(sl.value)); onChange(parseFloat(sl.value)); });
+      wrap.appendChild(hdr); wrap.appendChild(sl);
+      root.appendChild(wrap);
+    };
+
+    // Toggle helper
+    const toggleField = (labelText: string, checked: boolean, onChange: (v: boolean) => void) => {
+      const wrap = document.createElement('label');
+      wrap.style.cssText = 'display:flex;align-items:center;gap:7px;margin-bottom:8px;cursor:pointer;font-size:11px;color:#e2e8f0;';
+      const chk = document.createElement('input');
+      chk.type = 'checkbox'; chk.checked = checked; chk.style.cursor = 'pointer';
+      chk.addEventListener('change', () => onChange(chk.checked));
+      const lbl = document.createElement('span');
+      lbl.textContent = labelText;
+      wrap.appendChild(chk); wrap.appendChild(lbl);
+      root.appendChild(wrap);
+    };
+
+    // ── Scene ─────────────────────────────────────────────────────────
+    sec(t('cfgScene'));
+
+    const sceneIdInput = textInput(this.getSceneId() ?? '', t('cfgSceneIdPh'), () => {});
+    const sceneIdDlId = 'owlnest-cfg-scenes-dl';
+    sceneIdInput.setAttribute('list', sceneIdDlId);
+    const scenesDl = document.createElement('datalist');
+    scenesDl.id = sceneIdDlId;
+    root.appendChild(scenesDl);
+    // Populate datalist async
+    this.listScenesFn?.().then((ids) => {
+      ids.forEach((id) => {
+        const opt = document.createElement('option');
+        opt.value = id;
+        scenesDl.appendChild(opt);
+      });
+    });
+
+    const sceneRow = document.createElement('div');
+    sceneRow.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;';
+    sceneRow.appendChild(sceneIdInput);
+    const loadSceneBtn = document.createElement('button');
+    loadSceneBtn.textContent = t('cfgLoadScene');
+    loadSceneBtn.style.cssText = 'flex-shrink:0;background:rgba(125,209,252,0.12);border:1px solid rgba(125,209,252,0.28);border-radius:7px;color:#7dd3fc;padding:6px 10px;font-size:11px;font-family:inherit;cursor:pointer;white-space:nowrap;';
+    loadSceneBtn.addEventListener('click', () => {
+      const newId = sceneIdInput.value.trim();
+      if (!newId) return;
+      localStorage.setItem('owlnest_scene_id', newId);
+      this.onSceneSettingsChange?.({ scene_id: newId } as SceneSettings, true);
+    });
+    sceneRow.appendChild(loadSceneBtn);
+    const sceneWrap = document.createElement('div');
+    sceneWrap.style.cssText = 'margin-bottom:8px;';
+    const sceneLbl = document.createElement('div');
+    sceneLbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;';
+    sceneLbl.textContent = t('cfgSceneId');
+    sceneWrap.appendChild(sceneLbl); sceneWrap.appendChild(sceneRow);
+    root.appendChild(sceneWrap);
+
+    // ── Rendering ─────────────────────────────────────────────────────
+    sec(t('cfgRender'));
+
+    sliderField(t('cfgExposure'), 0.5, 2, 0.05, rendering.exposure ?? 1.4,
+      (v) => v.toFixed(2), (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, exposure: v } }));
+
+    sliderField(t('cfgFogDensity'), 0, 0.05, 0.001, rendering.fog_density ?? 0.018,
+      (v) => v.toFixed(3), (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, fog_density: v } }));
+
+    // Ground color
+    const colorWrap = document.createElement('div');
+    colorWrap.style.cssText = 'margin-bottom:8px;display:flex;align-items:center;gap:8px;';
+    const colorLbl = document.createElement('div');
+    colorLbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;flex:1;';
+    colorLbl.textContent = t('cfgGroundColor');
+    const colorInput = document.createElement('input');
+    colorInput.type = 'color';
+    colorInput.value = rendering.ground_color ?? '#1a1a2e';
+    colorInput.style.cssText = 'width:36px;height:24px;border:none;border-radius:6px;cursor:pointer;padding:0;background:none;';
+    colorInput.addEventListener('input', () => this.onSceneSettingsChange?.({ rendering: { ...rendering, ground_color: colorInput.value } }));
+    colorWrap.appendChild(colorLbl); colorWrap.appendChild(colorInput);
+    root.appendChild(colorWrap);
+
+    toggleField(t('cfgShadows'), rendering.shadows !== false, (v) => {
+      this.onSceneSettingsChange?.({ rendering: { ...rendering, shadows: v } });
+    });
+
+    toggleField(t('cfgTransparent'), rendering.transparent_background === true, (v) => {
+      this.onSceneSettingsChange?.({ rendering: { ...rendering, transparent_background: v } });
+    });
+
+    sliderField(t('cfgSunIntensity'), 0, 3, 0.05, rendering.sun_intensity ?? 0.8,
+      (v) => v.toFixed(2), (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, sun_intensity: v } }));
+
+    sliderField(t('cfgAmbientIntensity'), 0, 2, 0.05, rendering.ambient_intensity ?? 0.7,
+      (v) => v.toFixed(2), (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, ambient_intensity: v } }));
+
+    // ── Camera limits ─────────────────────────────────────────────────────
+    sec(t('cfgOrbit'));
+    const orbit = settings.orbit ?? {};
+
+    sliderField(t('cfgMinDist'), 0, 20, 0.5, orbit.min_distance ?? 1,
+      (v) => v.toFixed(1), (v) => this.onSceneSettingsChange?.({ orbit: { ...orbit, min_distance: v } }));
+
+    sliderField(t('cfgMaxDist'), 1, 200, 1, orbit.max_distance ?? 100,
+      (v) => String(Math.round(v)), (v) => this.onSceneSettingsChange?.({ orbit: { ...orbit, max_distance: v } }));
+
+    sliderField(t('cfgMaxPolar'), 0, 1, 0.05, orbit.max_polar_angle ?? 0.5,
+      (v) => (v).toFixed(2) + '×π', (v) => this.onSceneSettingsChange?.({ orbit: { ...orbit, max_polar_angle: v } }));
+
+    // ── Clustering ────────────────────────────────────────────────────────
+    sec(t('cfgCluster'));
+    const clusterWrap = document.createElement('div');
+    clusterWrap.style.cssText = 'margin-bottom:8px;';
+    const clusterLbl = document.createElement('div');
+    clusterLbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;';
+    clusterLbl.textContent = t('cfgClusterThreshold');
+    const clusterInput = document.createElement('input');
+    clusterInput.type = 'number'; clusterInput.min = '0'; clusterInput.step = '5';
+    clusterInput.value = String(settings.cluster_threshold ?? 0);
+    clusterInput.style.cssText = inputStyle;
+    clusterInput.addEventListener('change', () => {
+      this.onSceneSettingsChange?.({ cluster_threshold: parseFloat(clusterInput.value) || 0 });
+    });
+    clusterWrap.appendChild(clusterLbl); clusterWrap.appendChild(clusterInput);
+    root.appendChild(clusterWrap);
+
+    // ── Language ──────────────────────────────────────────────────────
+    sec(t('cfgLang'));
+
+    const langSelect = document.createElement('select');
+    langSelect.style.cssText = inputStyle + ';cursor:pointer;';
+    const langs: ['en' | 'fr', string][] = [['en', t('langEn')], ['fr', t('langFr')]];
+    langs.forEach(([val, label]) => {
+      const opt = document.createElement('option');
+      opt.value = val; opt.textContent = label;
+      if ((settings.language ?? 'en') === val) opt.selected = true;
+      langSelect.appendChild(opt);
+    });
+    langSelect.addEventListener('change', () => {
+      const lang = langSelect.value as 'en' | 'fr';
+      setLang(lang);
+      this.onSceneSettingsChange?.({ language: lang });
+      // Rebuild inspector to apply new language
+      this.buildAnchorList();
+    });
+    root.appendChild(langSelect);
+  }
+
+  private _buildWeatherTab(container: HTMLElement) {
+    const settings = this.getSceneSettings?.() ?? {};
+    const inputStyle = [
+      'width:100%', 'box-sizing:border-box',
+      'background:rgba(255,255,255,0.04)', 'border:1px solid rgba(255,255,255,0.1)',
+      'border-radius:7px', 'color:#e2e8f0', 'padding:6px 9px',
+      'font-size:11px', 'outline:none', 'font-family:inherit',
+      'transition:border-color .15s',
+    ].join(';');
+
+    const root = document.createElement('div');
+    root.style.cssText = 'padding:10px 12px 14px;display:flex;flex-direction:column;gap:0;';
+    container.appendChild(root);
+
+    const sec = (label: string) => {
+      const d = document.createElement('div');
+      d.style.cssText = 'font-size:9px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.07em;margin:14px 0 7px;padding-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.06);';
+      d.textContent = label;
+      root.appendChild(d);
+    };
+
+    const field = (labelText: string, el: HTMLElement) => {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'margin-bottom:8px;';
+      const lbl = document.createElement('div');
+      lbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;';
+      lbl.textContent = labelText;
+      wrap.appendChild(lbl); wrap.appendChild(el);
+      root.appendChild(wrap);
+    };
+
+    // ── Environment ───────────────────────────────────────────────────
+    sec(t('cfgEnv'));
+
+    const entityAutocomplete = (
+      value: string, placeholder: string, domainFilter: string, onChange: (v: string) => void,
+    ): HTMLDivElement => {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'position:relative;';
+      const inp = document.createElement('input');
+      const dlId = `owlnest-env-dl-${Math.random().toString(36).slice(2)}`;
+      inp.setAttribute('list', dlId);
+      inp.value = value; inp.placeholder = placeholder;
+      inp.style.cssText = inputStyle;
+      inp.addEventListener('focus', () => { inp.style.borderColor = 'rgba(125,209,252,0.5)'; });
+      inp.addEventListener('blur',  () => { inp.style.borderColor = 'rgba(255,255,255,0.1)'; });
+      inp.addEventListener('change', () => onChange(inp.value.trim()));
+      const dl = document.createElement('datalist');
+      dl.id = dlId;
+      const hass = this.getHass();
+      if (hass?.states) {
+        Object.keys(hass.states)
+          .filter((eid) => eid.startsWith(domainFilter))
+          .sort()
+          .forEach((eid) => {
+            const opt = document.createElement('option');
+            opt.value = eid;
+            const fn = (hass.states[eid] as any)?.attributes?.friendly_name;
+            if (fn) opt.label = fn;
+            dl.appendChild(opt);
+          });
+      }
+      wrap.appendChild(inp); wrap.appendChild(dl);
+      return wrap;
+    };
+
+    field(t('cfgSunEntity'), entityAutocomplete(
+      settings.sun_entity ?? this.getConfig?.()?.sun_entity ?? '', t('cfgSunEntityPh'), 'sun.',
+      (v) => { this.onSceneSettingsChange?.({ sun_entity: v }); },
+    ));
+
+    field(t('cfgWeatherEntity'), entityAutocomplete(
+      settings.weather_entity ?? this.getConfig?.()?.weather_entity ?? '', t('cfgWeatherEntityPh'), 'weather.',
+      (v) => { this.onSceneSettingsChange?.({ weather_entity: v }); },
+    ));
+
+    // ── Simulation ────────────────────────────────────────────────────
+    sec(t('cfgSim'));
+
+    const simContainer = document.createElement('div');
+    simContainer.style.cssText = 'margin-bottom:4px;';
+    root.appendChild(simContainer);
+    const sim = this.getSim?.();
+    if (sim) {
+      sim.buildContentInto(simContainer);
+    } else {
+      simContainer.style.cssText += ';font-size:10px;color:rgba(255,255,255,0.28);padding:4px 0;';
+      simContainer.textContent = '—';
+    }
   }
 
   private _buildPropsSection(container: HTMLDivElement, key: string, anchor: EditableAnchor, goBack?: () => void) {
@@ -544,6 +992,7 @@ export class EditPanel {
 
     const domain = anchor.entity.split('.')[0];
     const isLight = domain === 'light';
+    const isSensor = domain === 'sensor' || domain === 'binary_sensor';
 
     // ── Back navigation ───────────────────────────────────────────────
     if (goBack) {
@@ -551,7 +1000,7 @@ export class EditPanel {
       nav.style.cssText = 'display:flex;align-items:center;gap:6px;padding:0 0 10px;border-bottom:1px solid rgba(255,255,255,0.06);margin-bottom:12px;';
       const backBtn = document.createElement('button');
       backBtn.style.cssText = 'background:none;border:none;cursor:pointer;color:rgba(255,255,255,0.35);font-size:12px;padding:0;line-height:1;transition:color .12s;display:flex;align-items:center;gap:4px;font-family:inherit;';
-      backBtn.innerHTML = '← <span style="font-size:10px;text-transform:uppercase;letter-spacing:.04em;font-weight:600;">Ancres</span>';
+      backBtn.innerHTML = `← <span style="font-size:10px;text-transform:uppercase;letter-spacing:.04em;font-weight:600;">${t('backAnchors')}</span>`;
       backBtn.addEventListener('mouseenter', () => { backBtn.style.color = '#7dd3fc'; });
       backBtn.addEventListener('mouseleave', () => { backBtn.style.color = 'rgba(255,255,255,0.35)'; });
       backBtn.addEventListener('click', goBack);
@@ -626,7 +1075,7 @@ export class EditPanel {
     container.appendChild(subtitle);
 
     // ── Section: Liaison HA ──────────────────────────────────────────
-    secDiv('Liaison HA');
+    secDiv(t('anchorSectionHA'));
 
     const entityWrap = document.createElement('div');
     entityWrap.style.cssText = 'position:relative;';
@@ -655,11 +1104,11 @@ export class EditPanel {
       }
     }
     entityWrap.appendChild(entityInput); entityWrap.appendChild(datalist);
-    field('Entité', entityWrap);
+    field(t('anchorFieldEntity'), entityWrap);
 
     const labelInput = document.createElement('input');
     labelInput.value = anchor.label;
-    labelInput.placeholder = 'Nom affiché…';
+    labelInput.placeholder = t('anchorNamePh');
     labelInput.style.cssText = inputStyle;
     labelInput.addEventListener('focus', () => { labelInput.style.borderColor = 'rgba(125,209,252,0.5)'; });
     labelInput.addEventListener('blur', () => { labelInput.style.borderColor = 'rgba(255,255,255,0.1)'; });
@@ -667,13 +1116,82 @@ export class EditPanel {
       this.getEditor()?.updateAnchor(key, { label: labelInput.value.trim() || anchor.entity.split('.')[1] });
       this.scheduleAutoSave();
     });
-    field('Nom', labelInput);
+    field(t('anchorFieldName'), labelInput);
+
+    // Icon override — use HA's <ha-icon-picker> for visual autocomplete, fallback to plain input
+    const iconWrap = document.createElement('div');
+    iconWrap.style.cssText = 'display:flex;align-items:center;gap:6px;';
+
+    const haIconPicker = customElements.get('ha-icon-picker') != null;
+    if (haIconPicker) {
+      const picker = document.createElement('ha-icon-picker') as HTMLElement & { value?: string; label?: string };
+      picker.setAttribute('value', anchor.icon ?? '');
+      picker.setAttribute('label', '');
+      picker.style.cssText = 'flex:1;--mdc-text-field-fill-color:rgba(255,255,255,0.04);--mdc-theme-primary:rgba(125,209,252,0.8);';
+      picker.addEventListener('value-changed', ((e: CustomEvent) => {
+        const v = (e.detail?.value as string) || undefined;
+        this.getEditor()?.updateAnchor(key, { icon: v });
+        this.scheduleAutoSave();
+        // Update preview
+        if (preview) preview.setAttribute('icon', v ?? '');
+      }) as EventListener);
+      iconWrap.appendChild(picker);
+    } else {
+      // Fallback: plain text input
+      const iconInput = document.createElement('input');
+      iconInput.value = anchor.icon ?? '';
+      iconInput.placeholder = 'mdi:thermometer';
+      iconInput.style.cssText = inputStyle + ';flex:1;';
+      iconInput.addEventListener('focus', () => { iconInput.style.borderColor = 'rgba(125,209,252,0.5)'; });
+      iconInput.addEventListener('blur', () => { iconInput.style.borderColor = 'rgba(255,255,255,0.1)'; });
+      iconInput.addEventListener('change', () => {
+        const v = iconInput.value.trim() || undefined;
+        this.getEditor()?.updateAnchor(key, { icon: v });
+        this.scheduleAutoSave();
+        if (preview) preview.setAttribute('icon', v ?? '');
+      });
+      iconWrap.appendChild(iconInput);
+    }
+
+    // Live preview of the chosen icon
+    const preview = document.createElement('ha-icon') as HTMLElement;
+    preview.setAttribute('icon', anchor.icon ?? 'mdi:help-circle-outline');
+    preview.style.cssText = '--mdi-icon-size:20px;width:24px;height:24px;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.5);flex-shrink:0;';
+    if (anchor.icon) preview.style.color = '#7dd3fc';
+    iconWrap.appendChild(preview);
+
+    field(t('anchorFieldIcon') || 'Icon', iconWrap);
+
+    // ── Section: Sensor precision ─────────────────────────────────────
+    if (isSensor) {
+      secDiv('Capteur');
+      const precInput = document.createElement('input');
+      precInput.type = 'number';
+      precInput.min = '0';
+      precInput.max = '6';
+      precInput.step = '1';
+      precInput.value = anchor.precision !== undefined ? String(anchor.precision) : '';
+      precInput.placeholder = 'auto';
+      precInput.style.cssText = inputStyle;
+      precInput.addEventListener('focus', () => { precInput.style.borderColor = 'rgba(125,209,252,0.5)'; });
+      precInput.addEventListener('blur', () => { precInput.style.borderColor = 'rgba(255,255,255,0.1)'; });
+      precInput.addEventListener('change', () => {
+        const v = precInput.value === '' ? undefined : parseInt(precInput.value, 10);
+        this.getEditor()?.updateAnchor(key, { precision: v });
+        this.scheduleAutoSave();
+      });
+      field('Précision (décimales)', precInput);
+      const precHint = document.createElement('div');
+      precHint.style.cssText = 'font-size:9px;color:#475569;margin-top:-5px;margin-bottom:8px;';
+      precHint.textContent = 'Ex : 0 → "18", 1 → "17.6"';
+      container.appendChild(precHint);
+    }
 
     // ── Section: Lumière ─────────────────────────────────────────────
     if (isLight) {
-      secDiv('Lumière');
+      secDiv(t('anchorSectionLight'));
 
-      sliderField('Intensité', 0.1, 3, 0.1, anchor.lightIntensity ?? 1, '#fbbf24',
+      sliderField(t('anchorLightIntensity'), 0.1, 3, 0.1, anchor.lightIntensity ?? 1, '#fbbf24',
         (v) => `×${v.toFixed(1)}`,
         (v) => this.getEditor()?.updateAnchor(key, { lightIntensity: v }),
       );
@@ -682,9 +1200,9 @@ export class EditPanel {
       const styleRow = document.createElement('div');
       styleRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin-bottom:4px;';
       const styleConfigs: { id: import('../types').LightStyle; label: string; icon: string }[] = [
-        { id: 'point', label: 'Ambiante', icon: '○' },
-        { id: 'spot',  label: 'Spot',     icon: '◎' },
-        { id: 'beam',  label: 'Rayon',    icon: '⊙' },
+        { id: 'point', label: t('lightStyleAmbient'), icon: '○' },
+        { id: 'spot',  label: t('lightStyleSpot'),    icon: '◎' },
+        { id: 'beam',  label: t('lightStyleBeam'),    icon: '⊙' },
       ];
       let currentStyle = anchor.lightStyle ?? 'point';
       const styleBtns: HTMLButtonElement[] = [];
@@ -729,7 +1247,7 @@ export class EditPanel {
 
       const dirHeader = document.createElement('div');
       dirHeader.style.cssText = 'font-size:9px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.07em;margin:14px 0 7px;padding-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.06);';
-      dirHeader.textContent = 'Orientation';
+      dirHeader.textContent = t('anchorSectionOrientation');
       dirSection.appendChild(dirHeader);
 
       // Read-only Az/El display
@@ -752,7 +1270,7 @@ export class EditPanel {
 
       const gizmoHint = document.createElement('span');
       gizmoHint.style.cssText = 'font-size:9px;color:rgba(255,255,255,0.28);line-height:1.4;text-align:right;';
-      gizmoHint.innerHTML = '↻ Glisser les<br>anneaux 3D';
+      gizmoHint.innerHTML = t('orientationGizmoHint');
       dirDisplay.appendChild(gizmoHint);
 
       dirSection.appendChild(dirDisplay);
@@ -760,14 +1278,14 @@ export class EditPanel {
     }
 
     // ── Section: Visibilité conditionnelle ────────────────────────────
-    secDiv('Visibilité');
+    secDiv(t('anchorSectionVisibility'));
     this._buildVisibleIfSection(container, `anc-${key}`, anchor.visibleIf, inputStyle, (cond) => {
       this.getEditor()?.updateAnchor(key, { visibleIf: cond });
       this.scheduleAutoSave();
     });
 
     // ── Section: Gérer ───────────────────────────────────────────────
-    secDiv('Gérer');
+    secDiv(t('anchorSectionManage'));
 
     const actRow = document.createElement('div');
     actRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:6px;';
@@ -779,7 +1297,7 @@ export class EditPanel {
       'font-size:10px', 'font-family:inherit', 'cursor:pointer',
       'transition:all .15s',
     ].join(';');
-    dupBtn.innerHTML = '⎘ Dupliquer';
+    dupBtn.innerHTML = t('anchorBtnDuplicate');
     dupBtn.title = 'Ctrl+D';
     dupBtn.addEventListener('mouseenter', () => { dupBtn.style.background = 'rgba(255,255,255,0.12)'; });
     dupBtn.addEventListener('mouseleave', () => { dupBtn.style.background = 'rgba(255,255,255,0.06)'; });
@@ -792,8 +1310,8 @@ export class EditPanel {
       'font-size:10px', 'font-family:inherit', 'cursor:pointer',
       'transition:all .15s',
     ].join(';');
-    delBtn.innerHTML = '✕ Supprimer';
-    delBtn.title = 'X — Supprimer l\'ancre';
+    delBtn.innerHTML = t('anchorBtnDelete');
+    delBtn.title = t('anchorDeleteTitle');
     delBtn.addEventListener('mouseenter', () => { delBtn.style.background = 'rgba(239,68,68,0.25)'; delBtn.style.borderColor = 'rgba(239,68,68,0.5)'; });
     delBtn.addEventListener('mouseleave', () => { delBtn.style.background = 'rgba(239,68,68,0.1)'; delBtn.style.borderColor = 'rgba(239,68,68,0.25)'; });
     delBtn.addEventListener('click', () => {
@@ -801,13 +1319,13 @@ export class EditPanel {
         this.getEditor()?.deleteSelected();
       } else {
         delBtn.dataset.confirm = '1';
-        delBtn.innerHTML = '⚠ Confirmer ?';
+        delBtn.innerHTML = t('anchorBtnConfirm');
         delBtn.style.background = 'rgba(239,68,68,0.35)';
         delBtn.style.borderColor = 'rgba(239,68,68,0.65)';
         setTimeout(() => {
           if (delBtn.dataset.confirm === '1') {
             delBtn.dataset.confirm = '';
-            delBtn.innerHTML = '✕ Supprimer';
+            delBtn.innerHTML = t('anchorBtnDelete');
             delBtn.style.background = 'rgba(239,68,68,0.1)';
             delBtn.style.borderColor = 'rgba(239,68,68,0.25)';
           }
@@ -903,13 +1421,13 @@ export class EditPanel {
     const el = this._panel?.querySelector<HTMLElement>('#save-indicator');
     if (!el) return;
     if (this._saveStatus === 'unsaved') {
-      el.textContent = '● Non sauvé';
+      el.textContent = t('saveIndicator_unsaved');
       el.style.color = '#f59e0b';
     } else if (this._saveStatus === 'saving') {
-      el.textContent = '⏳ Sauvegarde…';
+      el.textContent = t('saveIndicator_saving');
       el.style.color = '#94a3b8';
     } else {
-      el.textContent = '✓ Sauvé';
+      el.textContent = t('saveIndicator_saved');
       el.style.color = '#22c55e';
     }
   }
@@ -933,13 +1451,13 @@ export class EditPanel {
 
     const title = document.createElement('div');
     title.style.cssText = 'font-size:9px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px;';
-    title.textContent = 'Choisir un modèle';
+    title.textContent = t('cardPickerTitle');
     overlay.appendChild(title);
 
     const templates: { type: SceneCardType; icon: string; label: string; desc: string; color: string }[] = [
-      { type: 'room',   icon: '🏠', label: 'Pièce',  desc: 'Vue synthèse d\'une pièce',   color: '#7dd3fc' },
-      { type: 'entity', icon: '📊', label: 'Entité', desc: 'Focus sur une entité HA',     color: '#86efac' },
-      { type: 'info',   icon: 'ℹ️',  label: 'Info',   desc: 'Label contextuel décoratif', color: '#fbbf24' },
+      { type: 'room',   icon: '🏠', label: t('cardTypeRoom'),   desc: t('cardPickerRoomDesc'),   color: '#7dd3fc' },
+      { type: 'entity', icon: '📊', label: t('cardTypeEntity'), desc: t('cardPickerEntityDesc'), color: '#86efac' },
+      { type: 'info',   icon: 'ℹ️',  label: t('cardTypeInfo'),   desc: t('cardPickerInfoDesc'),  color: '#fbbf24' },
     ];
 
     templates.forEach(({ type, icon, label, desc, color }) => {
@@ -970,7 +1488,7 @@ export class EditPanel {
 
     const cancelBtn = document.createElement('button');
     cancelBtn.style.cssText = 'width:100%;padding:5px;background:none;border:none;color:rgba(255,255,255,0.3);font-size:10px;font-family:inherit;cursor:pointer;margin-top:2px;';
-    cancelBtn.textContent = 'Annuler';
+    cancelBtn.textContent = t('btnCancel');
     cancelBtn.addEventListener('click', () => overlay.remove());
     overlay.appendChild(cancelBtn);
 
@@ -993,7 +1511,7 @@ export class EditPanel {
       nav.style.cssText = 'display:flex;align-items:center;gap:6px;padding:0 0 10px;border-bottom:1px solid rgba(255,255,255,0.06);margin-bottom:12px;';
       const backBtn = document.createElement('button');
       backBtn.style.cssText = 'background:none;border:none;cursor:pointer;color:rgba(255,255,255,0.35);font-size:12px;padding:0;line-height:1;transition:color .12s;display:flex;align-items:center;gap:4px;font-family:inherit;';
-      backBtn.innerHTML = '← <span style="font-size:10px;text-transform:uppercase;letter-spacing:.04em;font-weight:600;">Cartes</span>';
+      backBtn.innerHTML = `← <span style="font-size:10px;text-transform:uppercase;letter-spacing:.04em;font-weight:600;">${t('backCards')}</span>`;
       backBtn.addEventListener('mouseenter', () => { backBtn.style.color = '#7dd3fc'; });
       backBtn.addEventListener('mouseleave', () => { backBtn.style.color = 'rgba(255,255,255,0.35)'; });
       backBtn.addEventListener('click', goBack);
@@ -1010,14 +1528,14 @@ export class EditPanel {
 
     const sub = document.createElement('div');
     sub.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.3);margin-bottom:2px;';
-    sub.textContent = `Carte 3D · ${CARD_TYPE_LABELS[card.type]}`;
+    sub.textContent = `${t('cardSubtitle')} · ${CARD_TYPE_LABELS[card.type]()}`;
     container.appendChild(sub);
 
     // ── Section: Général ───────────────────────────────────────────────────
 
     const sec1 = document.createElement('div');
     sec1.style.cssText = secStyle;
-    sec1.textContent = 'Général';
+    sec1.textContent = t('cardSectionGeneral');
     container.appendChild(sec1);
 
     // Name input
@@ -1025,14 +1543,14 @@ export class EditPanel {
     nameWrap.style.cssText = 'margin-bottom:8px;';
     const nameLbl = document.createElement('div');
     nameLbl.style.cssText = lblStyle;
-    nameLbl.textContent = 'Nom';
+    nameLbl.textContent = t('cardFieldName');
     const nameInp = document.createElement('input');
     nameInp.value = card.name;
-    nameInp.placeholder = 'Nom de la carte';
+    nameInp.placeholder = t('cardNamePh');
     nameInp.style.cssText = inputStyle;
     nameInp.addEventListener('change', () => {
-      this._updateCard(card.id, { name: nameInp.value.trim() || 'Sans nom' });
-      title.querySelector('span:last-child')!.textContent = nameInp.value.trim() || 'Sans nom';
+      this._updateCard(card.id, { name: nameInp.value.trim() || t('cardNameDefault') });
+      title.querySelector('span:last-child')!.textContent = nameInp.value.trim() || t('cardNameDefault');
     });
     nameWrap.appendChild(nameLbl);
     nameWrap.appendChild(nameInp);
@@ -1042,7 +1560,7 @@ export class EditPanel {
 
     const secPos = document.createElement('div');
     secPos.style.cssText = secStyle;
-    secPos.textContent = 'Position';
+    secPos.textContent = t('cardSectionPosition');
     container.appendChild(secPos);
 
     const axisLabels: ['X', 'Y', 'Z'] = ['X', 'Y', 'Z'];
@@ -1061,7 +1579,7 @@ export class EditPanel {
       inp.type = 'number';
       inp.step = '0.01';
       inp.value = card.position[i].toFixed(3);
-      inp.title = 'Position en mètres dans l\'espace 3D';
+      inp.title = t('cardPositionTitle');
       inp.style.cssText = 'width:100%;box-sizing:border-box;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#e2e8f0;padding:4px 22px 4px 6px;font-size:11px;outline:none;font-family:inherit;text-align:center;';
       const unit = document.createElement('span');
       unit.textContent = 'm';
@@ -1083,13 +1601,13 @@ export class EditPanel {
 
     const sec2 = document.createElement('div');
     sec2.style.cssText = secStyle;
-    sec2.textContent = 'Apparence';
+    sec2.textContent = t('cardSectionAppearance');
     container.appendChild(sec2);
 
     // Size presets (small / medium / large)
     const sizeLbl = document.createElement('div');
     sizeLbl.style.cssText = lblStyle;
-    sizeLbl.textContent = 'Taille';
+    sizeLbl.textContent = t('cardFieldSize');
     container.appendChild(sizeLbl);
 
     const sizeBtnRow = document.createElement('div');
@@ -1124,7 +1642,7 @@ export class EditPanel {
     colorWrap.style.cssText = 'margin-bottom:10px;';
     const colorLbl = document.createElement('div');
     colorLbl.style.cssText = lblStyle;
-    colorLbl.textContent = 'Couleur accent';
+    colorLbl.textContent = t('cardFieldAccentColor');
     const colorRow = document.createElement('div');
     colorRow.style.cssText = 'display:flex;gap:6px;align-items:center;';
     const colorInp = document.createElement('input');
@@ -1154,7 +1672,7 @@ export class EditPanel {
 
     const secTpl = document.createElement('div');
     secTpl.style.cssText = secStyle;
-    secTpl.textContent = CARD_TYPE_LABELS[card.type as import('../cards/types').SceneCardType];
+    secTpl.textContent = CARD_TYPE_LABELS[card.type as import('../cards/types').SceneCardType]();
     container.appendChild(secTpl);
 
     const mkEntityInput = (val: string, id: string, onChange: (v: string) => void) => {
@@ -1212,14 +1730,14 @@ export class EditPanel {
 
     if (card.type === 'room') {
       // Icon emoji
-      container.appendChild(mkFieldLabel('Icône (emoji)'));
+      container.appendChild(mkFieldLabel(t('cardRoomIconLabel')));
       container.appendChild(mkTextInput(card.icon ?? '', '🏠', (v) => this._updateCard(card.id, { icon: v || undefined } as Partial<import('../cards/types').RoomCard>)));
 
       // Entities (up to 4)
       const maxEntities = 4;
       const entitiesWrap = document.createElement('div');
       entitiesWrap.style.cssText = 'margin-bottom:8px;';
-      container.appendChild(mkFieldLabel(`Entités (max ${maxEntities})`));
+      container.appendChild(mkFieldLabel(t('cardRoomEntitiesLabel').replace('{n}', String(maxEntities))));
       container.appendChild(entitiesWrap);
 
       const getFreshEntities = (): string[] => {
@@ -1264,7 +1782,7 @@ export class EditPanel {
         });
         if (entities.length < maxEntities) {
           const addBtn = document.createElement('button');
-          addBtn.textContent = '+ Entité';
+          addBtn.textContent = t('cardRoomAddEntity');
           addBtn.style.cssText = 'background:rgba(255,255,255,0.04);border:1px dashed rgba(255,255,255,0.15);border-radius:6px;color:#64748b;padding:5px 10px;font-size:10px;font-family:inherit;cursor:pointer;width:100%;';
           addBtn.addEventListener('click', () => {
             const newList = [...getFreshEntities(), ''];
@@ -1277,34 +1795,34 @@ export class EditPanel {
       renderEntityList();
 
       // Show toggles
-      container.appendChild(mkToggle('Afficher le nom', card.show?.name !== false, (v) => this._updateCard(card.id, { show: { ...card.show, name: v } } as Partial<import('../cards/types').RoomCard>)));
-      container.appendChild(mkToggle('Afficher les états', card.show?.entities !== false, (v) => this._updateCard(card.id, { show: { ...card.show, entities: v } } as Partial<import('../cards/types').RoomCard>)));
+      container.appendChild(mkToggle(t('cardRoomShowName'), card.show?.name !== false, (v) => this._updateCard(card.id, { show: { ...card.show, name: v } } as Partial<import('../cards/types').RoomCard>)));
+      container.appendChild(mkToggle(t('cardRoomShowStates'), card.show?.entities !== false, (v) => this._updateCard(card.id, { show: { ...card.show, entities: v } } as Partial<import('../cards/types').RoomCard>)));
 
     } else if (card.type === 'entity') {
       // Entity ID
-      container.appendChild(mkFieldLabel('Entité'));
+      container.appendChild(mkFieldLabel(t('cardEntityLabel')));
       container.appendChild(mkEntityInput(card.entity_id ?? '', 'entity', (v) => this._updateCard(card.id, { entity_id: v } as Partial<import('../cards/types').EntityCard>)));
 
       // Label override
-      container.appendChild(mkFieldLabel('Label (optionnel)'));
-      container.appendChild(mkTextInput(card.label ?? '', 'Automatique', (v) => this._updateCard(card.id, { label: v || undefined } as Partial<import('../cards/types').EntityCard>)));
+      container.appendChild(mkFieldLabel(t('cardEntityOptLabel')));
+      container.appendChild(mkTextInput(card.label ?? '', t('cardEntityLabelPh'), (v) => this._updateCard(card.id, { label: v || undefined } as Partial<import('../cards/types').EntityCard>)));
 
       // Show toggles
-      container.appendChild(mkToggle('Afficher le label', card.show?.label !== false, (v) => this._updateCard(card.id, { show: { ...card.show, label: v } } as Partial<import('../cards/types').EntityCard>)));
-      container.appendChild(mkToggle('Afficher l\'unité', card.show?.unit !== false, (v) => this._updateCard(card.id, { show: { ...card.show, unit: v } } as Partial<import('../cards/types').EntityCard>)));
-      container.appendChild(mkToggle('Bouton d\'action', card.show?.button === true, (v) => this._updateCard(card.id, { show: { ...card.show, button: v } } as Partial<import('../cards/types').EntityCard>)));
+      container.appendChild(mkToggle(t('cardEntityShowLabel'), card.show?.label !== false, (v) => this._updateCard(card.id, { show: { ...card.show, label: v } } as Partial<import('../cards/types').EntityCard>)));
+      container.appendChild(mkToggle(t('cardEntityShowUnit'), card.show?.unit !== false, (v) => this._updateCard(card.id, { show: { ...card.show, unit: v } } as Partial<import('../cards/types').EntityCard>)));
+      container.appendChild(mkToggle(t('cardEntityShowButton'), card.show?.button === true, (v) => this._updateCard(card.id, { show: { ...card.show, button: v } } as Partial<import('../cards/types').EntityCard>)));
 
     } else if (card.type === 'info') {
       // Icon emoji
-      container.appendChild(mkFieldLabel('Icône (emoji)'));
+      container.appendChild(mkFieldLabel(t('cardInfoIconLabel')));
       container.appendChild(mkTextInput(card.icon ?? '', 'ℹ️', (v) => this._updateCard(card.id, { icon: v || undefined } as Partial<import('../cards/types').InfoCard>)));
 
       // Subtitle
-      container.appendChild(mkFieldLabel('Sous-titre'));
+      container.appendChild(mkFieldLabel(t('cardInfoSubtitleLabel')));
       container.appendChild(mkTextInput(card.subtitle ?? '', 'Texte…', (v) => this._updateCard(card.id, { subtitle: v || undefined } as Partial<import('../cards/types').InfoCard>)));
 
       // Color override
-      container.appendChild(mkFieldLabel('Couleur texte (optionnel)'));
+      container.appendChild(mkFieldLabel(t('cardInfoColorLabel')));
       const colorOverrideWrap = document.createElement('div');
       colorOverrideWrap.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:8px;';
       const colorOInp = document.createElement('input');
@@ -1314,7 +1832,7 @@ export class EditPanel {
       const colorOText = document.createElement('input');
       colorOText.type = 'text';
       colorOText.value = card.color ?? '';
-      colorOText.placeholder = 'Hérite de l\'accent';
+      colorOText.placeholder = t('cardInfoColorPh');
       colorOText.style.cssText = inputStyle + 'flex:1;padding:4px 8px;font-size:11px;';
       colorOInp.addEventListener('change', () => {
         colorOText.value = colorOInp.value;
@@ -1339,7 +1857,7 @@ export class EditPanel {
 
     const secVis = document.createElement('div');
     secVis.style.cssText = secStyle;
-    secVis.textContent = 'Visibilité';
+    secVis.textContent = t('cardSectionVisibility');
     container.appendChild(secVis);
     this._buildVisibleIfSection(container, `card-${card.id}`, card.visibleIf, inputStyle, (cond) => {
       this._updateCard(card.id, { visibleIf: cond });
@@ -1349,25 +1867,26 @@ export class EditPanel {
 
     const sec3 = document.createElement('div');
     sec3.style.cssText = secStyle;
-    sec3.textContent = 'Gérer';
+    sec3.textContent = t('cardSectionManage');
     container.appendChild(sec3);
 
     const delBtn = document.createElement('button');
     delBtn.style.cssText = 'background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.25);border-radius:8px;color:#f87171;padding:7px 8px;font-size:10px;font-family:inherit;cursor:pointer;width:100%;';
-    delBtn.innerHTML = '✕ Supprimer la carte';
+    delBtn.innerHTML = t('cardBtnDelete');
     delBtn.addEventListener('click', () => {
       if (delBtn.dataset.confirm === '1') {
+        this._pushCardSnap();
         const cards = (this.getCards ? this.getCards() : []).filter((x) => x.id !== card.id);
         if (this.saveCards) this.saveCards(cards).then(() => { if (this.onSelectCard) this.onSelectCard(null); this.updateAnchorList(); });
       } else {
         delBtn.dataset.confirm = '1';
-        delBtn.innerHTML = '⚠ Confirmer la suppression ?';
+        delBtn.innerHTML = t('cardBtnDeleteConfirm');
         delBtn.style.background = 'rgba(239,68,68,0.35)';
         delBtn.style.borderColor = 'rgba(239,68,68,0.65)';
         setTimeout(() => {
           if (delBtn.dataset.confirm === '1') {
             delBtn.dataset.confirm = '';
-            delBtn.innerHTML = '✕ Supprimer la carte';
+            delBtn.innerHTML = t('cardBtnDelete');
             delBtn.style.background = 'rgba(239,68,68,0.1)';
             delBtn.style.borderColor = 'rgba(239,68,68,0.25)';
           }
@@ -1414,10 +1933,10 @@ export class EditPanel {
   ) {
     const hass = this.getHass();
     const ops: [string, string][] = [
-      ['eq','= égal'],['neq','≠ différent'],
-      ['gt','> supérieur'],['lt','< inférieur'],
-      ['gte','≥ sup. ou égal'],['lte','≤ inf. ou égal'],
-      ['contains','⊃ contient'],
+      ['eq', t('opEq')], ['neq', t('opNeq')],
+      ['gt', t('opGt')], ['lt',  t('opLt')],
+      ['gte', t('opGte')], ['lte', t('opLte')],
+      ['contains', t('opContains')],
     ];
 
     // negate: true → "Masquer si" (hidden when condition is true)
@@ -1434,7 +1953,7 @@ export class EditPanel {
     toggle.style.cssText = 'cursor:pointer;flex-shrink:0;accent-color:#7dd3fc;';
     const toggleLbl = document.createElement('span');
     toggleLbl.style.cssText = 'font-size:11px;color:#94a3b8;cursor:pointer;';
-    toggleLbl.textContent = 'Conditionner la visibilité';
+    toggleLbl.textContent = t('visibilityCondition');
     toggleRow.appendChild(toggle); toggleRow.appendChild(toggleLbl);
     toggleLbl.addEventListener('click', () => toggle.click());
     container.appendChild(toggleRow);
@@ -1453,8 +1972,8 @@ export class EditPanel {
       btn.style.cssText = `background:${active ? 'rgba(248,113,113,0.15)' : 'rgba(255,255,255,0.04)'};border:1px solid ${active ? 'rgba(248,113,113,0.4)' : 'rgba(255,255,255,0.1)'};border-radius:6px;color:${active ? '#f87171' : '#64748b'};padding:5px 4px;font-size:10px;font-family:inherit;cursor:pointer;transition:all .15s;`;
       return btn;
     };
-    const btnHide = mkModeBtn('Masquer si…', negate);
-    const btnShow = mkModeBtn('Afficher si…', !negate);
+    const btnHide = mkModeBtn(t('visibilityHideIf'), negate);
+    const btnShow = mkModeBtn(t('visibilityShowIf'), !negate);
     const setMode = (hide: boolean) => {
       negate = hide;
       btnHide.style.cssText = `background:${hide ? 'rgba(248,113,113,0.15)' : 'rgba(255,255,255,0.04)'};border:1px solid ${hide ? 'rgba(248,113,113,0.4)' : 'rgba(255,255,255,0.1)'};border-radius:6px;color:${hide ? '#f87171' : '#64748b'};padding:5px 4px;font-size:10px;font-family:inherit;cursor:pointer;transition:all .15s;`;
@@ -1508,7 +2027,7 @@ export class EditPanel {
     const valDlId = `${idPrefix}-val`;
     const valInp = document.createElement('input');
     valInp.value = String(current?.value ?? '');
-    valInp.placeholder = 'valeur…';
+    valInp.placeholder = t('condValuePh');
     valInp.setAttribute('list', valDlId);
     valInp.style.cssText = inputStyle;
     const valDl = document.createElement('datalist');
@@ -1524,7 +2043,7 @@ export class EditPanel {
       if (!stateObj) { hint.textContent = ''; valDl.innerHTML = ''; return; }
 
       const friendlyName = (stateObj.attributes?.friendly_name as string) ?? '';
-      hint.textContent = `État actuel : ${stateObj.state}${friendlyName ? `  ·  ${friendlyName}` : ''}`;
+      hint.textContent = `${t('condCurrentState')} ${stateObj.state}${friendlyName ? `  ·  ${friendlyName}` : ''}`;
 
       valDl.innerHTML = '';
       const domain = eid.split('.')[0];
@@ -1579,7 +2098,7 @@ export class EditPanel {
     if (rules.length === 0) {
       const empty = document.createElement('div');
       empty.style.cssText = 'padding:18px 12px;font-size:11px;color:rgba(255,255,255,0.28);text-align:center;line-height:1.7;';
-      empty.innerHTML = 'Aucune règle<br><span style="font-size:10px;opacity:.7">Cliquer sur + Ajouter</span>';
+      empty.innerHTML = `${t('rulesEmpty')}<br><span style="font-size:10px;opacity:.7">${t('rulesEmptyHint')}</span>`;
       body.appendChild(empty);
       return;
     }
@@ -1599,14 +2118,14 @@ export class EditPanel {
       info.style.cssText = 'flex:1;min-width:0;';
       const labelEl = document.createElement('div');
       labelEl.style.cssText = 'font-size:11px;font-weight:600;color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-      labelEl.textContent = rule.label || `Règle ${rule.id.slice(-4)}`;
+      labelEl.textContent = rule.label || `${t('ruleDefaultLabel')} ${rule.id.slice(-4)}`;
 
       const triggerSummary = document.createElement('div');
       triggerSummary.style.cssText = 'font-size:9px;color:rgba(255,255,255,0.35);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px;';
-      const t = rule.trigger;
-      triggerSummary.textContent = t.type === 'entity_state'
-        ? `${t.entity_id}${t.to ? ` → ${t.to}` : ''}`
-        : t.type;
+      const trig = rule.trigger;
+      triggerSummary.textContent = trig.type === 'entity_state'
+        ? `${trig.entity_id}${trig.to ? ` → ${trig.to}` : ''}`
+        : trig.type;
 
       info.appendChild(labelEl);
       info.appendChild(triggerSummary);
@@ -1614,7 +2133,7 @@ export class EditPanel {
       // Enable toggle
       const toggle = document.createElement('label');
       toggle.style.cssText = 'display:flex;align-items:center;cursor:pointer;flex-shrink:0;';
-      toggle.title = enabled ? 'Désactiver' : 'Activer';
+      toggle.title = enabled ? t('ruleToggleDisable') : t('ruleToggleEnable');
       const chk = document.createElement('input');
       chk.type = 'checkbox';
       chk.checked = enabled;
@@ -1633,7 +2152,7 @@ export class EditPanel {
       const editBtn = document.createElement('button');
       editBtn.style.cssText = 'background:none;border:none;color:rgba(125,211,252,0.6);cursor:pointer;font-size:13px;padding:2px 4px;flex-shrink:0;';
       editBtn.textContent = '✎';
-      editBtn.title = 'Modifier';
+      editBtn.title = t('ruleEditTitle');
       editBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         this._openRuleModal(rule, () => this._fillRulesList(pane));
@@ -1643,9 +2162,10 @@ export class EditPanel {
       const delBtn = document.createElement('button');
       delBtn.style.cssText = 'background:none;border:none;color:rgba(248,113,113,0.5);cursor:pointer;font-size:13px;padding:2px 4px;flex-shrink:0;';
       delBtn.textContent = '×';
-      delBtn.title = 'Supprimer';
+      delBtn.title = t('ruleDeleteTitle');
       delBtn.addEventListener('click', (e) => {
         e.stopPropagation();
+        this._pushRuleSnap();
         const newRules = (this.getRules?.() ?? []).filter((r) => r.id !== rule.id);
         this.saveRules?.(newRules).then(() => this._fillRulesList(pane));
       });
@@ -1701,10 +2221,10 @@ export class EditPanel {
     hdrEl.style.cssText = 'display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.08);flex-shrink:0;gap:8px;';
     const hdrTitle = document.createElement('span');
     hdrTitle.style.cssText = 'font-size:12px;font-weight:700;color:#7dd3fc;text-transform:uppercase;letter-spacing:.08em;flex:1;';
-    hdrTitle.textContent = existing ? 'Modifier la règle' : 'Nouvelle règle';
+    hdrTitle.textContent = existing ? t('ruleModalEdit') : t('ruleModalNew');
     const closeBtn = document.createElement('button');
     closeBtn.style.cssText = 'background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#e2e8f0;padding:5px 12px;font-size:11px;font-family:inherit;cursor:pointer;';
-    closeBtn.textContent = 'Fermer';
+    closeBtn.textContent = t('ruleModalClose');
     closeBtn.addEventListener('click', () => { dialog.close(); dialog.remove(); });
     hdrEl.appendChild(hdrTitle);
     hdrEl.appendChild(closeBtn);
@@ -1746,21 +2266,21 @@ export class EditPanel {
     };
 
     // ── Label ────────────────────────────────────────────────────────────────
-    bodyEl.appendChild(secHdr('Général'));
+    bodyEl.appendChild(secHdr(t('ruleModalGeneral')));
     const labelWrap = mk('div') as HTMLDivElement; labelWrap.style.cssText = fieldStyle;
-    labelWrap.appendChild(mkLbl('Nom de la règle'));
-    const labelInp = mkInp(draft.label ?? '', 'Ex: Porte ouverte → Vue entrée');
+    labelWrap.appendChild(mkLbl(t('ruleModalName')));
+    const labelInp = mkInp(draft.label ?? '', t('ruleNameExPh'));
     labelInp.addEventListener('input', () => { draft.label = labelInp.value; });
     labelWrap.appendChild(labelInp);
     bodyEl.appendChild(labelWrap);
 
     // ── Trigger ──────────────────────────────────────────────────────────────
-    bodyEl.appendChild(secHdr('Déclencheur'));
+    bodyEl.appendChild(secHdr(t('ruleModalTrigger')));
 
     const trig = draft.trigger.type === 'entity_state' ? draft.trigger : { type: 'entity_state' as const, entity_id: '', to: '' };
 
     const trigEntityWrap = mk('div') as HTMLDivElement; trigEntityWrap.style.cssText = fieldStyle;
-    trigEntityWrap.appendChild(mkLbl('Entité'));
+    trigEntityWrap.appendChild(mkLbl(t('ruleModalEntity')));
     const { wrap: tew, input: trigEntityInp } = mkEntityInput(trig.entity_id, 'trig-entity');
     trigEntityInp.addEventListener('input', () => { (draft.trigger as typeof trig).entity_id = trigEntityInp.value.trim(); });
     trigEntityWrap.appendChild(tew);
@@ -1770,7 +2290,7 @@ export class EditPanel {
     trigRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;';
 
     const trigFromWrap = mk('div') as HTMLDivElement;
-    trigFromWrap.appendChild(mkLbl('De (optionnel)'));
+    trigFromWrap.appendChild(mkLbl(t('ruleModalFrom')));
     const trigFromInp = mkInp(trig.from ?? '', 'ex: off');
     trigFromInp.addEventListener('input', () => {
       const v = trigFromInp.value.trim();
@@ -1779,7 +2299,7 @@ export class EditPanel {
     trigFromWrap.appendChild(trigFromInp);
 
     const trigToWrap = mk('div') as HTMLDivElement;
-    trigToWrap.appendChild(mkLbl('Vers'));
+    trigToWrap.appendChild(mkLbl(t('ruleModalTo')));
     const trigToInp = mkInp(trig.to ?? '', 'ex: on');
     trigToInp.addEventListener('input', () => {
       const v = trigToInp.value.trim();
@@ -1792,7 +2312,7 @@ export class EditPanel {
     bodyEl.appendChild(trigRow);
 
     // ── Actions ──────────────────────────────────────────────────────────────
-    bodyEl.appendChild(secHdr('Actions'));
+    bodyEl.appendChild(secHdr(t('ruleModalActions')));
 
     const actionsWrap = mk('div') as HTMLDivElement;
     bodyEl.appendChild(actionsWrap);
@@ -1809,10 +2329,10 @@ export class EditPanel {
         const typeSel = mk('select') as HTMLSelectElement;
         typeSel.style.cssText = inputStyle + 'flex:1;';
         [
-          ['go_to_view',   '📷 Aller à la vue'],
-          ['show_card',    '👁 Afficher carte'],
-          ['hide_card',    '🙈 Masquer carte'],
-          ['call_service', '⚙ Appeler service'],
+          ['go_to_view',   t('ruleActionGoToView')],
+          ['show_card',    t('ruleActionShowCard')],
+          ['hide_card',    t('ruleActionHideCard')],
+          ['call_service', t('ruleActionCallService')],
         ].forEach(([v, l]) => {
           const opt = mk('option') as HTMLOptionElement; opt.value = v; opt.textContent = l; typeSel.appendChild(opt);
         });
@@ -1839,7 +2359,7 @@ export class EditPanel {
         if (action.type === 'go_to_view') {
           const sel = mk('select') as HTMLSelectElement;
           sel.style.cssText = inputStyle;
-          const emptyOpt = mk('option') as HTMLOptionElement; emptyOpt.value = ''; emptyOpt.textContent = '-- Choisir une vue --'; sel.appendChild(emptyOpt);
+          const emptyOpt = mk('option') as HTMLOptionElement; emptyOpt.value = ''; emptyOpt.textContent = t('rulePickView'); sel.appendChild(emptyOpt);
           views.forEach((v) => {
             const opt = mk('option') as HTMLOptionElement; opt.value = v.id ?? ''; opt.textContent = v.label; sel.appendChild(opt);
           });
@@ -1849,7 +2369,7 @@ export class EditPanel {
         } else if (action.type === 'show_card' || action.type === 'hide_card') {
           const sel = mk('select') as HTMLSelectElement;
           sel.style.cssText = inputStyle;
-          const emptyOpt = mk('option') as HTMLOptionElement; emptyOpt.value = ''; emptyOpt.textContent = '-- Choisir une carte --'; sel.appendChild(emptyOpt);
+          const emptyOpt = mk('option') as HTMLOptionElement; emptyOpt.value = ''; emptyOpt.textContent = t('rulePickCard'); sel.appendChild(emptyOpt);
           cards.forEach((c) => {
             const opt = mk('option') as HTMLOptionElement; opt.value = c.id; opt.textContent = c.name || c.id; sel.appendChild(opt);
           });
@@ -1873,7 +2393,7 @@ export class EditPanel {
 
       // Add action button
       const addABtn = mk('button') as HTMLButtonElement;
-      addABtn.textContent = '+ Ajouter une action';
+      addABtn.textContent = t('ruleAddAction');
       addABtn.style.cssText = 'background:rgba(255,255,255,0.04);border:1px dashed rgba(255,255,255,0.15);border-radius:6px;color:#64748b;padding:6px 10px;font-size:10px;font-family:inherit;cursor:pointer;width:100%;margin-top:2px;';
       addABtn.addEventListener('click', () => {
         draft.actions.push({ type: 'go_to_view', view_id: '' });
@@ -1888,12 +2408,12 @@ export class EditPanel {
     footer.style.cssText = 'display:flex;gap:8px;padding:12px 16px;border-top:1px solid rgba(255,255,255,0.08);flex-shrink:0;';
 
     const cancelBtn = mk('button') as HTMLButtonElement;
-    cancelBtn.textContent = 'Annuler';
+    cancelBtn.textContent = t('ruleModalCancel');
     cancelBtn.style.cssText = 'flex:1;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#94a3b8;padding:8px;font-size:11px;font-family:inherit;cursor:pointer;';
     cancelBtn.addEventListener('click', () => { dialog.close(); dialog.remove(); });
 
     const saveBtn = mk('button') as HTMLButtonElement;
-    saveBtn.textContent = 'Enregistrer';
+    saveBtn.textContent = t('ruleModalSave');
     saveBtn.style.cssText = 'flex:2;background:rgba(59,130,246,0.85);border:none;border-radius:8px;color:#fff;padding:8px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;';
     saveBtn.addEventListener('click', async () => {
       if (!draft.trigger.entity_id?.trim()) {
@@ -1909,6 +2429,7 @@ export class EditPanel {
       const current = this.getRules?.() ?? [];
       const isNew = !current.find((r) => r.id === draft.id);
       const newRules = isNew ? [...current, draft] : current.map((r) => r.id === draft.id ? draft : r);
+      this._pushRuleSnap();
       await this.saveRules?.(newRules);
       dialog.close();
       dialog.remove();

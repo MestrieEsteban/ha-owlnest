@@ -32,6 +32,7 @@ export interface CameraView {
   label: string;
   position: [number, number, number];
   target: [number, number, number];    // Always required (defaults [0,0,0] on old data)
+  hidden?: boolean;                    // When true: available for rules/fly-to but hidden from HUD
 }
 
 /** Anchor config stored in YAML (legacy) or derived from an OwlnestScene */
@@ -44,6 +45,8 @@ export interface AnchorConfig {
   lightIntensity?: number;
   lightDirection?: [number, number, number];
   visibleIf?: import('./rules/types').EntityCondition;
+  precision?: number;   // decimal places for sensor display (e.g. 0 → "18", 1 → "17.6")
+  icon?: string;        // override icon, e.g. "mdi:thermometer"
 }
 
 // ── Owlnest scene (backend-persisted) ─────────────────────────────────────
@@ -60,17 +63,43 @@ export interface OwlnestAnchor {
   lightIntensity?: number;
   lightDirection?: [number, number, number];
   visibleIf?: import('./rules/types').EntityCondition; // show/hide overlay based on entity state
+  precision?: number;
+  icon?: string;
+}
+
+/** Scene-level settings stored in the backend (configured from edit mode, not YAML). */
+export interface SceneSettings {
+  sun_entity?: string;
+  weather_entity?: string;
+  language?: 'en' | 'fr';
+  cluster_threshold?: number;
+  orbit?: {
+    min_distance?: number;
+    max_distance?: number;
+    max_polar_angle?: number;
+  };
+  rendering?: {
+    exposure?: number;
+    fog_density?: number;
+    ground_color?: string;
+    shadows?: boolean;
+    transparent_background?: boolean;
+    sky?: boolean;
+    sun_intensity?: number;
+    ambient_intensity?: number;
+  };
 }
 
 /** A full Owlnest scene, persisted by the backend integration. */
 export interface OwlnestScene {
   version: number;
   scene_id: string;
-  model_url: string;
+  model_url?: string;
   anchors: OwlnestAnchor[];
   camera_views: CameraView[];
   cards: import('./cards/types').SceneCard[];
   rules: import('./rules/types').OwlnestRule[];
+  settings?: SceneSettings;
 }
 
 // ── Lovelace card config ───────────────────────────────────────────────────
@@ -142,6 +171,8 @@ export interface AnchorEntry {
   lightIntensity?: number;
   lightDirection?: [number, number, number];
   visibleIf?: import('./rules/types').EntityCondition;
+  precision?: number;
+  icon?: string;
 }
 
 export interface SavedView {
@@ -160,4 +191,6 @@ export interface EditableAnchor {
   lightIntensity?: number;
   lightDirection?: [number, number, number];
   visibleIf?: import('./rules/types').EntityCondition;
+  precision?: number;
+  icon?: string;
 }

@@ -86,7 +86,22 @@ export class EnvironmentController {
     const isNight = elevation < -2;
 
     this.hemiLight.intensity = isNight ? 0.45 : THREE.MathUtils.lerp(0.15, 0.7, t);
-    this.hemiLight.color.setHex(isNight ? 0x3a5080 : (t < 0.5 ? 0xee8833 : 0xfff4e0));
+
+    // Smooth 3-stop interpolation: night blue → soft peach (golden hour) → warm white (day)
+    // Avoids the harsh saturated orange of the old palette.
+    if (isNight) {
+      this.hemiLight.color.setHex(0x3a5080);
+    } else {
+      const goldenHour = new THREE.Color(0xffc896); // soft peach-amber, desaturated
+      const dayWhite   = new THREE.Color(0xfff4e0); // warm white
+      if (t < 0.5) {
+        this.hemiLight.color.setHex(0x3a5080);
+        this.hemiLight.color.lerp(goldenHour, t * 2);
+      } else {
+        this.hemiLight.color.copy(goldenHour).lerp(dayWhite, (t - 0.5) * 2);
+      }
+    }
+
     this.hemiLight.groundColor.setHex(isNight ? 0x0d1a2e : (t > 0.5 ? 0x1a1a2e : 0x0d1020));
 
     this.sunLight.intensity = Math.max(0, elevation / 60) * 0.9;
@@ -554,14 +569,18 @@ export class EnvironmentController {
     } else {
       this.sky.visible = true;
       this.scene.background = null;
-      const fogHex = elevation > 20 ? 0x9fc8e8 : 0xd4845a;
+      // Fog: sky blue during day, muted warm grey at golden hour (not orange)
+      const fogHex = elevation > 20 ? 0x9fc8e8 : 0xb8a898;
       if (this.scene.fog) (this.scene.fog as THREE.FogExp2).color.setHex(fogHex);
     }
   }
 
   // ── Ground ────────────────────────────────────────────────────────────────
 
+  private _groundMesh: THREE.Mesh | null = null;
+
   addGround(originalBox: THREE.Box3, config: CardConfig) {
+    this.removeGround();
     const size = originalBox.getSize(new THREE.Vector3());
     const spread = Math.max(size.x, size.z) * 6;
     const groundY = -size.y / 2 - 0.01;
@@ -575,7 +594,26 @@ export class EnvironmentController {
     mesh.position.y = groundY;
     mesh.receiveShadow = true;
     this.scene.add(mesh);
+    this._groundMesh = mesh;
   }
+
+  updateGroundColor(hexColor: string | undefined) {
+    if (!this._groundMesh) return;
+    const hex = hexColor ? parseInt(hexColor.replace('#', ''), 16) : 0x4a6741;
+    (this._groundMesh.material as THREE.MeshStandardMaterial).color.setHex(hex);
+    (this._groundMesh.material as THREE.MeshStandardMaterial).needsUpdate = true;
+  }
+
+  removeGround() {
+    if (this._groundMesh) {
+      this.scene.remove(this._groundMesh);
+      this._groundMesh.geometry.dispose();
+      (this._groundMesh.material as THREE.Material).dispose();
+      this._groundMesh = null;
+    }
+  }
+
+  get hasGround() { return this._groundMesh !== null; }
 
   // ── Cleanup ───────────────────────────────────────────────────────────────
 

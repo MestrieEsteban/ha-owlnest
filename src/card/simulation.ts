@@ -2,6 +2,7 @@ import { syncLights } from '../lights';
 import type { Hass, AnchorEntry, CardConfig } from '../types';
 import { EnvironmentController } from './environment';
 import type { WeatherEffect } from './environment';
+import { t } from '../i18n';
 
 export class SimulationPanel {
   private _simActive = false;
@@ -10,8 +11,8 @@ export class SimulationPanel {
   private _simOpen = false;
 
   constructor(
-    private simExpand: HTMLDivElement,
-    private simBtn: HTMLButtonElement,
+    private simExpand: HTMLDivElement | null,
+    private simBtn: HTMLButtonElement | null,
     private env: EnvironmentController,
     private requestRender: () => void,
     private getHass: () => Hass | null,
@@ -24,6 +25,7 @@ export class SimulationPanel {
   get isActive() { return this._simActive; }
 
   toggle() {
+    if (!this.simExpand) return;
     this._simOpen = !this._simOpen;
     if (this._simOpen) {
       this.simExpand.style.maxHeight = '200px';
@@ -38,12 +40,11 @@ export class SimulationPanel {
   }
 
   private _syncSimBtn() {
+    if (!this.simBtn) return;
     if (this._simOpen) {
-      // Panel ouvert — ring orange vif
       this.simBtn.style.boxShadow = '0 0 0 2px rgba(245,158,11,0.85)';
       this.simBtn.style.background = 'rgba(245,158,11,0.22)';
     } else if (this._simActive) {
-      // Panel fermé mais simulation active — ring orange discret + dot
       this.simBtn.style.boxShadow = '0 0 0 2px rgba(245,158,11,0.5)';
       this.simBtn.style.background = 'rgba(245,158,11,0.12)';
     } else {
@@ -52,9 +53,10 @@ export class SimulationPanel {
     }
   }
 
+  /** Build simulation UI into the HUD pop-up (with glassmorphism shell). */
   buildContent() {
+    if (!this.simExpand) return;
     this.simExpand.innerHTML = '';
-
     const inner = document.createElement('div');
     inner.style.cssText = [
       'background:rgba(8,12,24,0.82)',
@@ -67,6 +69,16 @@ export class SimulationPanel {
       'user-select:none',
     ].join(';');
     this.simExpand.appendChild(inner);
+    this._buildInner(inner);
+  }
+
+  /** Build simulation UI directly into an arbitrary container (no shell). */
+  buildContentInto(container: HTMLElement) {
+    container.innerHTML = '';
+    this._buildInner(container);
+  }
+
+  private _buildInner(inner: HTMLElement) {
 
     const fmt = (h: number) =>
       `${String(Math.floor(h)).padStart(2,'0')}:${String(Math.round((h%1)*60)).padStart(2,'0')}`;
@@ -80,7 +92,7 @@ export class SimulationPanel {
     const timeValue = document.createElement('span');
     timeValue.style.cssText = 'color:#fff;font-weight:600;';
     timeValue.textContent = fmt(this._simHour);
-    timeLabel.appendChild(document.createTextNode('Heure\u00a0: '));
+    timeLabel.appendChild(document.createTextNode(`${t('cfgSimHour')}\u00a0: `));
     timeLabel.appendChild(timeValue);
     row1.appendChild(timeLabel);
 
@@ -91,7 +103,7 @@ export class SimulationPanel {
     activeCheck.checked = this._simActive;
     activeCheck.style.cursor = 'pointer';
     activeToggle.appendChild(activeCheck);
-    activeToggle.appendChild(document.createTextNode('Actif'));
+    activeToggle.appendChild(document.createTextNode(t('cfgSimActive')));
     row1.appendChild(activeToggle);
     inner.appendChild(row1);
 

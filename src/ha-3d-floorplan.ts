@@ -9,7 +9,8 @@ import { loadGLTF, detectAnchors, buildAnchorsFromEditable, rebuildAnchorLight, 
 import { AnchorOverlay, SensorOverlay, ClusterOverlay } from './overlay';
 import type { ClusterItem } from './overlay';
 import { AnchorEditor } from './editor';
-import { loadScene, saveScene, sceneToEffectiveConfig, buildSceneFromEditor, normalizeViews } from './scene';
+import { loadScene, saveScene, listScenes, sceneToEffectiveConfig, buildSceneFromEditor, normalizeViews } from './scene';
+import { setLang } from './i18n';
 import './card-editor';
 import { EnvironmentController } from './card/environment';
 import { SimulationPanel } from './card/simulation';
@@ -22,6 +23,14 @@ import { evalCondition, triggerFired, conditionsMet } from './rules/engine';
 import type { OwlnestRule, Action } from './rules/types';
 
 type AnyOverlay = AnchorOverlay | SensorOverlay;
+
+/** Format a sensor state string respecting optional decimal precision. */
+function _formatSensorValue(raw: string, precision?: number): string {
+  if (precision === undefined) return raw;
+  const num = parseFloat(raw);
+  if (isNaN(num)) return raw;
+  return num.toFixed(precision);
+}
 
 class Ha3dFloorplan extends HTMLElement {
   private _config: CardConfig | null = null;
@@ -38,12 +47,12 @@ class Ha3dFloorplan extends HTMLElement {
   private canvas: HTMLCanvasElement | null = null;
   private lockBtn: HTMLButtonElement | null = null;
   private editBtn: HTMLButtonElement | null = null;
-  private captureBtn: HTMLButtonElement | null = null;
   private _hud: HTMLDivElement | null = null;
+  private _hudBar: HTMLDivElement | null = null;
   private _hudLeft: HTMLDivElement | null = null;
   private _hudSep: HTMLDivElement | null = null;
   private _hudRight: HTMLDivElement | null = null;
-  private _simExpand: HTMLDivElement | null = null;
+  private _hudViews: HTMLDivElement | null = null;
   private _lockOpenIcon = '🔓';
   private _lockClosedIcon = '🔒';
   private overlayContainer: HTMLDivElement | null = null;
@@ -82,8 +91,6 @@ class Ha3dFloorplan extends HTMLElement {
 
   private _modelBox = new THREE.Box3();
 
-  // Day simulation button
-  private _simBtn: HTMLButtonElement | null = null;
 
   // Anchor editor
   private _editor: AnchorEditor | null = null;
@@ -135,6 +142,10 @@ class Ha3dFloorplan extends HTMLElement {
     } catch { return null; }
   }
 
+  private _getActiveSceneId(): string | undefined {
+    return localStorage.getItem('owlnest_scene_id') ?? this._config?.scene_id ?? undefined;
+  }
+
   private _saveView() {
     if (!this.camera || !this.controls) return;
     const view: SavedView = {
@@ -148,8 +159,6 @@ class Ha3dFloorplan extends HTMLElement {
   // ── HA lifecycle ──────────────────────────────────────────────────────
 
   setConfig(config: CardConfig) {
-    if (!config.model_url && !config.scene_id)
-      throw new Error('ha-3d-floorplan: model_url or scene_id is required');
     const sceneChanged = config.scene_id !== this._config?.scene_id;
     this._config = config;
     if (sceneChanged) {
@@ -165,9 +174,10 @@ class Ha3dFloorplan extends HTMLElement {
 
     // If scene_id is configured and scene hasn't been fetched yet, do it now.
     // _loadModel() is deferred until scene data is available.
-    if (this._config?.scene_id && !this._scene && !this._sceneLoading) {
+    const activeSceneId = this._getActiveSceneId();
+    if (activeSceneId && !this._scene && !this._sceneLoading) {
       this._sceneLoading = true;
-      this._fetchAndLoadScene(this._config.scene_id);
+      this._fetchAndLoadScene(activeSceneId);
       return;
     }
 
@@ -207,6 +217,7 @@ class Ha3dFloorplan extends HTMLElement {
       .then((scene) => {
         this._scene = scene;
         this._sceneLoading = false;
+        if (scene.settings?.language) setLang(scene.settings.language);
         this._loadModel();
       })
       .catch((err) => {
@@ -218,19 +229,22 @@ class Ha3dFloorplan extends HTMLElement {
   }
 
   async _saveScene() {
-    if (!this._config?.scene_id || !this._hass || !this._editor) return;
+    const sceneId = this._getActiveSceneId();
+    if (!sceneId || !this._hass || !this._editor) return;
     if (this._savePending) return;  // don't pile up concurrent saves
 
     const sceneData = buildSceneFromEditor(
-      this._config.scene_id,
+      sceneId,
       this._editor.anchors as Map<string, EditableAnchor>,
       this._scene,
-      this._config,
+      this._config!,
     );
+    // Preserve scene settings (env, rendering, language configured from Config tab)
+    sceneData.settings = this._scene?.settings;
 
     this._savePending = true;
     try {
-      await saveScene(this._hass, this._config.scene_id, sceneData);
+      await saveScene(this._hass, sceneId, sceneData);
       this._scene = sceneData;
       this._showToast('✓ Scène sauvegardée');
     } catch (err) {
@@ -304,66 +318,65 @@ class Ha3dFloorplan extends HTMLElement {
     this._lockOpenIcon  = uiIcons.lock_open   ?? '🔓';
     this._lockClosedIcon = uiIcons.lock_closed ?? '🔒';
 
-    // Wrapper column: [simExpand] then [bar], both stretch to same width
+    // Hud: bottom-right corner, holds lock + pencil in normal mode.
+    // In edit mode, repositioned to center and bar glassmorphism is restored.
     const hud = document.createElement('div');
     hud.style.cssText = [
-      'position:absolute', 'bottom:12px', 'left:50%',
-      'transform:translateX(-50%)',
+      'position:absolute', 'bottom:12px', 'right:12px',
       'z-index:10',
-      'display:flex', 'flex-direction:column', 'align-items:stretch', 'gap:6px',
+      'display:flex', 'flex-direction:column', 'align-items:flex-end', 'gap:6px',
       'opacity:0', 'transition:opacity .25s ease',
       'pointer-events:none',
-      'max-width:calc(100% - 24px)',
     ].join(';');
     this._hud = hud;
     card.appendChild(hud);
 
-    // Sim expand (slides up above bar)
-    const simExpand = document.createElement('div');
-    simExpand.style.cssText = [
-      'overflow:hidden', 'max-height:0', 'opacity:0',
-      'transition:max-height .3s ease, opacity .2s ease',
-      'pointer-events:none',
-    ].join(';');
-    this._simExpand = simExpand;
-    hud.appendChild(simExpand);
-
-    // Main glass pill bar
+    // Bar — invisible in normal mode, glassmorphism restored in edit mode
     const bar = document.createElement('div');
     bar.style.cssText = [
       'display:flex', 'align-items:center',
-      'background:rgba(8,12,24,0.72)',
-      'backdrop-filter:blur(12px)', '-webkit-backdrop-filter:blur(12px)',
-      'border:1px solid rgba(255,255,255,0.1)',
       'border-radius:20px',
       'padding:5px 8px', 'gap:2px',
       'pointer-events:auto',
       'white-space:nowrap',
     ].join(';');
+    this._hudBar = bar;
     hud.appendChild(bar);
 
-    // Left: camera views (populated after model loads)
+    // Camera views pill — separate bottom-center element (normal mode only)
+    const hudViews = document.createElement('div');
+    hudViews.style.cssText = [
+      'position:absolute', 'bottom:12px', 'left:50%', 'transform:translateX(-50%)',
+      'z-index:10', 'display:none',
+      'align-items:center', 'gap:2px',
+      'background:rgba(8,12,24,0.72)',
+      'backdrop-filter:blur(12px)', '-webkit-backdrop-filter:blur(12px)',
+      'border:1px solid rgba(255,255,255,0.1)',
+      'border-radius:20px', 'padding:5px 8px',
+      'pointer-events:auto',
+      'opacity:0', 'transition:opacity .25s ease',
+    ].join(';');
+    this._hudViews = hudViews;
+    card.appendChild(hudViews);
+
+    // Left: camera views (only used in edit mode toolbar)
     const hudLeft = document.createElement('div');
     hudLeft.style.cssText = 'display:flex;align-items:center;gap:2px;';
     this._hudLeft = hudLeft;
     bar.appendChild(hudLeft);
 
-    // Separator (hidden until views are present)
+    // Separator (kept for edit-mode compat, hidden in normal mode)
     const sep = document.createElement('div');
     sep.style.cssText = 'width:1px;height:18px;background:rgba(255,255,255,0.15);margin:0 4px;flex-shrink:0;display:none;';
     this._hudSep = sep;
     bar.appendChild(sep);
 
-    // Right: action buttons
+    // Right: lock + pencil only
     const hudRight = document.createElement('div');
-    hudRight.style.cssText = 'display:flex;align-items:center;gap:2px;flex-shrink:0;';
+    hudRight.style.cssText = 'display:flex;align-items:center;gap:4px;flex-shrink:0;';
     this._hudRight = hudRight;
     bar.appendChild(hudRight);
 
-    if (ui.show_simulation !== false) {
-      this._simBtn = this._makeSimBtn(uiIcons.simulation ?? '☀️');
-      hudRight.appendChild(this._simBtn);
-    }
     if (ui.show_lock !== false) {
       this.lockBtn = this._makeLockBtn();
       hudRight.appendChild(this.lockBtn);
@@ -371,10 +384,6 @@ class Ha3dFloorplan extends HTMLElement {
     if (ui.show_editor !== false) {
       this.editBtn = this._makeEditBtn(uiIcons.editor ?? '✏️');
       hudRight.appendChild(this.editBtn);
-    }
-    if (ui.show_capture !== false) {
-      this.captureBtn = this._makeCaptureBtn(uiIcons.capture ?? '📷');
-      hudRight.appendChild(this.captureBtn);
     }
 
     // Hover (desktop) — show/hide HUD
@@ -408,6 +417,7 @@ class Ha3dFloorplan extends HTMLElement {
             if (axis) {
               const card = this._cardRenderer?.getCard(this._selectedCardId)!;
               const cardPos = new THREE.Vector3(...card.position);
+              this._editPanel?.pushCardSnapshot();
               this._gizmoDragAxis = axis;
               this._gizmoDragCardStartPos.copy(cardPos);
 
@@ -447,6 +457,7 @@ class Ha3dFloorplan extends HTMLElement {
             this._panelGizmo?.setVisible(true);
             this._panelGizmo?.updateScale(this.camera!);
 
+            this._editPanel?.pushCardSnapshot();
             this._cardGrabMode = true;
             this._cardGrabOrigin = [...card.position] as [number, number, number];
             const camFwd = new THREE.Vector3();
@@ -573,9 +584,19 @@ class Ha3dFloorplan extends HTMLElement {
           const objects: THREE.Object3D[] = [];
           this.scene!.traverse((o) => { if ((o as THREE.Mesh).isMesh && !o.userData.cardId) objects.push(o); });
           const hits = raycaster.intersectObjects(objects, false);
-          const pos: [number, number, number] = hits.length
-            ? [+hits[0].point.x.toFixed(3), +(hits[0].point.y + 0.5).toFixed(3), +hits[0].point.z.toFixed(3)]
-            : [0, 1, 0];
+          if (hits.length === 0) {
+            // Click outside model — cancel placement
+            this._cardPlacementMode = false;
+            this._cardPlacementType = null;
+            this._editPanel?.hideStatusBar();
+            if (this.canvas) this.canvas.style.cursor = '';
+            return;
+          }
+          const pos: [number, number, number] = [
+            +hits[0].point.x.toFixed(3),
+            +(hits[0].point.y + 0.5).toFixed(3),
+            +hits[0].point.z.toFixed(3),
+          ];
           this._placeNewCard(this._cardPlacementType, pos);
           return;
         }
@@ -634,9 +655,90 @@ class Ha3dFloorplan extends HTMLElement {
 
     // If scene_id is set, defer model loading until hass is available.
     // The hass setter will call _fetchAndLoadScene → _loadModel.
-    if (!this._config?.scene_id || this._scene) {
+    if (!this._getActiveSceneId() && !this._config?.model_url) {
+      this._showSetupOverlay();
+    } else if (!this._getActiveSceneId() || this._scene) {
       this._loadModel();
     }
+  }
+
+  private _showSetupOverlay() {
+    const card = this.querySelector('ha-card') as HTMLElement;
+    if (!card) return;
+
+    const overlay = document.createElement('div');
+    overlay.id = 'owlnest-setup-overlay';
+    overlay.style.cssText = [
+      'position:absolute', 'inset:0',
+      'display:flex', 'flex-direction:column', 'align-items:center', 'justify-content:center',
+      'background:rgba(6,10,20,0.92)',
+      'backdrop-filter:blur(12px)', '-webkit-backdrop-filter:blur(12px)',
+      'z-index:50', 'padding:24px', 'box-sizing:border-box',
+      'font-family:var(--primary-font-family,sans-serif)',
+    ].join(';');
+
+    const title = document.createElement('div');
+    title.style.cssText = 'font-size:16px;font-weight:700;color:#7dd3fc;letter-spacing:.06em;margin-bottom:6px;';
+    title.textContent = 'Owlnest';
+
+    const subtitle = document.createElement('div');
+    subtitle.style.cssText = 'font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:24px;letter-spacing:.04em;';
+    subtitle.textContent = '3D Floorplan';
+
+    const label = document.createElement('div');
+    label.style.cssText = 'font-size:10px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;align-self:flex-start;max-width:280px;width:100%;';
+    label.textContent = 'Scene ID';
+
+    const inputRow = document.createElement('div');
+    inputRow.style.cssText = 'display:flex;gap:6px;width:100%;max-width:280px;margin-bottom:16px;';
+
+    const input = document.createElement('input');
+    input.placeholder = 'my_home';
+    input.style.cssText = [
+      'flex:1', 'background:rgba(255,255,255,0.05)', 'border:1px solid rgba(255,255,255,0.1)',
+      'border-radius:8px', 'color:#e2e8f0', 'padding:8px 10px',
+      'font-size:12px', 'outline:none', 'font-family:inherit',
+    ].join(';');
+    input.setAttribute('list', 'owlnest-scenes-dl');
+
+    const dl = document.createElement('datalist');
+    dl.id = 'owlnest-scenes-dl';
+    if (this._hass) {
+      listScenes(this._hass).then((ids) => ids.forEach((id) => {
+        const opt = document.createElement('option'); opt.value = id; dl.appendChild(opt);
+      })).catch(() => {});
+    }
+
+    const loadBtn = document.createElement('button');
+    loadBtn.textContent = 'Load';
+    loadBtn.style.cssText = [
+      'background:rgba(125,209,252,0.15)', 'border:1px solid rgba(125,209,252,0.3)',
+      'border-radius:8px', 'color:#7dd3fc', 'padding:8px 14px',
+      'font-size:12px', 'font-family:inherit', 'cursor:pointer', 'white-space:nowrap',
+    ].join(';');
+    loadBtn.addEventListener('click', () => {
+      const id = input.value.trim();
+      if (!id) return;
+      localStorage.setItem('owlnest_scene_id', id);
+      overlay.remove();
+      this._bootstrap();
+    });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') loadBtn.click(); });
+
+    inputRow.appendChild(input);
+    inputRow.appendChild(dl);
+    inputRow.appendChild(loadBtn);
+
+    const hint = document.createElement('div');
+    hint.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.25);max-width:280px;width:100%;line-height:1.6;';
+    hint.innerHTML = 'Also add to your Lovelace YAML:<br><code style="background:rgba(255,255,255,0.07);border-radius:4px;padding:2px 6px;color:#93c5fd;">model_url: /local/model.glb</code>';
+
+    overlay.appendChild(title);
+    overlay.appendChild(subtitle);
+    overlay.appendChild(label);
+    overlay.appendChild(inputRow);
+    overlay.appendChild(hint);
+    this.overlayContainer?.appendChild(overlay);
   }
 
   private _makeLockBtn(): HTMLButtonElement {
@@ -657,34 +759,17 @@ class Ha3dFloorplan extends HTMLElement {
     return btn;
   }
 
-  private _makeCaptureBtn(icon: string): HTMLButtonElement {
-    const btn = document.createElement('button');
-    btn.style.cssText = this._hudBtnStyle();
-    btn.textContent = icon;
-    btn.title = 'Vues sauvegardées';
-    btn.addEventListener('click', (e) => { e.stopPropagation(); this._viewMgr?.toggle(); });
-    return btn;
-  }
-
-  private _makeSimBtn(icon: string): HTMLButtonElement {
-    const btn = document.createElement('button');
-    btn.style.cssText = this._hudBtnStyle();
-    btn.textContent = icon;
-    btn.title = 'Simuler la journée / météo';
-    btn.addEventListener('click', (e) => { e.stopPropagation(); this._sim?.toggle(); });
-    return btn;
-  }
-
   private _hudBtnStyle(): string {
     return [
       'display:inline-flex', 'align-items:center', 'justify-content:center',
-      'width:30px', 'height:30px',
-      'border:none', 'border-radius:50%',
-      'background:rgba(255,255,255,0.07)',
-      'color:#fff', 'cursor:pointer',
+      'width:32px', 'height:32px',
+      'border:1px solid rgba(255,255,255,0.1)', 'border-radius:50%',
+      'background:rgba(8,12,24,0.70)',
+      'backdrop-filter:blur(10px)', '-webkit-backdrop-filter:blur(10px)',
+      'color:rgba(255,255,255,0.7)', 'cursor:pointer',
       'font-size:15px', 'line-height:1',
       'flex-shrink:0',
-      'transition:background .15s, box-shadow .15s',
+      'transition:background .15s, box-shadow .15s, border-color .15s',
     ].join(';');
   }
 
@@ -694,6 +779,7 @@ class Ha3dFloorplan extends HTMLElement {
     if (!this._hud) return;
     this._hud.style.opacity = '1';
     this._hud.style.pointerEvents = 'auto';
+    if (this._hudViews) { this._hudViews.style.opacity = '1'; this._hudViews.style.pointerEvents = 'auto'; }
   }
 
   private _hideControls() {
@@ -702,6 +788,7 @@ class Ha3dFloorplan extends HTMLElement {
     if (!this._hud) return;
     this._hud.style.opacity = '0';
     this._hud.style.pointerEvents = 'none';
+    if (this._hudViews) { this._hudViews.style.opacity = '0'; this._hudViews.style.pointerEvents = 'none'; }
   }
 
   private _showControlsTemporarily() {
@@ -776,6 +863,27 @@ class Ha3dFloorplan extends HTMLElement {
       this.editBtn.style.boxShadow = '0 0 0 2px rgba(59,130,246,0.9)';
       this.editBtn.title = 'Quitter le mode édition';
     }
+    // Reposition HUD to center + restore bar glassmorphism for edit toolbar
+    if (this._hud) {
+      this._hud.style.bottom = '12px';
+      this._hud.style.right = 'auto';
+      this._hud.style.left = '50%';
+      this._hud.style.transform = 'translateX(-50%)';
+      this._hud.style.alignItems = 'stretch';
+    }
+    if (this._hudBar) {
+      this._hudBar.style.background = 'rgba(8,12,24,0.72)';
+      this._hudBar.style.backdropFilter = 'blur(12px)';
+      this._hudBar.style.webkitBackdropFilter = 'blur(12px)';
+      this._hudBar.style.border = '1px solid rgba(255,255,255,0.1)';
+    }
+    // Hide view pill; move buttons back to _hudLeft for showToolbar() to use
+    if (this._hudViews && this._hudLeft) {
+      this._hudLeft.innerHTML = '';
+      Array.from(this._hudViews.children).forEach(b => this._hudLeft!.appendChild(b));
+      this._hudViews.style.display = 'none';
+      this._hudViews.style.opacity = '0';
+    }
     this._showControls();
 
     this.overlays.forEach((o) => { o.el.style.display = 'none'; });
@@ -792,6 +900,8 @@ class Ha3dFloorplan extends HTMLElement {
         lightIntensity: entry.lightIntensity,
         lightDirection: entry.lightDirection,
         visibleIf: entry.visibleIf,
+        precision: entry.precision,
+        icon: entry.icon,
       });
     });
 
@@ -805,6 +915,9 @@ class Ha3dFloorplan extends HTMLElement {
       );
     }
 
+    // Close sim panel if open (it lives in Config tab in edit mode)
+    if (this._sim?.isOpen) this._sim.toggle();
+
     // Instantiate EditPanel now (needs editor, hud refs, and card container)
     const card = this.querySelector('ha-card') as HTMLElement;
     this._editPanel = new EditPanel(
@@ -817,7 +930,7 @@ class Ha3dFloorplan extends HTMLElement {
       () => this._editor,
       () => this._hass,
       () => this._config,
-      () => this._config?.scene_id,
+      () => this._getActiveSceneId(),
       () => this._saveScene(),
       () => this._exitEditMode(),
       () => this._syncEditorLightsToScene(),
@@ -834,6 +947,35 @@ class Ha3dFloorplan extends HTMLElement {
       () => this._scene?.rules ?? [],
       async (rules) => this._saveRulesDirect(rules),
       () => normalizeViews(this._scene?.camera_views ?? []),
+      () => this._sim,
+      () => this._viewMgr,
+      () => this._scene?.settings ?? {},
+      (s: import('./types').SceneSettings, reloadScene?: boolean) => {
+        if (!this._scene) this._scene = {
+          version: 1, scene_id: this._getActiveSceneId() ?? '',
+          model_url: this._config?.model_url ?? '',
+          anchors: [], camera_views: [], cards: [], rules: [],
+        };
+        this._scene = { ...this._scene, settings: { ...this._scene.settings, ...s } };
+        if (s.language) setLang(s.language);
+        if (reloadScene) {
+          // scene_id was changed — store in localStorage and reload
+          const newId = (s as Record<string, unknown>)['scene_id'] as string | undefined;
+          if (newId) {
+            localStorage.setItem('owlnest_scene_id', newId);
+            this._scene = null;
+            this._sceneLoading = false;
+            if (this._hass) this._fetchAndLoadScene(newId);
+          }
+        }
+        this._applySettingsLive();
+        this._editPanel?.scheduleAutoSave();
+        this._requestRender();
+      },
+      async () => {
+        if (!this._hass) return [];
+        return listScenes(this._hass).catch(() => []);
+      },
     );
 
     this._editor.onChanged = () => {
@@ -1017,6 +1159,7 @@ class Ha3dFloorplan extends HTMLElement {
     if ((e.key === 'g' || e.key === 'G') && !this._cardGrabMode) {
       const card = this._cardRenderer?.getCard(this._selectedCardId);
       if (!card) return;
+      this._editPanel?.pushCardSnapshot();
       this._cardGrabMode = true;
       this._cardGrabOrigin = [...card.position] as [number, number, number];
       if (this.camera) {
@@ -1115,6 +1258,7 @@ class Ha3dFloorplan extends HTMLElement {
     this._editPanel?.hideStatusBar();
     if (this.canvas) this.canvas.style.cursor = '';
 
+    this._editPanel?.pushCardSnapshot();
     await this._saveCardsDirect(cards);
 
     this._selectedCardId = newCard.id;
@@ -1128,7 +1272,7 @@ class Ha3dFloorplan extends HTMLElement {
 
   /** Save cards to backend and update local scene. */
   private async _saveCardsDirect(cards: SceneCard[]) {
-    const sceneId = this._config?.scene_id;
+    const sceneId = this._getActiveSceneId();
     const hass = this._hass;
     const current = this._scene;
     if (!sceneId || !hass) {
@@ -1154,7 +1298,7 @@ class Ha3dFloorplan extends HTMLElement {
   }
 
   private async _saveRulesDirect(rules: OwlnestRule[]) {
-    const sceneId = this._config?.scene_id;
+    const sceneId = this._getActiveSceneId();
     const hass = this._hass;
     const current = this._scene;
     if (!sceneId || !hass) {
@@ -1204,34 +1348,48 @@ class Ha3dFloorplan extends HTMLElement {
 
   private _rebuildNormalHUD() {
     if (!this._hudRight) return;
-    this._hudRight.innerHTML = '';
-    // Restore hudSep to its original 1px separator style (may have been repurposed by edit mode)
+    // Restore hud position to bottom-right corner
+    if (this._hud) {
+      this._hud.style.left = 'auto';
+      this._hud.style.right = '12px';
+      this._hud.style.transform = 'none';
+      this._hud.style.alignItems = 'flex-end';
+    }
+    // Remove bar glassmorphism (invisible in normal mode)
+    if (this._hudBar) {
+      this._hudBar.style.background = 'none';
+      this._hudBar.style.backdropFilter = 'none';
+      this._hudBar.style.webkitBackdropFilter = 'none';
+      this._hudBar.style.border = 'none';
+    }
+    // Restore sep to hidden
     if (this._hudSep) {
       this._hudSep.innerHTML = '';
       this._hudSep.style.cssText = 'width:1px;height:18px;background:rgba(255,255,255,0.15);margin:0 4px;flex-shrink:0;display:none;';
     }
-    const ui = this._config?.ui ?? {};
-    const icons = ui.icons ?? {};
-    if (ui.show_simulation !== false && this._simBtn) {
-      this._hudRight.appendChild(this._simBtn);
+    // Restore hudLeft
+    if (this._hudLeft) {
+      this._hudLeft.innerHTML = '';
+      this._hudLeft.style.display = 'flex';
     }
+    // Rebuild hudRight: lock + pencil only
+    this._hudRight.innerHTML = '';
+    const ui = this._config?.ui ?? {};
     if (ui.show_lock !== false && this.lockBtn) {
       this._hudRight.appendChild(this.lockBtn);
     }
     if (ui.show_editor !== false && this.editBtn) {
       this._hudRight.appendChild(this.editBtn);
     }
-    if (ui.show_capture !== false && this.captureBtn) {
-      this._hudRight.appendChild(this.captureBtn);
-    }
-    // Update separator visibility
-    const hasViews = !!(this._effectiveConfig.camera_views?.length);
-    const hasActions = this._hudRight.children.length > 0;
-    if (this._hudSep) this._hudSep.style.display = (hasViews && hasActions) ? 'block' : 'none';
-    void icons; // silence unused warning
-
-    // Also rebuild view bar in hudLeft
+    // Rebuild camera view buttons in hudLeft for normal mode
     this._viewMgr?.buildHUDBar();
+    // Move view buttons from _hudLeft into the separate centered _hudViews pill
+    if (this._hudViews && this._hudLeft) {
+      this._hudViews.innerHTML = '';
+      const children = Array.from(this._hudLeft.children);
+      children.forEach(b => this._hudViews!.appendChild(b));
+      this._hudViews.style.display = this._hudViews.children.length > 0 ? 'flex' : 'none';
+    }
   }
 
   // ── Three.js init ─────────────────────────────────────────────────────
@@ -1261,7 +1419,8 @@ class Ha3dFloorplan extends HTMLElement {
     const shadows = rl.shadows !== false;
 
     const transparentBg = rl.transparent_background === true;
-    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas!, antialias: true, alpha: transparentBg });
+    // Always alpha:true so transparent_background can be toggled live
+    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas!, antialias: true, alpha: true });
     this.renderer.setSize(w, h, false);
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = shadows;
@@ -1396,6 +1555,76 @@ class Ha3dFloorplan extends HTMLElement {
     this.renderer?.render(this.scene!, this.camera!);
   };
 
+  // ── Live settings apply ────────────────────────────────────────────────
+
+  private _applySettingsLive() {
+    if (!this.renderer || !this.scene || !this.controls) return;
+    const ec = this._effectiveConfig;
+    const rl = ec.rendering ?? {};
+
+    // Exposure
+    if (rl.exposure !== undefined) {
+      this.renderer.toneMappingExposure = rl.exposure;
+    }
+    // Fog density
+    if (rl.fog_density !== undefined && this.scene.fog instanceof THREE.FogExp2) {
+      this.scene.fog.density = rl.fog_density;
+    }
+    // Shadows
+    if (rl.shadows !== undefined) {
+      this.renderer.shadowMap.enabled = rl.shadows;
+      this.renderer.shadowMap.needsUpdate = true;
+      // Propagate shadow cast/receive to all scene meshes
+      this.scene.traverse((obj) => {
+        if ((obj as THREE.Mesh).isMesh) {
+          obj.castShadow = rl.shadows!;
+          obj.receiveShadow = rl.shadows!;
+        }
+      });
+    }
+    // Ground color
+    if (rl.ground_color !== undefined) {
+      this._env?.updateGroundColor(rl.ground_color);
+    }
+    // Transparent background
+    if (rl.transparent_background !== undefined) {
+      const transparent = rl.transparent_background;
+      const bgHex = rl.background_color ? parseInt(rl.background_color.replace('#', ''), 16) : 0x0d1117;
+      if (transparent) {
+        this.scene.background = null;
+        this.renderer.setClearColor(0x000000, 0);
+        this.scene.fog = null;
+        // Remove ground when transparent (no surface needed)
+        this._env?.removeGround();
+      } else {
+        const useSky = rl.sky !== false;
+        this.scene.background = useSky ? null : new THREE.Color(bgHex);
+        this.renderer.setClearColor(bgHex, 1);
+        this.scene.fog = new THREE.FogExp2(0x9fc8e8, rl.fog_density ?? 0.018);
+        // Re-add ground if it was removed and model is loaded
+        if (this._modelRoot && this._env && !this._env.hasGround) {
+          const box = new THREE.Box3().setFromObject(this._modelRoot);
+          this._env.addGround(box, this._config!);
+        }
+      }
+    }
+    // Ambient intensity
+    if (rl.ambient_intensity !== undefined && this._hemiLight) {
+      this._hemiLight.intensity = rl.ambient_intensity;
+    }
+    // Sun intensity
+    if (rl.sun_intensity !== undefined && this._sunLight) {
+      this._sunLight.intensity = rl.sun_intensity;
+    }
+    // Orbit limits
+    const orb = ec.orbit ?? {};
+    if (orb.min_distance !== undefined) this.controls.minDistance = orb.min_distance;
+    if (orb.max_distance !== undefined) this.controls.maxDistance = orb.max_distance;
+    if (orb.max_polar_angle !== undefined) this.controls.maxPolarAngle = orb.max_polar_angle * Math.PI;
+    // Env entities — trigger updateFromHass with updated effective config
+    if (this._hass && this._env) this._env.updateFromHass(this._hass);
+  }
+
   // ── Model loading ─────────────────────────────────────────────────────
 
   private async _loadModel() {
@@ -1478,6 +1707,7 @@ class Ha3dFloorplan extends HTMLElement {
     if (this._hass) {
       syncLights(this.anchors, this._hass, ec);
       this._updateOverlayStates();
+      this._evaluatePassiveConditions();
       this._env?.updateFromHass(this._hass);
       // Seed rule engine immediately so the first real state change fires correctly.
       // Without this, the first hass update after load would be consumed by seeding.
@@ -1489,11 +1719,11 @@ class Ha3dFloorplan extends HTMLElement {
       }
     }
 
-    // Instantiate SimulationPanel now that everything is ready
-    if (this._simBtn && this._simExpand) {
+    // Instantiate SimulationPanel (embedded in Weather tab — no HUD button/expand needed)
+    if (!this._sim) {
       this._sim = new SimulationPanel(
-        this._simExpand,
-        this._simBtn,
+        null,
+        null,
         this._env!,
         () => this._requestRender(),
         () => this._hass,
@@ -1501,7 +1731,6 @@ class Ha3dFloorplan extends HTMLElement {
         () => this._effectiveConfig,
         () => this._updateOverlayStates(),
       );
-      this._sim.buildContent();
     }
 
     // Instantiate ViewManager
@@ -1513,7 +1742,7 @@ class Ha3dFloorplan extends HTMLElement {
       () => this.controls,
       () => this._effectiveConfig,
       () => this._hass,
-      () => this._config?.scene_id,
+      () => this._getActiveSceneId(),
       () => this._scene,
       (scene) => { this._scene = scene; },
       (msg, err) => this._showToast(msg, err),
@@ -1521,7 +1750,7 @@ class Ha3dFloorplan extends HTMLElement {
       () => this._hudRight,
     );
 
-    this._viewMgr.buildHUDBar();
+    this._rebuildNormalHUD();
 
     // Sync cards from scene
     const cards = this._scene?.cards ?? [];
@@ -1550,7 +1779,7 @@ class Ha3dFloorplan extends HTMLElement {
     });
 
     // 2. Cluster visible anchors (opt-in via cluster_threshold)
-    const threshold = this._config?.cluster_threshold ?? 0;
+    const threshold = this._effectiveConfig?.cluster_threshold ?? 0;
     const groups = threshold > 0
       ? this._computeClusters([...pos2d.entries()], threshold)
       : [...pos2d.keys()].map(k => [k]);
@@ -1597,7 +1826,7 @@ class Ha3dFloorplan extends HTMLElement {
     this.anchors.forEach((_entry, name) => {
       const ov = this.overlays.get(name);
       if (!ov) return;
-      if (behind.has(name) || inCluster.has(name) || this.anchors.get(name)?.hidden) {
+      if (behind.has(name) || inCluster.has(name) || this.anchors.get(name)?.hidden || ov.conditionHidden) {
         ov.el.style.display = 'none';
         return;
       }
@@ -1654,6 +1883,7 @@ class Ha3dFloorplan extends HTMLElement {
         entry.label,
         onShortClick,
         () => this._openMoreInfo(entry.entityId),
+        entry.icon,
       );
       this.overlays.set(name, overlay);
     });
@@ -1777,8 +2007,9 @@ class Ha3dFloorplan extends HTMLElement {
       const stateObj = this._hass?.states[entry.entityId];
 
       if (overlay instanceof SensorOverlay) {
-        const value = stateObj?.state ?? '\u2014';
+        const rawValue = stateObj?.state ?? '\u2014';
         const unit = (stateObj?.attributes.unit_of_measurement as string) ?? '';
+        const value = _formatSensorValue(rawValue, entry.precision);
         overlay.updateValue(value, unit, `${entry.label}: ${value}${unit}`);
         return;
       }
@@ -1852,7 +2083,7 @@ class Ha3dFloorplan extends HTMLElement {
     this._hudLeft = null;
     this._hudSep = null;
     this._hudRight = null;
-    this._simExpand = null;
+    this._hudViews = null;
     if (this._controlsHideTimer) clearTimeout(this._controlsHideTimer);
     this.modelLoaded = false;
     this._editMode = false;

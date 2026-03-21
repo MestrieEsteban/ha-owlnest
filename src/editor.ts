@@ -23,6 +23,10 @@ export class AnchorEditor {
   onSelectionChange: ((key: string | null) => void) | null = null;
   onDragStart: ((type: 'grab' | 'rotate' | 'gizmo') => void) | null = null;
   onDragEnd: (() => void) | null = null;
+  /** Called by undo() when the anchor undo stack is empty — allows EditPanel to chain card/rule undo. */
+  onUndoFallback: (() => void) | null = null;
+  /** Called by redo() when the anchor redo stack is empty — allows EditPanel to chain card/rule redo. */
+  onRedoFallback: (() => void) | null = null;
 
   private _active = false;
   private _hass: import('./types').Hass | null = null;
@@ -135,6 +139,8 @@ export class AnchorEditor {
 
   setTool(tool: EditorTool) {
     this._tool = tool;
+    // Crosshair in add/delete tool, restore on select/rotate
+    this._canvas.style.cursor = (tool === 'add' || tool === 'delete') ? 'crosshair' : '';
     if (tool === 'add' || tool === 'delete') {
       this._clearGizmo();
       this._selectedKey = null;
@@ -232,7 +238,7 @@ export class AnchorEditor {
     this._redoStack = [];
   }
 
-  private _restore(snap: AnchorSnap) {
+  private _restore(snap: AnchorSnap, prevSelectedKey?: string) {
     this._clearGizmo();
     this._selectedKey = null;
     this.onSelectionChange?.(null);
@@ -253,19 +259,27 @@ export class AnchorEditor {
       });
       this._addMarker(s.key, pos, s.hidden);
     }
+    // Re-select the previously selected anchor if it still exists
+    const keyToReselect = prevSelectedKey && this._anchors.has(prevSelectedKey) ? prevSelectedKey : null;
+    if (keyToReselect) {
+      this._selectAnchor(keyToReselect);
+    }
+    this.onSelectionChange?.(this._selectedKey);
     this.onChanged?.();
   }
 
   undo() {
-    if (!this._undoStack.length) return;
+    if (!this._undoStack.length) { this.onUndoFallback?.(); return; }
+    const prevKey = this._selectedKey;
     this._redoStack.push(this._snap());
-    this._restore(this._undoStack.pop()!);
+    this._restore(this._undoStack.pop()!, prevKey ?? undefined);
   }
 
   redo() {
-    if (!this._redoStack.length) return;
+    if (!this._redoStack.length) { this.onRedoFallback?.(); return; }
+    const prevKey = this._selectedKey;
     this._undoStack.push(this._snap());
-    this._restore(this._redoStack.pop()!);
+    this._restore(this._redoStack.pop()!, prevKey ?? undefined);
   }
 
   // ── Markers ─────────────────────────────────────────────────────────────
@@ -939,6 +953,9 @@ export class AnchorEditor {
         e.stopImmediatePropagation();
         this._pendingPos = hits[0].point.clone();
         this._showEntityPicker();
+      } else {
+        // Click outside model — cancel placement
+        this.setTool('select');
       }
     }
   };

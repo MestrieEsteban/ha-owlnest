@@ -1,0 +1,558 @@
+export type Lang = 'en' | 'fr';
+
+const STRINGS = {
+  en: {
+    // Inspector tabs
+    tabAnchors:     'Anchors',
+    tabAnchorsDesc: '3D points linked to Home Assistant entities',
+    tabCards:       'Cards',
+    tabCardsDesc:   'Info panels displayed in the 3D scene',
+    tabRules:       'Rules',
+    tabRulesDesc:   'Visual automations triggered by entity states',
+    tabCamera:      'Camera',
+    tabCameraDesc:  'Save and restore camera viewpoints',
+    tabWeather:     'Weather',
+    tabWeatherDesc: 'Weather entities and time-of-day simulation',
+    tabConfig:      'Config',
+    tabConfigDesc:  'Scene ID, model URL and rendering settings',
+
+    // Anchor tab
+    addAnchor:   '+ Add',
+    showAll:     '● All',
+    hideAll:     '○ None',
+    anchors_n:   (n: number) => `${n} anchor${n !== 1 ? 's' : ''}`,
+    anchorEmpty: 'No anchors',
+    anchorEmptyHint: 'Tool ＋ → click on model',
+
+    // Cards tab
+    addCard:   '+ Add',
+    cards_n:   (n: number) => `${n} card${n !== 1 ? 's' : ''}`,
+    cardEmpty: 'No cards',
+    cardEmptyHint: 'Click + Add',
+
+    // Rules tab
+    addRule:    '+ Add',
+    rules_n:    (n: number) => `${n} rule${n !== 1 ? 's' : ''}`,
+
+    // HUD toolbar
+    toolSelect:  '↖',
+    toolSelectTitle: 'Select / Move  (S)',
+    undoTitle:   'Undo (Ctrl+Z)',
+    redoTitle:   'Redo (Ctrl+Y)',
+    doneBtn:     'Done',
+    doneBtnTitle: 'Exit edit mode (changes are auto-saved)',
+
+    // Hint bar
+    hintSelect:  'Select',
+    hintAdd:     'Add',
+    hintGrab:    'Grab',
+    hintAxis:    'axis',
+    hintRotate:  'Rotate',
+    hintDelete:  'Delete',
+    hintHide:    'Hide',
+    hintDup:     'Duplicate',
+    hintUndo:    'Undo',
+    hintEsc:     'Deselect',
+    hintRClick:  'Context menu',
+
+    // Inspector header
+    inspectorTitle: 'Scene',
+    saveIndicator_saved:   '✓ Saved',
+    saveIndicator_unsaved: '● Unsaved',
+    saveIndicator_saving:  '… Saving',
+    warnNoSceneId: '⚠ No scene_id configured — changes will not be persisted.',
+
+    // Config tab — Scene
+    cfgScene:        'Scene',
+    cfgSceneId:      'Scene ID',
+    cfgSceneIdPh:    'e.g. main',
+    cfgLoadScene:    'Load',
+
+    // Config tab — Model
+    cfgModel:        'Model',
+    cfgModelUrl:     'Model URL',
+    cfgModelUrlPh:   'https://... or /local/...',
+    cfgApply:        'Apply',
+
+    // Config tab — Environment
+    cfgEnv:          'Environment',
+    cfgSunEntity:    'Sun entity',
+    cfgSunEntityPh:  'e.g. sun.sun',
+    cfgWeatherEntity:'Weather entity',
+    cfgWeatherEntityPh: 'e.g. weather.home',
+
+    // Config tab — Simulation
+    cfgSim:          'Simulation',
+    cfgSimHour:      'Time',
+    cfgSimActive:    'Active',
+
+    // Config tab — Camera Views
+    cfgViews:        'Camera Views',
+    cfgSaveView:     '＋  Save current view',
+    viewNamePh:      'View name…',
+    viewFlyTo:       'Go to view',
+    viewOverwrite:   'Overwrite with current camera',
+    viewRename:      'Rename',
+    viewDelete:      'Delete',
+    noViews:         'No saved views',
+
+    // Config tab — Rendering
+    cfgRender:       'Rendering',
+    cfgExposure:     'Exposure',
+    cfgFogDensity:   'Fog density',
+    cfgGroundColor:  'Ground color',
+    cfgShadows:      'Shadows',
+    cfgTransparent:  'Transparent background',
+    cfgSunIntensity:     'Sun Intensity',
+    cfgAmbientIntensity: 'Ambient Intensity',
+
+    // Config tab — Camera limits
+    cfgOrbit:            'Camera Limits',
+    cfgMinDist:          'Min Distance',
+    cfgMaxDist:          'Max Distance',
+    cfgMaxPolar:         'Max Tilt (×π)',
+
+    // Config tab — Clustering
+    cfgCluster:          'Clustering',
+    cfgClusterThreshold: 'Cluster Threshold',
+
+    // Config tab — Language
+    cfgLang:         'Language',
+    langEn:          'English',
+    langFr:          'French',
+
+    // Hint bar
+    hintRClickKey:   'Right click',
+
+    // Inspector — anchor list eye/dup buttons
+    anchorShow:      'Show (H)',
+    anchorHide:      'Hide (H)',
+    anchorDup:       'Duplicate (Ctrl+D)',
+
+    // Inspector — cards pane empty state
+    cardEmptyList:   'No cards',
+    cardEmptyListHint: 'Click + Add',
+
+    // Inspector — back navigation labels
+    backAnchors:     'Anchors',
+    backCards:       'Cards',
+    backRules:       'Rules',
+
+    // Anchor props — sections & fields
+    anchorSectionHA:    'HA Link',
+    anchorFieldEntity:  'Entity',
+    anchorFieldName:    'Name',
+    anchorFieldIcon:    'Icon',
+    anchorNamePh:       'Display name…',
+    anchorSectionLight: 'Light',
+    anchorLightIntensity: 'Intensity',
+    lightStyleAmbient:  'Ambient',
+    lightStyleSpot:     'Spot',
+    lightStyleBeam:     'Beam',
+    anchorSectionOrientation: 'Orientation',
+    orientationGizmoHint: '↻ Drag the<br>3D rings',
+    anchorSectionVisibility: 'Visibility',
+    anchorSectionManage: 'Manage',
+    anchorBtnDuplicate: '⎘ Duplicate',
+    anchorBtnDelete:    '✕ Delete',
+    anchorBtnConfirm:   '⚠ Confirm?',
+    anchorDeleteTitle:  'X — Delete anchor',
+
+    // Card template picker
+    cardPickerTitle:    'Choose a template',
+    cardPickerRoomDesc: 'Room summary view',
+    cardPickerEntityDesc: 'Focus on an HA entity',
+    cardPickerInfoDesc: 'Decorative context label',
+    btnCancel:          'Cancel',
+
+    // Card props — sections & fields
+    cardSectionGeneral:   'General',
+    cardFieldName:        'Name',
+    cardNamePh:           'Card name',
+    cardNameDefault:      'Unnamed',
+    cardSectionPosition:  'Position',
+    cardPositionTitle:    'Position in metres in 3D space',
+    cardSectionAppearance: 'Appearance',
+    cardFieldSize:        'Size',
+    cardFieldAccentColor: 'Accent color',
+    cardSectionVisibility: 'Visibility',
+    cardSectionManage:    'Manage',
+    cardBtnDelete:        '✕ Delete card',
+    cardBtnDeleteConfirm: '⚠ Confirm deletion?',
+    cardBtnDeleteTitle:   'X — Delete card',
+
+    // Card type labels
+    cardTypeRoom:   'Room',
+    cardTypeEntity: 'Entity',
+    cardTypeInfo:   'Info',
+
+    // Card template section header (used as section label for template-specific fields)
+    cardSubtitle:   '3D Card',
+
+    // Room card fields
+    cardRoomIconLabel:     'Icon (emoji)',
+    cardRoomEntitiesLabel: 'Entities (max {n})',
+    cardRoomAddEntity:     '+ Entity',
+    cardRoomShowName:      'Show name',
+    cardRoomShowStates:    'Show states',
+
+    // Entity card fields
+    cardEntityLabel:       'Entity',
+    cardEntityOptLabel:    'Label (optional)',
+    cardEntityLabelPh:     'Automatic',
+    cardEntityShowLabel:   'Show label',
+    cardEntityShowUnit:    'Show unit',
+    cardEntityShowButton:  'Action button',
+
+    // Info card fields
+    cardInfoIconLabel:     'Icon (emoji)',
+    cardInfoSubtitleLabel: 'Subtitle',
+    cardInfoColorLabel:    'Text color (optional)',
+    cardInfoColorPh:       'Inherits from accent',
+    cardInfoShowName:      'Show name',
+    cardInfoShowSubtitle:  'Show subtitle',
+
+    // Visibility condition
+    visibilityCondition:   'Condition visibility',
+    visibilityHideIf:      'Hide if…',
+    visibilityShowIf:      'Show if…',
+
+    // Rules list
+    rulesEmpty:        'No rules',
+    rulesEmptyHint:    'Click + Add',
+    ruleToggleEnable:  'Enable',
+    ruleToggleDisable: 'Disable',
+    ruleEditTitle:     'Edit',
+    ruleDeleteTitle:   'Delete',
+    ruleDefaultLabel:  'Rule',
+
+    // Rule modal
+    ruleModalEdit:     'Edit rule',
+    ruleModalNew:      'New rule',
+    ruleModalClose:    'Close',
+    ruleModalSave:     'Save',
+    ruleModalCancel:   'Cancel',
+    ruleModalGeneral:  'General',
+    ruleModalName:     'Rule name',
+    ruleModalTrigger:  'Trigger',
+    ruleModalEntity:   'Entity',
+    ruleModalFrom:     'From (optional)',
+    ruleModalTo:       'To',
+    ruleModalActions:  'Actions',
+    ruleActionGoToView:   '📷 Go to view',
+    ruleActionShowCard:   '👁 Show card',
+    ruleActionHideCard:   '🙈 Hide card',
+    ruleActionCallService: '⚙ Call service',
+    rulePickView:      '-- Choose a view --',
+    rulePickCard:      '-- Choose a card --',
+    ruleAddAction:     '+ Add an action',
+
+    // Visibility condition operators
+    opEq:       '= equal',
+    opNeq:      '≠ not equal',
+    opGt:       '> greater than',
+    opLt:       '< less than',
+    opGte:      '≥ greater or equal',
+    opLte:      '≤ less or equal',
+    opContains: '⊃ contains',
+
+    // Visibility condition misc
+    condValuePh:      'value…',
+    condCurrentState: 'Current state:',
+
+    // Rule modal misc
+    ruleNameExPh: 'e.g. Door open → Entry view',
+
+    // View manager
+    viewMgrTitle:      '📷 Camera views',
+    viewMgrSaveBtn:    '＋  Save current view',
+    viewMgrNoSceneId:  '⚠ No scene_id configured — views will not be persisted.',
+    viewMgrNoViews:    'No saved views',
+    viewMgrFlyTitle:   'Go to this view',
+    viewMgrOverwrite:  'Overwrite with current camera',
+    viewMgrRename:     'Rename',
+    viewMgrDelete:     'Delete',
+    viewMgrConfirmDelete: 'Click again to confirm',
+    viewMgrNamePh:     'View name (e.g. Living room)…',
+    viewMgrSaveError:  '✗ Error saving views',
+  },
+
+  fr: {
+    tabAnchors:     'Ancres',
+    tabAnchorsDesc: 'Points 3D liés à des entités Home Assistant',
+    tabCards:       'Cartes',
+    tabCardsDesc:   'Panneaux d\'info affichés dans la scène 3D',
+    tabRules:       'Règles',
+    tabRulesDesc:   'Automatisations visuelles déclenchées par les états',
+    tabCamera:      'Caméra',
+    tabCameraDesc:  'Enregistrer et rappeler des points de vue',
+    tabWeather:     'Météo',
+    tabWeatherDesc: 'Entités météo et simulation heure du jour',
+    tabConfig:      'Config',
+    tabConfigDesc:  'Scene ID, URL du modèle et paramètres de rendu',
+
+    addAnchor:   '+ Ajouter',
+    showAll:     '● Tout',
+    hideAll:     '○ Aucun',
+    anchors_n:   (n: number) => `${n} ancre${n !== 1 ? 's' : ''}`,
+    anchorEmpty: 'Aucune ancre',
+    anchorEmptyHint: 'Outil ＋ → clic sur le modèle',
+
+    addCard:   '+ Ajouter',
+    cards_n:   (n: number) => `${n} carte${n !== 1 ? 's' : ''}`,
+    cardEmpty: 'Aucune carte',
+    cardEmptyHint: 'Cliquez + Ajouter',
+
+    addRule:    '+ Ajouter',
+    rules_n:    (n: number) => `${n} règle${n !== 1 ? 's' : ''}`,
+
+    toolSelect:  '↖',
+    toolSelectTitle: 'Sélectionner / Déplacer  (S)',
+    undoTitle:   'Annuler (Ctrl+Z)',
+    redoTitle:   'Rétablir (Ctrl+Y)',
+    doneBtn:     'Terminé',
+    doneBtnTitle: 'Quitter le mode édition (les modifications sont auto-sauvegardées)',
+
+    hintSelect:  'Sélect.',
+    hintAdd:     'Ajouter',
+    hintGrab:    'Saisir',
+    hintAxis:    'axe',
+    hintRotate:  'Rotation',
+    hintDelete:  'Suppr.',
+    hintHide:    'Masquer',
+    hintDup:     'Dupliquer',
+    hintUndo:    'Annuler',
+    hintEsc:     'Désélect.',
+    hintRClick:  'Menu',
+
+    inspectorTitle: 'Scène',
+    saveIndicator_saved:   '✓ Sauvé',
+    saveIndicator_unsaved: '● Non sauvé',
+    saveIndicator_saving:  '… Sauvegarde',
+    warnNoSceneId: '⚠ Aucun scene_id configuré — les modifications ne seront pas persistées.',
+
+    cfgScene:        'Scène',
+    cfgSceneId:      'Scene ID',
+    cfgSceneIdPh:    'ex: main',
+    cfgLoadScene:    'Charger',
+
+    cfgModel:        'Modèle',
+    cfgModelUrl:     'URL du modèle',
+    cfgModelUrlPh:   'https://... ou /local/...',
+    cfgApply:        'Appliquer',
+
+    cfgEnv:          'Environnement',
+    cfgSunEntity:    'Entité soleil',
+    cfgSunEntityPh:  'ex: sun.sun',
+    cfgWeatherEntity:'Entité météo',
+    cfgWeatherEntityPh: 'ex: weather.lamorlaye',
+
+    cfgSim:          'Simulation',
+    cfgSimHour:      'Heure',
+    cfgSimActive:    'Actif',
+
+    cfgViews:        'Vues caméra',
+    cfgSaveView:     '＋  Sauvegarder la vue actuelle',
+    viewNamePh:      'Nom de la vue…',
+    viewFlyTo:       'Aller à cette vue',
+    viewOverwrite:   'Écraser avec la vue actuelle',
+    viewRename:      'Renommer',
+    viewDelete:      'Supprimer',
+    noViews:         'Aucune vue sauvegardée',
+
+    cfgRender:       'Rendu',
+    cfgExposure:     'Exposition',
+    cfgFogDensity:   'Densité brouillard',
+    cfgGroundColor:  'Couleur du sol',
+    cfgShadows:      'Ombres',
+    cfgTransparent:  'Fond transparent',
+    cfgSunIntensity:     'Intensité soleil',
+    cfgAmbientIntensity: 'Intensité ambiante',
+
+    cfgOrbit:            'Limites caméra',
+    cfgMinDist:          'Distance min',
+    cfgMaxDist:          'Distance max',
+    cfgMaxPolar:         'Inclinaison max (×π)',
+
+    cfgCluster:          'Clustering',
+    cfgClusterThreshold: 'Seuil de regroupement',
+
+    cfgLang:         'Langue',
+    langEn:          'English',
+    langFr:          'Français',
+
+    // Hint bar
+    hintRClickKey:   'Clic droit',
+
+    // Inspector — anchor list eye/dup buttons
+    anchorShow:      'Afficher (H)',
+    anchorHide:      'Masquer (H)',
+    anchorDup:       'Dupliquer (Ctrl+D)',
+
+    // Inspector — cards pane empty state
+    cardEmptyList:   'Aucune carte',
+    cardEmptyListHint: 'Cliquez + Ajouter',
+
+    // Inspector — back navigation labels
+    backAnchors:     'Ancres',
+    backCards:       'Cartes',
+    backRules:       'Règles',
+
+    // Anchor props — sections & fields
+    anchorSectionHA:    'Liaison HA',
+    anchorFieldEntity:  'Entité',
+    anchorFieldName:    'Nom',
+    anchorFieldIcon:    'Icône',
+    anchorNamePh:       'Nom affiché…',
+    anchorSectionLight: 'Lumière',
+    anchorLightIntensity: 'Intensité',
+    lightStyleAmbient:  'Ambiante',
+    lightStyleSpot:     'Spot',
+    lightStyleBeam:     'Rayon',
+    anchorSectionOrientation: 'Orientation',
+    orientationGizmoHint: '↻ Glisser les<br>anneaux 3D',
+    anchorSectionVisibility: 'Visibilité',
+    anchorSectionManage: 'Gérer',
+    anchorBtnDuplicate: '⎘ Dupliquer',
+    anchorBtnDelete:    '✕ Supprimer',
+    anchorBtnConfirm:   '⚠ Confirmer ?',
+    anchorDeleteTitle:  'X — Supprimer l\'ancre',
+
+    // Card template picker
+    cardPickerTitle:    'Choisir un modèle',
+    cardPickerRoomDesc: 'Vue synthèse d\'une pièce',
+    cardPickerEntityDesc: 'Focus sur une entité HA',
+    cardPickerInfoDesc: 'Label contextuel décoratif',
+    btnCancel:          'Annuler',
+
+    // Card props — sections & fields
+    cardSectionGeneral:   'Général',
+    cardFieldName:        'Nom',
+    cardNamePh:           'Nom de la carte',
+    cardNameDefault:      'Sans nom',
+    cardSectionPosition:  'Position',
+    cardPositionTitle:    'Position en mètres dans l\'espace 3D',
+    cardSectionAppearance: 'Apparence',
+    cardFieldSize:        'Taille',
+    cardFieldAccentColor: 'Couleur accent',
+    cardSectionVisibility: 'Visibilité',
+    cardSectionManage:    'Gérer',
+    cardBtnDelete:        '✕ Supprimer la carte',
+    cardBtnDeleteConfirm: '⚠ Confirmer la suppression ?',
+    cardBtnDeleteTitle:   'X — Supprimer la carte',
+
+    // Card type labels
+    cardTypeRoom:   'Pièce',
+    cardTypeEntity: 'Entité',
+    cardTypeInfo:   'Info',
+
+    // Card template section header
+    cardSubtitle:   'Carte 3D',
+
+    // Room card fields
+    cardRoomIconLabel:     'Icône (emoji)',
+    cardRoomEntitiesLabel: 'Entités (max {n})',
+    cardRoomAddEntity:     '+ Entité',
+    cardRoomShowName:      'Afficher le nom',
+    cardRoomShowStates:    'Afficher les états',
+
+    // Entity card fields
+    cardEntityLabel:       'Entité',
+    cardEntityOptLabel:    'Label (optionnel)',
+    cardEntityLabelPh:     'Automatique',
+    cardEntityShowLabel:   'Afficher le label',
+    cardEntityShowUnit:    'Afficher l\'unité',
+    cardEntityShowButton:  'Bouton d\'action',
+
+    // Info card fields
+    cardInfoIconLabel:     'Icône (emoji)',
+    cardInfoSubtitleLabel: 'Sous-titre',
+    cardInfoColorLabel:    'Couleur texte (optionnel)',
+    cardInfoColorPh:       'Hérite de l\'accent',
+    cardInfoShowName:      'Afficher le nom',
+    cardInfoShowSubtitle:  'Afficher le sous-titre',
+
+    // Visibility condition
+    visibilityCondition:   'Conditionner la visibilité',
+    visibilityHideIf:      'Masquer si…',
+    visibilityShowIf:      'Afficher si…',
+
+    // Rules list
+    rulesEmpty:        'Aucune règle',
+    rulesEmptyHint:    'Cliquer sur + Ajouter',
+    ruleToggleEnable:  'Activer',
+    ruleToggleDisable: 'Désactiver',
+    ruleEditTitle:     'Modifier',
+    ruleDeleteTitle:   'Supprimer',
+    ruleDefaultLabel:  'Règle',
+
+    // Rule modal
+    ruleModalEdit:     'Modifier la règle',
+    ruleModalNew:      'Nouvelle règle',
+    ruleModalClose:    'Fermer',
+    ruleModalSave:     'Enregistrer',
+    ruleModalCancel:   'Annuler',
+    ruleModalGeneral:  'Général',
+    ruleModalName:     'Nom de la règle',
+    ruleModalTrigger:  'Déclencheur',
+    ruleModalEntity:   'Entité',
+    ruleModalFrom:     'De (optionnel)',
+    ruleModalTo:       'Vers',
+    ruleModalActions:  'Actions',
+    ruleActionGoToView:   '📷 Aller à la vue',
+    ruleActionShowCard:   '👁 Afficher carte',
+    ruleActionHideCard:   '🙈 Masquer carte',
+    ruleActionCallService: '⚙ Appeler service',
+    rulePickView:      '-- Choisir une vue --',
+    rulePickCard:      '-- Choisir une carte --',
+    ruleAddAction:     '+ Ajouter une action',
+
+    // Visibility condition operators
+    opEq:       '= égal',
+    opNeq:      '≠ différent',
+    opGt:       '> supérieur',
+    opLt:       '< inférieur',
+    opGte:      '≥ sup. ou égal',
+    opLte:      '≤ inf. ou égal',
+    opContains: '⊃ contient',
+
+    // Visibility condition misc
+    condValuePh:      'valeur…',
+    condCurrentState: 'État actuel :',
+
+    // Rule modal misc
+    ruleNameExPh: 'Ex: Porte ouverte → Vue entrée',
+
+    // View manager
+    viewMgrTitle:      '📷 Vues caméra',
+    viewMgrSaveBtn:    '＋  Sauvegarder la vue actuelle',
+    viewMgrNoSceneId:  '⚠ Pas de scene_id configuré — les vues ne seront pas persistées.',
+    viewMgrNoViews:    'Aucune vue sauvegardée',
+    viewMgrFlyTitle:   'Aller à cette vue',
+    viewMgrOverwrite:  'Écraser avec la vue actuelle',
+    viewMgrRename:     'Renommer',
+    viewMgrDelete:     'Supprimer',
+    viewMgrConfirmDelete: 'Cliquer à nouveau pour confirmer',
+    viewMgrNamePh:     'Nom de la vue (ex: Salon)…',
+    viewMgrSaveError:  '✗ Erreur lors de la sauvegarde des vues',
+  },
+} as const;
+
+// Type of any string key (excluding function values for simplicity)
+export type StringKey = keyof typeof STRINGS['en'];
+
+let _lang: Lang = 'en';
+
+export function setLang(lang: Lang): void { _lang = lang; }
+export function getLang(): Lang { return _lang; }
+
+// For string keys that map to a string
+export function t(key: StringKey): string {
+  const val = STRINGS[_lang][key];
+  return typeof val === 'string' ? val : (STRINGS['en'][key] as string);
+}
+
+// For string keys that map to a function (pluralization helpers)
+export function tn(key: 'anchors_n' | 'cards_n' | 'rules_n', n: number): string {
+  return (STRINGS[_lang][key] as (n: number) => string)(n);
+}

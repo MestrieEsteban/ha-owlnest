@@ -1,3 +1,0 @@
-# Minimal configuration — just load and display a 3D model
-type: custom:ha-3d-floorplan
-model_url: /local/floorplan.glb

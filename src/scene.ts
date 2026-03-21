@@ -67,9 +67,16 @@ export function normalizeViews(views: CameraView[]): CameraView[] {
  * All anchor fields (lightStyle, lightIntensity, lightDirection, hidden) are preserved.
  */
 export function sceneToEffectiveConfig(scene: OwlnestScene, base: CardConfig): CardConfig {
+  const s = scene.settings;
   return {
     ...base,
-    model_url: scene.model_url,
+    model_url: base.model_url || scene.model_url || '',
+    // Scene settings override YAML values (settings are configured from edit mode)
+    ...(s?.sun_entity     !== undefined && { sun_entity:     s.sun_entity }),
+    ...(s?.weather_entity !== undefined && { weather_entity: s.weather_entity }),
+    rendering: s?.rendering ? { ...base.rendering, ...s.rendering } : base.rendering,
+    ...(s?.cluster_threshold !== undefined && { cluster_threshold: s.cluster_threshold }),
+    ...(s?.orbit              !== undefined && { orbit:             s.orbit }),
     anchors: scene.anchors.map((a) => ({
       entity: a.entity,
       position: a.position,
@@ -79,6 +86,8 @@ export function sceneToEffectiveConfig(scene: OwlnestScene, base: CardConfig): C
       lightIntensity: a.lightIntensity,
       lightDirection: a.lightDirection,
       visibleIf: a.visibleIf,
+      precision: a.precision,
+      icon: a.icon,
     })),
     camera_views: scene.camera_views?.length
       ? normalizeViews(scene.camera_views)
@@ -116,13 +125,15 @@ export function buildSceneFromEditor(
       lightIntensity: a.lightIntensity,
       lightDirection: a.lightDirection,
       visibleIf: a.visibleIf,
+      precision: a.precision,
+      icon: a.icon,
     });
   });
 
   return {
     version: 1,
     scene_id: sceneId,
-    model_url: current?.model_url ?? baseConfig.model_url ?? '',
+    model_url: '',
     anchors,
     camera_views: cameraViews ?? (current?.camera_views ?? []),
     cards: current?.cards ?? [],
