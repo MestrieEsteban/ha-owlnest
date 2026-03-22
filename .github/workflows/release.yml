@@ -30,8 +30,8 @@ jobs:
           files: dist/ha-3d-floorplan.js
           generate_release_notes: true
           body: |
-            ## Installation via HACS
-            Ajoute ce dépôt comme dépôt personnalisé HACS (type : Frontend).
+            ## Install via HACS
+            Add this repository as a custom HACS repository (category: Plugin).
 
-            ## Installation manuelle
-            Copie `ha-3d-floorplan.js` dans `config/www/` et ajoute la ressource dans HA.
+            ## Manual install
+            Download `ha-3d-floorplan.js`, place it in `config/www/` and add it as a Lovelace resource.
