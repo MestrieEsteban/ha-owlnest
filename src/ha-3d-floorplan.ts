@@ -960,14 +960,17 @@ class Ha3dFloorplan extends HTMLElement {
         this._scene = { ...this._scene, settings: { ...this._scene.settings, ...s } };
         if (s.language) setLang(s.language);
         if (reloadScene) {
-          // scene_id was changed — store in localStorage and reload
+          // scene_id was changed — store in localStorage and fully reload
           const newId = (s as Record<string, unknown>)['scene_id'] as string | undefined;
           if (newId) {
             localStorage.setItem('owlnest_scene_id', newId);
             this._scene = null;
             this._sceneLoading = false;
-            if (this._hass) this._fetchAndLoadScene(newId);
+            if (this._hass) {
+              this._fetchAndLoadScene(newId);
+            }
           }
+          return; // skip live-apply & auto-save — scene will be fully reloaded
         }
         this._applySettingsLive();
         this._editPanel?.scheduleAutoSave();
@@ -1650,9 +1653,59 @@ class Ha3dFloorplan extends HTMLElement {
     }
   }
 
+  // ── Scene content cleanup (keeps renderer/canvas/HUD intact) ─────────
+
+  private _clearSceneContent() {
+    // Exit edit mode cleanly
+    if (this._editMode) this._exitEditMode();
+    // Dispose card renderer
+    this._cardRenderer?.dispose();
+    this._cardRenderer = null;
+    this._panelGizmo?.dispose();
+    this._panelGizmo = null;
+    // Remove overlays & clusters
+    this._clusters.forEach((c) => c.destroy());
+    this._clusters.clear();
+    this.overlays.forEach((o) => o.destroy());
+    this.overlays.clear();
+    // Remove lights created by anchors
+    this.anchors.forEach((e) => {
+      if (e.light) { this.scene?.remove(e.light); e.light.dispose(); }
+      if (e.lightTarget) this.scene?.remove(e.lightTarget);
+    });
+    this.anchors.clear();
+    // Remove ground, occlusion, weather particles
+    this._env?.removeGround();
+    this._env?.removeOcclusion();
+    this._env?.removeWeatherParticles();
+    // Remove 3D model
+    if (this._modelRoot && this.scene) {
+      this.scene.remove(this._modelRoot);
+      this._modelRoot.traverse((obj) => {
+        if ((obj as THREE.Mesh).isMesh) {
+          (obj as THREE.Mesh).geometry.dispose();
+          const mat = (obj as THREE.Mesh).material;
+          if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+          else (mat as THREE.Material).dispose();
+        }
+      });
+    }
+    this._modelRoot = null;
+    this.modelLoaded = false;
+    this._lastGroundKey = '';
+    // Reset simulation
+    this._sim = null;
+    this._viewMgr = null;
+    // Reset rule engine state
+    this._prevEntityStates.clear();
+    this._prevStatesInitialized = false;
+  }
+
   // ── Model loading ─────────────────────────────────────────────────────
 
   private async _loadModel() {
+    // Clean up any previous scene content before loading new model
+    this._clearSceneContent();
     const ec = this._effectiveConfig;
     if (!ec.model_url || !this.scene) return;
 

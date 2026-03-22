@@ -709,34 +709,63 @@ export class EnvironmentController {
     group.name = '__owlnest_ground';
 
     if (style === 'podium') {
-      // 3D cylindrical podium — elegant raised platform
+      // Snow-globe-style presentation base
       const radius = maxDim * 0.9 * scale;
-      const podiumHeight = maxDim * 0.06;
-      const cylGeo = new THREE.CylinderGeometry(radius, radius * 1.02, podiumHeight, 64);
-      const mat = new THREE.MeshStandardMaterial({
-        color: groundHex,
-        roughness: 0.7,
+      const baseHeight = maxDim * 0.07;
+      const rimThickness = baseHeight * 0.18;
+      const rimInset = 0.015; // slight inset so rim sits snugly on base
+
+      // ─ Black base body (slightly tapered cylinder)
+      const baseGeo = new THREE.CylinderGeometry(radius * 0.97, radius * 1.03, baseHeight, 64);
+      const baseMat = new THREE.MeshStandardMaterial({
+        color: 0x111111,
+        roughness: 0.85,
         metalness: 0.05,
       });
-      const cyl = new THREE.Mesh(cylGeo, mat);
-      cyl.position.y = groundY - podiumHeight / 2 + 0.01;
-      cyl.receiveShadow = true;
-      cyl.castShadow = true;
+      const base = new THREE.Mesh(baseGeo, baseMat);
+      base.position.y = groundY - baseHeight / 2;
+      base.receiveShadow = true;
+      base.castShadow = true;
 
-      // Subtle bevel ring on top edge for a premium look
-      const ringGeo = new THREE.TorusGeometry(radius, podiumHeight * 0.08, 8, 64);
-      const ringMat = new THREE.MeshStandardMaterial({
-        color: groundHex,
-        roughness: 0.5,
-        metalness: 0.15,
+      // ─ Metallic rim ring (torus around top edge)
+      const rimGeo = new THREE.TorusGeometry(radius * 0.97, rimThickness, 16, 64);
+      const rimMat = new THREE.MeshStandardMaterial({
+        color: 0xc0c0c0,
+        roughness: 0.2,
+        metalness: 0.85,
       });
-      const ring = new THREE.Mesh(ringGeo, ringMat);
-      ring.rotation.x = Math.PI / 2;
-      ring.position.y = groundY + 0.01;
-      ring.receiveShadow = true;
+      const rim = new THREE.Mesh(rimGeo, rimMat);
+      rim.rotation.x = Math.PI / 2;
+      rim.position.y = groundY + rimInset;
+      rim.receiveShadow = true;
 
-      group.add(cyl);
-      group.add(ring);
+      // ─ Thin bottom lip ring (dark metal accent)
+      const lipGeo = new THREE.TorusGeometry(radius * 1.03, rimThickness * 0.6, 12, 64);
+      const lipMat = new THREE.MeshStandardMaterial({
+        color: 0x333333,
+        roughness: 0.35,
+        metalness: 0.7,
+      });
+      const lip = new THREE.Mesh(lipGeo, lipMat);
+      lip.rotation.x = Math.PI / 2;
+      lip.position.y = groundY - baseHeight + rimInset;
+      lip.receiveShadow = true;
+
+      // ─ Presentation disc (user-colored top surface)
+      const discGeo = new THREE.CylinderGeometry(radius * 0.94, radius * 0.94, 0.005, 64);
+      const discMat = new THREE.MeshStandardMaterial({
+        color: groundHex,
+        roughness: 0.6,
+        metalness: 0.08,
+      });
+      const disc = new THREE.Mesh(discGeo, discMat);
+      disc.position.y = groundY + 0.003;
+      disc.receiveShadow = true;
+
+      group.add(base);
+      group.add(rim);
+      group.add(lip);
+      group.add(disc);
       this.scene.add(group);
       this._groundMesh = group as unknown as THREE.Mesh;
       return;

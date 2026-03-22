@@ -169,10 +169,12 @@ export class SimulationPanel {
       if (this._simActive) {
         this.applySimulation();
       } else {
+        // Restore real HA state: sun position, weather, lights
         this.env.removeWeatherParticles();
         this.env.weatherType = 'none';
         const hass = this.getHass();
         if (hass) {
+          this.env.updateFromHass(hass);
           syncLights(this.getAnchors(), hass, this.getEffectiveConfig());
           this.updateOverlayStates();
           this.requestRender();
