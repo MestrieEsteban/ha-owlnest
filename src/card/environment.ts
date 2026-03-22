@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
-import type { CardConfig, Hass } from '../types';
+import type { CardConfig, Hass, SunMode, GroundStyle } from '../types';
 
 export type WeatherEffect =
   | 'none'
@@ -81,19 +81,56 @@ export class EnvironmentController {
     }
   }
 
+  /**
+   * Apply sun light. In 'realistic' mode, house_orientation offsets the azimuth
+   * so the sun trajectory matches the real-world orientation of the house.
+   */
   applySunLight(elevation: number, azimuth: number) {
+    const cfg = this.getConfig();
+    const rl = cfg?.rendering ?? {};
+    const sunMode: SunMode = rl.sun_mode ?? 'showcase';
+    const isRealistic = sunMode === 'realistic';
+
+    // User-configured base intensities (sliders in editor)
+    const userSunIntensity = rl.sun_intensity ?? 0.8;
+    const userAmbientIntensity = rl.ambient_intensity ?? 0.7;
+
+    // In realistic mode, offset azimuth by house orientation
+    let effectiveAzimuth = azimuth;
+    if (isRealistic && rl.house_orientation !== undefined) {
+      effectiveAzimuth = azimuth + rl.house_orientation;
+    }
+
     const t = Math.max(0, Math.min(1, (elevation + 10) / 30));
     const isNight = elevation < -2;
 
-    this.hemiLight.intensity = isNight ? 0.45 : THREE.MathUtils.lerp(0.15, 0.7, t);
+    // ── Hemisphere (ambient) light ──────────────────────────────────────
+    // The cycle computes a 0..1 factor, then multiplied by user intensity.
+    let ambientFactor: number;
+    if (isRealistic) {
+      // Realistic: lower ambient ratio → darker shadows, more contrast
+      ambientFactor = isNight ? 0.5 : THREE.MathUtils.lerp(0.15, 0.65, t);
+    } else {
+      // Showcase: generous ambient for a flattering, soft look
+      ambientFactor = isNight ? 0.65 : THREE.MathUtils.lerp(0.2, 1.0, t);
+    }
+    this.hemiLight.intensity = ambientFactor * userAmbientIntensity;
 
-    // Smooth 3-stop interpolation: night blue → soft peach (golden hour) → warm white (day)
-    // Avoids the harsh saturated orange of the old palette.
+    // Color interpolation: night blue → golden hour → day white
     if (isNight) {
       this.hemiLight.color.setHex(0x3a5080);
+    } else if (isRealistic) {
+      const goldenHour = new THREE.Color(0xeec090);
+      const dayWhite   = new THREE.Color(0xf0ece4);
+      if (t < 0.5) {
+        this.hemiLight.color.setHex(0x3a5080);
+        this.hemiLight.color.lerp(goldenHour, t * 2);
+      } else {
+        this.hemiLight.color.copy(goldenHour).lerp(dayWhite, (t - 0.5) * 2);
+      }
     } else {
-      const goldenHour = new THREE.Color(0xffc896); // soft peach-amber, desaturated
-      const dayWhite   = new THREE.Color(0xfff4e0); // warm white
+      const goldenHour = new THREE.Color(0xffc896);
+      const dayWhite   = new THREE.Color(0xfff4e0);
       if (t < 0.5) {
         this.hemiLight.color.setHex(0x3a5080);
         this.hemiLight.color.lerp(goldenHour, t * 2);
@@ -104,8 +141,20 @@ export class EnvironmentController {
 
     this.hemiLight.groundColor.setHex(isNight ? 0x0d1a2e : (t > 0.5 ? 0x1a1a2e : 0x0d1020));
 
-    this.sunLight.intensity = Math.max(0, elevation / 60) * 0.9;
-    const azRad = ((azimuth - 180) * Math.PI) / 180;
+    // ── Directional (sun) light ─────────────────────────────────────────
+    // Cycle computes a 0..1 factor, then multiplied by user sun intensity.
+    let sunFactor: number;
+    if (isRealistic) {
+      // Steeper curve: negligible below 5°, ramps to full between 5° and 50°
+      sunFactor = Math.max(0, (elevation - 5) / 45);
+      this.sunLight.color.setHex(isNight ? 0xfff4c2 : (t < 0.4 ? 0xffcc88 : 0xfff0d8));
+    } else {
+      sunFactor = Math.max(0, elevation / 60);
+      this.sunLight.color.setHex(0xfff4c2);
+    }
+    this.sunLight.intensity = sunFactor * userSunIntensity;
+
+    const azRad = ((effectiveAzimuth - 180) * Math.PI) / 180;
     const elRad = (elevation * Math.PI) / 180;
     this.sunLight.position.set(
       Math.sin(azRad) * Math.cos(elRad) * 10,
@@ -113,7 +162,7 @@ export class EnvironmentController {
       Math.cos(azRad) * Math.cos(elRad) * 10,
     );
 
-    this.setSkyPos(elevation, azimuth);
+    this.setSkyPos(elevation, effectiveAzimuth);
     this.requestRender();
   }
 
@@ -575,19 +624,144 @@ export class EnvironmentController {
     }
   }
 
+  // ── Light occlusion (invisible shadow-casting roof) ──────────────────────
+
+  private _occlusionMesh: THREE.Mesh | null = null;
+
+  /**
+   * Add an invisible plane above the model that casts shadows downward,
+   * simulating a closed roof for light calculations. The plane is invisible
+   * in the final render but participates in shadow mapping.
+   */
+  addOcclusion(modelBox: THREE.Box3) {
+    this.removeOcclusion();
+    const size = modelBox.getSize(new THREE.Vector3());
+    // Cover the full footprint with generous margin
+    const spreadX = size.x * 1.4;
+    const spreadZ = size.z * 1.4;
+    const geo = new THREE.PlaneGeometry(spreadX, spreadZ);
+
+    // The trick: use a standard material so Three.js shadow map renders this mesh
+    // during the depth pass, but make it fully transparent to the main camera.
+    // - side: DoubleSide ensures the shadow is cast regardless of light direction
+    // - opacity: 0 + transparent: true → invisible in main render
+    // - The shadow map renderer ignores opacity and uses the depth material,
+    //   so the mesh still writes to the shadow map correctly.
+    const mat = new THREE.MeshStandardMaterial({
+      transparent: true,
+      opacity: 0,
+      side: THREE.DoubleSide,
+      // Prevent this invisible mesh from writing to the main depth buffer
+      // (avoids occluding other objects in the camera view)
+      depthWrite: false,
+    });
+
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.rotation.x = -Math.PI / 2;
+    // Place just above the model top
+    mesh.position.y = size.y / 2 + 0.05;
+    mesh.castShadow = true;
+    mesh.receiveShadow = false;
+    // Ensure the shadow map uses a proper depth material
+    mesh.customDepthMaterial = new THREE.MeshDepthMaterial({
+      depthPacking: THREE.RGBADepthPacking,
+      side: THREE.DoubleSide,
+    });
+    // Don't let raycaster pick this up
+    mesh.raycast = () => {};
+    mesh.name = '__owlnest_occlusion';
+    // renderOrder very high so transparency doesn't hide other objects
+    mesh.renderOrder = 999;
+    this.scene.add(mesh);
+    this._occlusionMesh = mesh;
+  }
+
+  removeOcclusion() {
+    if (this._occlusionMesh) {
+      this.scene.remove(this._occlusionMesh);
+      this._occlusionMesh.geometry.dispose();
+      (this._occlusionMesh.material as THREE.Material).dispose();
+      this._occlusionMesh.customDepthMaterial?.dispose();
+      this._occlusionMesh = null;
+    }
+  }
+
+  get hasOcclusion() { return this._occlusionMesh !== null; }
+
   // ── Ground ────────────────────────────────────────────────────────────────
 
-  private _groundMesh: THREE.Mesh | null = null;
+  private _groundMesh: THREE.Mesh | THREE.Group | null = null;
 
   addGround(originalBox: THREE.Box3, config: CardConfig) {
     this.removeGround();
     const size = originalBox.getSize(new THREE.Vector3());
-    const spread = Math.max(size.x, size.z) * 6;
     const groundY = -size.y / 2 - 0.01;
-    const geo = new THREE.PlaneGeometry(spread, spread);
     const groundHex = config?.rendering?.ground_color
       ? parseInt(config.rendering.ground_color.replace('#', ''), 16)
       : 0x4a6741;
+    const style: GroundStyle = config?.rendering?.ground_style ?? 'square';
+    const scale = config?.rendering?.ground_scale ?? 1.0;
+
+    if (style === 'none') return;
+
+    const maxDim = Math.max(size.x, size.z);
+    const group = new THREE.Group();
+    group.name = '__owlnest_ground';
+
+    if (style === 'podium') {
+      // 3D cylindrical podium — elegant raised platform
+      const radius = maxDim * 0.9 * scale;
+      const podiumHeight = maxDim * 0.06;
+      const cylGeo = new THREE.CylinderGeometry(radius, radius * 1.02, podiumHeight, 64);
+      const mat = new THREE.MeshStandardMaterial({
+        color: groundHex,
+        roughness: 0.7,
+        metalness: 0.05,
+      });
+      const cyl = new THREE.Mesh(cylGeo, mat);
+      cyl.position.y = groundY - podiumHeight / 2 + 0.01;
+      cyl.receiveShadow = true;
+      cyl.castShadow = true;
+
+      // Subtle bevel ring on top edge for a premium look
+      const ringGeo = new THREE.TorusGeometry(radius, podiumHeight * 0.08, 8, 64);
+      const ringMat = new THREE.MeshStandardMaterial({
+        color: groundHex,
+        roughness: 0.5,
+        metalness: 0.15,
+      });
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      ring.rotation.x = Math.PI / 2;
+      ring.position.y = groundY + 0.01;
+      ring.receiveShadow = true;
+
+      group.add(cyl);
+      group.add(ring);
+      this.scene.add(group);
+      this._groundMesh = group as unknown as THREE.Mesh;
+      return;
+    }
+
+    let geo: THREE.BufferGeometry;
+    switch (style) {
+      case 'disc': {
+        const radius = maxDim * 1.0 * scale;
+        geo = new THREE.CircleGeometry(radius, 64);
+        break;
+      }
+      case 'infinite': {
+        const spread = maxDim * 30;
+        geo = new THREE.PlaneGeometry(spread, spread);
+        break;
+      }
+      case 'square':
+      default: {
+        const spread = maxDim * 6 * scale;
+        geo = new THREE.PlaneGeometry(spread, spread);
+        break;
+      }
+    }
+
     const mat = new THREE.MeshStandardMaterial({ color: groundHex, roughness: 1, metalness: 0 });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.rotation.x = -Math.PI / 2;
@@ -600,15 +774,36 @@ export class EnvironmentController {
   updateGroundColor(hexColor: string | undefined) {
     if (!this._groundMesh) return;
     const hex = hexColor ? parseInt(hexColor.replace('#', ''), 16) : 0x4a6741;
-    (this._groundMesh.material as THREE.MeshStandardMaterial).color.setHex(hex);
-    (this._groundMesh.material as THREE.MeshStandardMaterial).needsUpdate = true;
+    const applyColor = (obj: THREE.Object3D) => {
+      if ((obj as THREE.Mesh).isMesh) {
+        const mat = (obj as THREE.Mesh).material as THREE.MeshStandardMaterial;
+        mat.color.setHex(hex);
+        mat.needsUpdate = true;
+      }
+    };
+    if (this._groundMesh instanceof THREE.Group) {
+      this._groundMesh.traverse(applyColor);
+    } else {
+      applyColor(this._groundMesh);
+    }
   }
 
   removeGround() {
     if (this._groundMesh) {
       this.scene.remove(this._groundMesh);
-      this._groundMesh.geometry.dispose();
-      (this._groundMesh.material as THREE.Material).dispose();
+      const dispose = (obj: THREE.Object3D) => {
+        if ((obj as THREE.Mesh).isMesh) {
+          (obj as THREE.Mesh).geometry.dispose();
+          const mat = (obj as THREE.Mesh).material;
+          if (Array.isArray(mat)) mat.forEach(m => m.dispose());
+          else (mat as THREE.Material).dispose();
+        }
+      };
+      if (this._groundMesh instanceof THREE.Group) {
+        this._groundMesh.traverse(dispose);
+      } else {
+        dispose(this._groundMesh);
+      }
       this._groundMesh = null;
     }
   }

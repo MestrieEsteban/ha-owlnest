@@ -188,7 +188,15 @@ export class SimulationPanel {
 
   applySimulation() {
     const elevation = this._timeToElevation(this._simHour);
-    const azimuth = 180; // south at noon, simplified
+    // Simulate a realistic azimuth trajectory: east (90°) at sunrise → south (180°) at noon → west (270°) at sunset
+    const cfg = this.getEffectiveConfig();
+    const sunMode = cfg?.rendering?.sun_mode ?? 'showcase';
+    let azimuth = 180;
+    if (sunMode === 'realistic') {
+      // Map hour to azimuth: 6h→90°(E), 12h→180°(S), 18h→270°(W)
+      azimuth = 90 + ((this._simHour - 6) / 12) * 180;
+      azimuth = Math.max(0, Math.min(360, azimuth));
+    }
     this.env.applySunLight(elevation, azimuth);
 
     // Apply weather — map sim presets to HA weather states

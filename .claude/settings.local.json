@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /d/esteban.dev/HA/src -type f \\\\\\(-name *.ts -o -name *.tsx \\\\\\))",
+      "Bash(npm run:*)"
+    ]
+  }
+}

@@ -78,16 +78,32 @@ export interface SceneSettings {
     max_distance?: number;
     max_polar_angle?: number;
   };
-  rendering?: {
-    exposure?: number;
-    fog_density?: number;
-    ground_color?: string;
-    shadows?: boolean;
-    transparent_background?: boolean;
-    sky?: boolean;
-    sun_intensity?: number;
-    ambient_intensity?: number;
-  };
+  rendering?: RenderingConfig;
+}
+
+export type SunMode = 'showcase' | 'realistic';
+export type LightOcclusion = 'none' | 'top';
+export type GroundStyle = 'square' | 'disc' | 'infinite' | 'podium' | 'none';
+
+export interface RenderingConfig {
+  exposure?: number;
+  fog_density?: number;
+  ground_color?: string;
+  shadows?: boolean;
+  transparent_background?: boolean;
+  sky?: boolean;
+  sun_intensity?: number;
+  ambient_intensity?: number;
+  /** Sun rendering mode: 'showcase' (free/pretty) or 'realistic' (physically oriented) */
+  sun_mode?: SunMode;
+  /** House orientation relative to north, in degrees (0 = model front faces north, 90 = east, etc.) */
+  house_orientation?: number;
+  /** Light occlusion to prevent sun from entering open-top models */
+  light_occlusion?: LightOcclusion;
+  /** Ground/base style */
+  ground_style?: GroundStyle;
+  /** Ground scale multiplier (default 1.0, range 0.5–3.0) */
+  ground_scale?: number;
 }
 
 /** A full Owlnest scene, persisted by the backend integration. */
@@ -125,17 +141,9 @@ export interface CardConfig {
     transition?: number;
   };
   camera_views?: CameraView[];
-  rendering?: {
-    exposure?: number;
-    sun_intensity?: number;
-    ambient_intensity?: number;
-    shadows?: boolean;
-    sky?: boolean;
+  rendering?: RenderingConfig & {
     sky_elevation?: number;
-    fog_density?: number;
-    ground_color?: string;
     background_color?: string;
-    transparent_background?: boolean;
   };
   tap_to_toggle?: boolean;
   cluster_threshold?: number;

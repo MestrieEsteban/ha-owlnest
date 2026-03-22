@@ -69,6 +69,7 @@ class Ha3dFloorplan extends HTMLElement {
 
   private _dirty = false;
   private _lastTime = 0;
+  private _lastGroundKey = '';
 
   // Overlay visibility (tap-to-toggle)
   private _overlaysVisible = true;
@@ -1574,11 +1575,13 @@ class Ha3dFloorplan extends HTMLElement {
     if (rl.shadows !== undefined) {
       this.renderer.shadowMap.enabled = rl.shadows;
       this.renderer.shadowMap.needsUpdate = true;
-      // Propagate shadow cast/receive to all scene meshes
+      // Propagate shadow cast/receive — skip glass/transparent materials
       this.scene.traverse((obj) => {
         if ((obj as THREE.Mesh).isMesh) {
-          obj.castShadow = rl.shadows!;
-          obj.receiveShadow = rl.shadows!;
+          const mat = (obj as THREE.Mesh).material as THREE.Material;
+          const isGlass = mat.transparent && mat.opacity < 0.65;
+          (obj as THREE.Mesh).castShadow = rl.shadows! && !isGlass;
+          (obj as THREE.Mesh).receiveShadow = rl.shadows!;
         }
       });
     }
@@ -1604,25 +1607,47 @@ class Ha3dFloorplan extends HTMLElement {
         // Re-add ground if it was removed and model is loaded
         if (this._modelRoot && this._env && !this._env.hasGround) {
           const box = new THREE.Box3().setFromObject(this._modelRoot);
-          this._env.addGround(box, this._config!);
+          this._env.addGround(box, ec);
         }
       }
     }
-    // Ambient intensity
-    if (rl.ambient_intensity !== undefined && this._hemiLight) {
-      this._hemiLight.intensity = rl.ambient_intensity;
+    // Sun / ambient intensities are now applied as multipliers inside
+    // applySunLight(), so we don't set them directly here — updateFromHass
+    // at the end will pick up the new config values.
+
+    // Light occlusion — add/remove invisible shadow-casting roof
+    if (this._env && this._modelRoot) {
+      const wantOcclusion = rl.light_occlusion === 'top';
+      if (wantOcclusion && !this._env.hasOcclusion) {
+        this._env.addOcclusion(this._modelBox);
+      } else if (!wantOcclusion && this._env.hasOcclusion) {
+        this._env.removeOcclusion();
+      }
     }
-    // Sun intensity
-    if (rl.sun_intensity !== undefined && this._sunLight) {
-      this._sunLight.intensity = rl.sun_intensity;
+    // Ground style — rebuild ground only when ground-related settings change
+    if (this._env && this._modelRoot && rl.transparent_background !== true) {
+      const groundKey = `${rl.ground_style ?? 'square'}|${rl.ground_scale ?? 1}|${rl.ground_color ?? ''}`;
+      if (groundKey !== this._lastGroundKey) {
+        this._lastGroundKey = groundKey;
+        const box = new THREE.Box3().setFromObject(this._modelRoot);
+        this._env.addGround(box, ec);
+      }
     }
     // Orbit limits
     const orb = ec.orbit ?? {};
     if (orb.min_distance !== undefined) this.controls.minDistance = orb.min_distance;
     if (orb.max_distance !== undefined) this.controls.maxDistance = orb.max_distance;
     if (orb.max_polar_angle !== undefined) this.controls.maxPolarAngle = orb.max_polar_angle * Math.PI;
-    // Env entities — trigger updateFromHass with updated effective config
-    if (this._hass && this._env) this._env.updateFromHass(this._hass);
+
+    // Re-apply environment: sun mode, orientation, intensities via applySunLight
+    if (this._env) {
+      // If simulation is active, re-apply it (it calls applySunLight internally)
+      if (this._sim?.isActive) {
+        this._sim.applySimulation();
+      } else if (this._hass) {
+        this._env.updateFromHass(this._hass);
+      }
+    }
   }
 
   // ── Model loading ─────────────────────────────────────────────────────
@@ -1657,10 +1682,13 @@ class Ha3dFloorplan extends HTMLElement {
     }
     loadingEl.remove();
 
-    // Enable shadows on all meshes
+    // Enable shadows on all meshes — but skip transparent/glass materials
+    // so that windows let light (and shadows) pass through.
     model.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
-        obj.castShadow = true;
+        const mat = obj.material as THREE.Material;
+        const isGlass = mat.transparent && mat.opacity < 0.65;
+        obj.castShadow = !isGlass;
         obj.receiveShadow = true;
       }
     });
@@ -1695,7 +1723,11 @@ class Ha3dFloorplan extends HTMLElement {
     this.scene.add(model);
     this._modelRoot = model;
     if (ec.rendering?.transparent_background !== true && this._env) {
-      this._env.addGround(box, this._config!);
+      this._env.addGround(box, ec);
+    }
+    // Add occlusion plane if configured
+    if (ec.rendering?.light_occlusion === 'top' && this._env) {
+      this._env.addOcclusion(this._modelBox);
     }
 
     this.anchors = detectAnchors(model, this.scene, ec);

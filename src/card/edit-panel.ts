@@ -5,6 +5,88 @@ import type { AnchorEditor, EditorTool } from '../editor';
 import type { OwlnestRule, Action } from '../rules/types';
 import { t, setLang } from '../i18n';
 
+/** Create a "?" tooltip badge with a fixed-position popup that escapes overflow containers. */
+function createHelpBadge(text: string): HTMLElement {
+  const badge = document.createElement('span');
+  badge.textContent = '?';
+  badge.style.cssText = [
+    'display:inline-flex', 'align-items:center', 'justify-content:center',
+    'width:14px', 'height:14px', 'border-radius:50%',
+    'font-size:9px', 'font-weight:700', 'cursor:help',
+    'background:rgba(255,255,255,0.08)', 'color:#64748b',
+    'border:1px solid rgba(255,255,255,0.1)',
+    'transition:background .15s,color .15s',
+    'flex-shrink:0', 'margin-left:4px',
+  ].join(';');
+
+  let popup: HTMLDivElement | null = null;
+
+  const showPopup = () => {
+    if (popup) return;
+    popup = document.createElement('div');
+    popup.textContent = text;
+    popup.style.cssText = [
+      'position:fixed',
+      'background:rgba(15,23,42,0.96)',
+      'backdrop-filter:blur(10px)', '-webkit-backdrop-filter:blur(10px)',
+      'border:1px solid rgba(255,255,255,0.15)',
+      'border-radius:8px', 'padding:8px 10px',
+      'font-size:11px', 'font-weight:400', 'line-height:1.4',
+      'color:#e2e8f0', 'white-space:normal',
+      'width:220px', 'max-width:260px',
+      'pointer-events:none',
+      'z-index:99999',
+      'box-shadow:0 4px 16px rgba(0,0,0,0.5)',
+      'opacity:0', 'transition:opacity .12s',
+    ].join(';');
+
+    const arrow = document.createElement('div');
+    arrow.style.cssText = [
+      'position:absolute', 'top:100%', 'left:50%', 'transform:translateX(-50%)',
+      'width:0', 'height:0',
+      'border-left:5px solid transparent', 'border-right:5px solid transparent',
+      'border-top:5px solid rgba(15,23,42,0.96)',
+    ].join(';');
+    popup.appendChild(arrow);
+
+    const attachTarget = badge.getRootNode() as Document | ShadowRoot;
+    if (attachTarget instanceof ShadowRoot) {
+      attachTarget.appendChild(popup);
+    } else {
+      document.body.appendChild(popup);
+    }
+
+    const rect = badge.getBoundingClientRect();
+    const popupWidth = 220;
+    let left = rect.left + rect.width / 2 - popupWidth / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - popupWidth - 8));
+    popup.style.left = `${left}px`;
+    popup.style.top = `${rect.top - 6}px`;
+    popup.style.transform = 'translateY(-100%)';
+
+    requestAnimationFrame(() => { if (popup) popup.style.opacity = '1'; });
+    badge.style.background = 'rgba(125,209,252,0.2)';
+    badge.style.color = '#7dd3fc';
+  };
+
+  const hidePopup = () => {
+    if (popup) { popup.remove(); popup = null; }
+    badge.style.background = 'rgba(255,255,255,0.08)';
+    badge.style.color = '#64748b';
+  };
+
+  badge.addEventListener('mouseenter', showPopup);
+  badge.addEventListener('mouseleave', hidePopup);
+  let touchOpen = false;
+  badge.addEventListener('click', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    touchOpen = !touchOpen;
+    if (touchOpen) showPopup(); else hidePopup();
+  });
+
+  return badge;
+}
+
 export class EditPanel {
   private _panel: HTMLDivElement | null = null;
   private _saveStatus: 'saved' | 'unsaved' | 'saving' = 'saved';
@@ -734,19 +816,61 @@ export class EditPanel {
       return inp;
     };
 
-    // Slider field helper
-    const sliderField = (labelText: string, min: number, max: number, step: number, value: number, fmt: (v: number) => string, onChange: (v: number) => void) => {
+    const helpBadge = createHelpBadge;
+
+    // ── Helper: labelled select ──────────────────────────────────────────
+    const selectField = (
+      labelText: string,
+      helpText: string | null,
+      options: [string, string][],
+      current: string,
+      onChange: (v: string) => void,
+    ) => {
       const wrap = document.createElement('div');
       wrap.style.cssText = 'margin-bottom:8px;';
-      const hdr = document.createElement('div');
-      hdr.style.cssText = 'display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px;';
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;margin-bottom:3px;';
       const lbl = document.createElement('span');
       lbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;';
       lbl.textContent = labelText;
+      row.appendChild(lbl);
+      if (helpText) row.appendChild(helpBadge(helpText));
+      wrap.appendChild(row);
+      const sel = document.createElement('select');
+      sel.style.cssText = inputStyle + ';cursor:pointer;';
+      options.forEach(([val, label]) => {
+        const o = document.createElement('option');
+        o.value = val; o.textContent = label;
+        if (current === val) o.selected = true;
+        sel.appendChild(o);
+      });
+      sel.addEventListener('change', () => onChange(sel.value));
+      wrap.appendChild(sel);
+      root.appendChild(wrap);
+    };
+
+    // ── Helper: slider with help badge ───────────────────────────────────
+    const sliderWithHelp = (
+      labelText: string, helpText: string | null,
+      min: number, max: number, step: number, value: number,
+      fmt: (v: number) => string, onChange: (v: number) => void,
+    ) => {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'margin-bottom:8px;';
+      const hdr = document.createElement('div');
+      hdr.style.cssText = 'display:flex;align-items:center;margin-bottom:3px;';
+      const lbl = document.createElement('span');
+      lbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;';
+      lbl.textContent = labelText;
+      hdr.appendChild(lbl);
+      if (helpText) hdr.appendChild(helpBadge(helpText));
+      const spacer = document.createElement('span');
+      spacer.style.cssText = 'flex:1;';
+      hdr.appendChild(spacer);
       const val = document.createElement('span');
       val.style.cssText = 'font-size:10px;color:#e2e8f0;font-weight:600;';
       val.textContent = fmt(value);
-      hdr.appendChild(lbl); hdr.appendChild(val);
+      hdr.appendChild(val);
       const sl = document.createElement('input');
       sl.type = 'range'; sl.min = String(min); sl.max = String(max); sl.step = String(step); sl.value = String(value);
       sl.style.cssText = 'width:100%;cursor:pointer;margin:0;accent-color:#7dd3fc;';
@@ -755,8 +879,8 @@ export class EditPanel {
       root.appendChild(wrap);
     };
 
-    // Toggle helper
-    const toggleField = (labelText: string, checked: boolean, onChange: (v: boolean) => void) => {
+    // ── Helper: toggle with help badge ───────────────────────────────────
+    const toggleWithHelp = (labelText: string, helpText: string | null, checked: boolean, onChange: (v: boolean) => void) => {
       const wrap = document.createElement('label');
       wrap.style.cssText = 'display:flex;align-items:center;gap:7px;margin-bottom:8px;cursor:pointer;font-size:11px;color:#e2e8f0;';
       const chk = document.createElement('input');
@@ -765,97 +889,191 @@ export class EditPanel {
       const lbl = document.createElement('span');
       lbl.textContent = labelText;
       wrap.appendChild(chk); wrap.appendChild(lbl);
+      if (helpText) wrap.appendChild(helpBadge(helpText));
       root.appendChild(wrap);
     };
 
-    // ── Scene ─────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════
+    // 0) SCENE — scene ID, model URL
+    // ══════════════════════════════════════════════════════════════════════
     sec(t('cfgScene'));
 
-    const sceneIdInput = textInput(this.getSceneId() ?? '', t('cfgSceneIdPh'), () => {});
-    const sceneIdDlId = 'owlnest-cfg-scenes-dl';
-    sceneIdInput.setAttribute('list', sceneIdDlId);
-    const scenesDl = document.createElement('datalist');
-    scenesDl.id = sceneIdDlId;
-    root.appendChild(scenesDl);
-    // Populate datalist async
-    this.listScenesFn?.().then((ids) => {
-      ids.forEach((id) => {
-        const opt = document.createElement('option');
-        opt.value = id;
-        scenesDl.appendChild(opt);
+    {
+      const sceneIdInput = textInput(this.getSceneId() ?? '', t('cfgSceneIdPh'), () => {});
+      const sceneIdDlId = 'owlnest-cfg-scenes-dl';
+      sceneIdInput.setAttribute('list', sceneIdDlId);
+      const scenesDl = document.createElement('datalist');
+      scenesDl.id = sceneIdDlId;
+      root.appendChild(scenesDl);
+      this.listScenesFn?.().then((ids) => {
+        ids.forEach((id) => {
+          const opt = document.createElement('option');
+          opt.value = id;
+          scenesDl.appendChild(opt);
+        });
       });
+      const sceneRow = document.createElement('div');
+      sceneRow.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;';
+      sceneRow.appendChild(sceneIdInput);
+      const loadSceneBtn = document.createElement('button');
+      loadSceneBtn.textContent = t('cfgLoadScene');
+      loadSceneBtn.style.cssText = 'flex-shrink:0;background:rgba(125,209,252,0.12);border:1px solid rgba(125,209,252,0.28);border-radius:7px;color:#7dd3fc;padding:6px 10px;font-size:11px;font-family:inherit;cursor:pointer;white-space:nowrap;';
+      loadSceneBtn.addEventListener('click', () => {
+        const newId = sceneIdInput.value.trim();
+        if (!newId) return;
+        localStorage.setItem('owlnest_scene_id', newId);
+        this.onSceneSettingsChange?.({ scene_id: newId } as SceneSettings, true);
+      });
+      sceneRow.appendChild(loadSceneBtn);
+      const sceneWrap = document.createElement('div');
+      sceneWrap.style.cssText = 'margin-bottom:8px;';
+      const sceneLblRow = document.createElement('div');
+      sceneLblRow.style.cssText = 'display:flex;align-items:center;margin-bottom:3px;';
+      const sceneLbl = document.createElement('span');
+      sceneLbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;';
+      sceneLbl.textContent = t('cfgSceneId');
+      sceneLblRow.appendChild(sceneLbl);
+      sceneLblRow.appendChild(helpBadge(t('helpSceneId')));
+      sceneWrap.appendChild(sceneLblRow); sceneWrap.appendChild(sceneRow);
+      root.appendChild(sceneWrap);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // 1) SCENE PRESENTATION — sun mode, orientation, occlusion
+    // ══════════════════════════════════════════════════════════════════════
+    sec(t('cfgPresentation'));
+
+    selectField(t('cfgSunMode'), t('helpSunMode'), [
+      ['showcase', t('cfgSunModeShowcase')],
+      ['realistic', t('cfgSunModeRealistic')],
+    ], rendering.sun_mode ?? 'showcase', (v) => {
+      this.onSceneSettingsChange?.({ rendering: { ...rendering, sun_mode: v as 'showcase' | 'realistic' } });
     });
 
-    const sceneRow = document.createElement('div');
-    sceneRow.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;';
-    sceneRow.appendChild(sceneIdInput);
-    const loadSceneBtn = document.createElement('button');
-    loadSceneBtn.textContent = t('cfgLoadScene');
-    loadSceneBtn.style.cssText = 'flex-shrink:0;background:rgba(125,209,252,0.12);border:1px solid rgba(125,209,252,0.28);border-radius:7px;color:#7dd3fc;padding:6px 10px;font-size:11px;font-family:inherit;cursor:pointer;white-space:nowrap;';
-    loadSceneBtn.addEventListener('click', () => {
-      const newId = sceneIdInput.value.trim();
-      if (!newId) return;
-      localStorage.setItem('owlnest_scene_id', newId);
-      this.onSceneSettingsChange?.({ scene_id: newId } as SceneSettings, true);
+    // House orientation — compass slider
+    {
+      const currentOrientation = rendering.house_orientation ?? 0;
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'margin-bottom:8px;';
+      const hdr = document.createElement('div');
+      hdr.style.cssText = 'display:flex;align-items:center;margin-bottom:3px;';
+      const lbl = document.createElement('span');
+      lbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;';
+      lbl.textContent = t('cfgHouseOrientation');
+      hdr.appendChild(lbl);
+      hdr.appendChild(helpBadge(t('helpHouseOrientation')));
+      const spacer = document.createElement('span');
+      spacer.style.cssText = 'flex:1;';
+      hdr.appendChild(spacer);
+      const val = document.createElement('span');
+      val.style.cssText = 'font-size:10px;color:#e2e8f0;font-weight:600;';
+      const cardinals = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+      const toCardinal = (deg: number) => {
+        const idx = Math.round(((deg % 360) + 360) % 360 / 45) % 8;
+        return `${Math.round(deg)}° ${cardinals[idx]}`;
+      };
+      val.textContent = toCardinal(currentOrientation);
+      hdr.appendChild(val);
+      const sl = document.createElement('input');
+      sl.type = 'range'; sl.min = '0'; sl.max = '359'; sl.step = '5'; sl.value = String(currentOrientation);
+      sl.style.cssText = 'width:100%;cursor:pointer;margin:0;accent-color:#7dd3fc;';
+      sl.addEventListener('input', () => {
+        const v = parseFloat(sl.value);
+        val.textContent = toCardinal(v);
+        this.onSceneSettingsChange?.({ rendering: { ...rendering, house_orientation: v } });
+      });
+      wrap.appendChild(hdr); wrap.appendChild(sl);
+      root.appendChild(wrap);
+    }
+
+    selectField(t('cfgLightOcclusion'), t('helpLightOcclusion'), [
+      ['none', t('cfgOcclusionNone')],
+      ['top', t('cfgOcclusionTop')],
+    ], rendering.light_occlusion ?? 'none', (v) => {
+      this.onSceneSettingsChange?.({ rendering: { ...rendering, light_occlusion: v as 'none' | 'top' } });
     });
-    sceneRow.appendChild(loadSceneBtn);
-    const sceneWrap = document.createElement('div');
-    sceneWrap.style.cssText = 'margin-bottom:8px;';
-    const sceneLbl = document.createElement('div');
-    sceneLbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;';
-    sceneLbl.textContent = t('cfgSceneId');
-    sceneWrap.appendChild(sceneLbl); sceneWrap.appendChild(sceneRow);
-    root.appendChild(sceneWrap);
 
-    // ── Rendering ─────────────────────────────────────────────────────
-    sec(t('cfgRender'));
+    // ══════════════════════════════════════════════════════════════════════
+    // 2) GROUND — style, color, scale
+    // ══════════════════════════════════════════════════════════════════════
+    sec(t('cfgGroundStyle'));
 
-    sliderField(t('cfgExposure'), 0.5, 2, 0.05, rendering.exposure ?? 1.4,
-      (v) => v.toFixed(2), (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, exposure: v } }));
-
-    sliderField(t('cfgFogDensity'), 0, 0.05, 0.001, rendering.fog_density ?? 0.018,
-      (v) => v.toFixed(3), (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, fog_density: v } }));
+    selectField(t('cfgGroundStyle'), t('helpGroundStyle'), [
+      ['square', t('cfgGroundSquare')],
+      ['disc', t('cfgGroundDisc')],
+      ['podium', t('cfgGroundPodium')],
+      ['infinite', t('cfgGroundInfinite')],
+      ['none', t('cfgGroundNone')],
+    ], rendering.ground_style ?? 'square', (v) => {
+      this.onSceneSettingsChange?.({ rendering: { ...rendering, ground_style: v as 'square' | 'disc' | 'infinite' | 'podium' | 'none' } });
+    });
 
     // Ground color
-    const colorWrap = document.createElement('div');
-    colorWrap.style.cssText = 'margin-bottom:8px;display:flex;align-items:center;gap:8px;';
-    const colorLbl = document.createElement('div');
-    colorLbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;flex:1;';
-    colorLbl.textContent = t('cfgGroundColor');
-    const colorInput = document.createElement('input');
-    colorInput.type = 'color';
-    colorInput.value = rendering.ground_color ?? '#1a1a2e';
-    colorInput.style.cssText = 'width:36px;height:24px;border:none;border-radius:6px;cursor:pointer;padding:0;background:none;';
-    colorInput.addEventListener('input', () => this.onSceneSettingsChange?.({ rendering: { ...rendering, ground_color: colorInput.value } }));
-    colorWrap.appendChild(colorLbl); colorWrap.appendChild(colorInput);
-    root.appendChild(colorWrap);
+    {
+      const colorWrap = document.createElement('div');
+      colorWrap.style.cssText = 'margin-bottom:8px;display:flex;align-items:center;gap:8px;';
+      const colorLbl = document.createElement('div');
+      colorLbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;flex:1;';
+      colorLbl.textContent = t('cfgGroundColor');
+      colorLbl.appendChild(helpBadge(t('helpGroundColor')));
+      const colorInput = document.createElement('input');
+      colorInput.type = 'color';
+      colorInput.value = rendering.ground_color ?? '#1a1a2e';
+      colorInput.style.cssText = 'width:36px;height:24px;border:none;border-radius:6px;cursor:pointer;padding:0;background:none;';
+      colorInput.addEventListener('input', () => this.onSceneSettingsChange?.({ rendering: { ...rendering, ground_color: colorInput.value } }));
+      colorWrap.appendChild(colorLbl); colorWrap.appendChild(colorInput);
+      root.appendChild(colorWrap);
+    }
 
-    toggleField(t('cfgShadows'), rendering.shadows !== false, (v) => {
+    // Ground scale (visible for disc, podium, square — not infinite/none)
+    {
+      const currentStyle = rendering.ground_style ?? 'square';
+      if (currentStyle !== 'infinite' && currentStyle !== 'none') {
+        sliderWithHelp(t('cfgGroundScale'), t('helpGroundScale'), 0.5, 3, 0.1, rendering.ground_scale ?? 1.0,
+          (v) => '\u00d7' + v.toFixed(1), (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, ground_scale: v } }));
+      }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // 3) LIGHTING — sun, ambient, exposure, shadows
+    // ══════════════════════════════════════════════════════════════════════
+    sec(t('cfgRender'));
+
+    sliderWithHelp(t('cfgSunIntensity'), t('helpSunIntensity'), 0, 3, 0.05, rendering.sun_intensity ?? 0.8,
+      (v) => v.toFixed(2), (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, sun_intensity: v } }));
+
+    sliderWithHelp(t('cfgAmbientIntensity'), t('helpAmbientIntensity'), 0, 2, 0.05, rendering.ambient_intensity ?? 0.7,
+      (v) => v.toFixed(2), (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, ambient_intensity: v } }));
+
+    sliderWithHelp(t('cfgExposure'), t('helpExposure'), 0.5, 2, 0.05, rendering.exposure ?? 1.4,
+      (v) => v.toFixed(2), (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, exposure: v } }));
+
+    toggleWithHelp(t('cfgShadows'), t('helpShadows'), rendering.shadows !== false, (v) => {
       this.onSceneSettingsChange?.({ rendering: { ...rendering, shadows: v } });
     });
 
-    toggleField(t('cfgTransparent'), rendering.transparent_background === true, (v) => {
+    // ══════════════════════════════════════════════════════════════════════
+    // 4) ATMOSPHERE — fog, transparent
+    // ══════════════════════════════════════════════════════════════════════
+    sliderWithHelp(t('cfgFogDensity'), t('helpFogDensity'), 0, 0.05, 0.001, rendering.fog_density ?? 0.018,
+      (v) => v.toFixed(3), (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, fog_density: v } }));
+
+    toggleWithHelp(t('cfgTransparent'), t('helpTransparent'), rendering.transparent_background === true, (v) => {
       this.onSceneSettingsChange?.({ rendering: { ...rendering, transparent_background: v } });
     });
-
-    sliderField(t('cfgSunIntensity'), 0, 3, 0.05, rendering.sun_intensity ?? 0.8,
-      (v) => v.toFixed(2), (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, sun_intensity: v } }));
-
-    sliderField(t('cfgAmbientIntensity'), 0, 2, 0.05, rendering.ambient_intensity ?? 0.7,
-      (v) => v.toFixed(2), (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, ambient_intensity: v } }));
 
     // ── Camera limits ─────────────────────────────────────────────────────
     sec(t('cfgOrbit'));
     const orbit = settings.orbit ?? {};
 
-    sliderField(t('cfgMinDist'), 0, 20, 0.5, orbit.min_distance ?? 1,
+    sliderWithHelp(t('cfgMinDist'), t('helpMinDist'), 0, 20, 0.5, orbit.min_distance ?? 1,
       (v) => v.toFixed(1), (v) => this.onSceneSettingsChange?.({ orbit: { ...orbit, min_distance: v } }));
 
-    sliderField(t('cfgMaxDist'), 1, 200, 1, orbit.max_distance ?? 100,
+    sliderWithHelp(t('cfgMaxDist'), t('helpMaxDist'), 1, 200, 1, orbit.max_distance ?? 100,
       (v) => String(Math.round(v)), (v) => this.onSceneSettingsChange?.({ orbit: { ...orbit, max_distance: v } }));
 
-    sliderField(t('cfgMaxPolar'), 0, 1, 0.05, orbit.max_polar_angle ?? 0.5,
-      (v) => (v).toFixed(2) + '×π', (v) => this.onSceneSettingsChange?.({ orbit: { ...orbit, max_polar_angle: v } }));
+    sliderWithHelp(t('cfgMaxPolar'), t('helpMaxPolar'), 0, 1, 0.05, orbit.max_polar_angle ?? 0.5,
+      (v) => (v).toFixed(2) + '\u00d7\u03c0', (v) => this.onSceneSettingsChange?.({ orbit: { ...orbit, max_polar_angle: v } }));
 
     // ── Clustering ────────────────────────────────────────────────────────
     sec(t('cfgCluster'));
@@ -864,6 +1082,7 @@ export class EditPanel {
     const clusterLbl = document.createElement('div');
     clusterLbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;';
     clusterLbl.textContent = t('cfgClusterThreshold');
+    clusterLbl.appendChild(helpBadge(t('helpCluster')));
     const clusterInput = document.createElement('input');
     clusterInput.type = 'number'; clusterInput.min = '0'; clusterInput.step = '5';
     clusterInput.value = String(settings.cluster_threshold ?? 0);
@@ -876,6 +1095,17 @@ export class EditPanel {
 
     // ── Language ──────────────────────────────────────────────────────
     sec(t('cfgLang'));
+
+    {
+      const langLblRow = document.createElement('div');
+      langLblRow.style.cssText = 'display:flex;align-items:center;margin-bottom:3px;';
+      const langLbl = document.createElement('span');
+      langLbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;';
+      langLbl.textContent = t('cfgLang');
+      langLblRow.appendChild(langLbl);
+      langLblRow.appendChild(helpBadge(t('helpLanguage')));
+      root.appendChild(langLblRow);
+    }
 
     const langSelect = document.createElement('select');
     langSelect.style.cssText = inputStyle + ';cursor:pointer;';
@@ -917,13 +1147,17 @@ export class EditPanel {
       root.appendChild(d);
     };
 
-    const field = (labelText: string, el: HTMLElement) => {
+    const field = (labelText: string, el: HTMLElement, helpText?: string) => {
       const wrap = document.createElement('div');
       wrap.style.cssText = 'margin-bottom:8px;';
-      const lbl = document.createElement('div');
-      lbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;';
+      const lblRow = document.createElement('div');
+      lblRow.style.cssText = 'display:flex;align-items:center;margin-bottom:3px;';
+      const lbl = document.createElement('span');
+      lbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;';
       lbl.textContent = labelText;
-      wrap.appendChild(lbl); wrap.appendChild(el);
+      lblRow.appendChild(lbl);
+      if (helpText) lblRow.appendChild(createHelpBadge(helpText));
+      wrap.appendChild(lblRow); wrap.appendChild(el);
       root.appendChild(wrap);
     };
 
@@ -965,12 +1199,12 @@ export class EditPanel {
     field(t('cfgSunEntity'), entityAutocomplete(
       settings.sun_entity ?? this.getConfig?.()?.sun_entity ?? '', t('cfgSunEntityPh'), 'sun.',
       (v) => { this.onSceneSettingsChange?.({ sun_entity: v }); },
-    ));
+    ), t('helpSunEntity'));
 
     field(t('cfgWeatherEntity'), entityAutocomplete(
       settings.weather_entity ?? this.getConfig?.()?.weather_entity ?? '', t('cfgWeatherEntityPh'), 'weather.',
       (v) => { this.onSceneSettingsChange?.({ weather_entity: v }); },
-    ));
+    ), t('helpWeatherEntity'));
 
     // ── Simulation ────────────────────────────────────────────────────
     sec(t('cfgSim'));
