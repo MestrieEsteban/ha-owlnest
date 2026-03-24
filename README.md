@@ -129,20 +129,15 @@ model_url: /local/models/house.glb
 | Zoom | Scroll wheel | Pinch |
 | Pan | Right-click + drag | Two fingers + drag |
 
-Navigation limits (min/max distance, max angle) are configurable in the editor's **Config** tab or via YAML:
-
-```yaml
-orbit:
-  min_distance: 2
-  max_distance: 20
-  max_polar_angle: 85
-```
-
 ---
 
 ### Anchors
 
 Anchors are interactive points placed in the 3D scene. Each anchor is linked to a Home Assistant entity.
+
+<p align="center">
+  <img src="assets/moveLight.gif" alt="Moving an anchor in the editor" width="600" />
+</p>
 
 #### Supported domains
 
@@ -156,6 +151,7 @@ Anchors are interactive points placed in the 3D scene. Each anchor is linked to 
 | `climate` | Mode indicator (heating/cooling) | Orange/blue based on action |
 | `media_player` | Playing/paused indicator | Media icon |
 
+
 #### Light styles
 
 For `light` entities, three styles are available:
@@ -168,9 +164,6 @@ For `light` entities, three styles are available:
 
 Style and direction are configured in the anchor properties in edit mode.
 
-<p align="center">
-  <img src="assets/moveLight.gif" alt="Moving an anchor in the editor" width="600" />
-</p>
 
 #### Interactions
 
@@ -238,13 +231,14 @@ Camera views let you save viewpoints and navigate between them with smooth anima
 3. Click **Capture view** and give it a name
 4. The view appears in the navigation bar at the bottom of the scene
 
+<p align="center">
+  <img src="assets/vue.gif" alt="Camera views navigation" width="600" />
+</p>
+
 #### Hidden views
 
 A view can be marked as **hidden**: it won't appear in the navigation bar but remains available for rules (e.g. "fly to the kitchen when motion is detected").
 
-<p align="center">
-  <img src="assets/vue.gif" alt="Camera views navigation" width="600" />
-</p>
 
 ---
 
@@ -315,7 +309,7 @@ Set `sun_entity: sun.sun` to have sunlight follow the real sun position.
 
 | Mode | Description |
 |---|---|
-| **Showcase** | Soft, flattering light — ideal for presentation |
+| **Showcase** | Soft, flattering light, ideal for presentation |
 | **Realistic** | Accurate sun position, accounting for house orientation |
 
 In **realistic** mode, set `house_orientation` (in degrees) to align your model's north with real north:
@@ -338,13 +332,6 @@ Set `weather_entity: weather.home` for dynamic visual effects:
 | Hail | Hail particles |
 | Wind | Wind effect |
 
-#### Simulator
-
-The simulator (⏰ icon in the toolbar) lets you preview lighting at different times and weather conditions, without affecting real entities.
-
-#### Sky
-
-Enable `sky: true` to display a realistic atmospheric sky that follows the sun position (colorful sunrise/sunset, dark night).
 
 <p align="center">
   <img src="assets/meteo.gif" alt="Weather and sun effects" width="600" />
@@ -402,49 +389,6 @@ Here are all available options:
 type: custom:owlnest-card
 scene_id: my_home
 model_url: /local/models/house.glb
-
-# Environment entities
-sun_entity: sun.sun
-weather_entity: weather.home
-
-# Navigation
-orbit:
-  min_distance: 2
-  max_distance: 20
-  max_polar_angle: 85
-
-# Lights
-lights:
-  distance: 8
-  decay: 2
-  transition: 0.4
-
-# Rendering
-rendering:
-  shadows: true
-  sky: true
-  exposure: 1.0
-  fog_density: 0.018
-  sun_mode: realistic
-  house_orientation: 45
-  sun_intensity: 0.8
-  ambient_intensity: 0.7
-  ground_style: disc
-  ground_color: '#1a1a2e'
-  ground_scale: 1.0
-  light_occlusion: none
-  transparent_background: false
-
-# UI
-height: 600
-tap_to_toggle: true
-cluster_threshold: 50
-
-ui:
-  show_simulation: true
-  show_editor: true
-  show_lock: true
-  show_capture: true
 ```
 
 > **Note**: Most of these options can be configured directly from the visual editor. YAML is only needed for initial setup (`scene_id` and `model_url`).
