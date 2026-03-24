@@ -17,6 +17,10 @@
 </p>
 
 <p align="center">
+  <img src="https://img.shields.io/badge/statut-beta-orange?style=for-the-badge" alt="Beta" />
+</p>
+
+<p align="center">
   <a href="#-fonctionnalités">Fonctionnalités</a> •
   <a href="#-installation">Installation</a> •
   <a href="#-démarrage-rapide">Démarrage rapide</a> •
@@ -29,6 +33,8 @@
 </p>
 
 ---
+
+> **⚠️ Beta** — Owlnest est en développement actif. Des fonctionnalités peuvent changer et des bugs peuvent apparaître. Vos retours et signalements sont les bienvenus via les [Issues](https://github.com/MestrieEsteban/ha-owlnest/issues).
 
 ## 💬 Pourquoi Owlnest ?
 
