@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/MestrieEsteban/ha-owlnest/main/.github/assets/owlnest-logo.png" alt="Owlnest" width="120" />
+  <img src="assets/logo.svg" alt="Owlnest" width="200" />
 </p>
 
 <h1 align="center">Owlnest</h1>
@@ -26,6 +26,18 @@
 
 <p align="center">
   🌐 <a href="README-FR.md"><strong>Version française disponible ici</strong></a>
+</p>
+
+---
+
+## 💬 Why Owlnest?
+
+Existing 3D floorplan solutions for Home Assistant rely on static Blender renders: one image per light state, a new render for every color or condition. Nothing interactive, nothing alive.
+
+I wanted something different: real-time 3D lights, a visual editor, weather effects, camera animations. Everything I wished existed. And I figured others might feel the same way, so I shared it.
+
+<p align="center">
+  <img src="assets/OnOffLight.gif" alt="Real-time light control demo" width="700" />
 </p>
 
 ---
@@ -156,6 +168,10 @@ For `light` entities, three styles are available:
 
 Style and direction are configured in the anchor properties in edit mode.
 
+<p align="center">
+  <img src="assets/moveLight.gif" alt="Moving an anchor in the editor" width="600" />
+</p>
+
 #### Interactions
 
 - **Short tap** → Toggle the entity (turn light on/off, open/close cover…)
@@ -226,6 +242,10 @@ Camera views let you save viewpoints and navigate between them with smooth anima
 
 A view can be marked as **hidden**: it won't appear in the navigation bar but remains available for rules (e.g. "fly to the kitchen when motion is detected").
 
+<p align="center">
+  <img src="assets/vue.gif" alt="Camera views navigation" width="600" />
+</p>
+
 ---
 
 ### Rules engine
@@ -279,6 +299,10 @@ Each condition can be **negated** ("Hide if" mode).
 >   - Go to view "Entrance"
 >   - Show card "Door alert"
 
+<p align="center">
+  <img src="assets/rules.gif" alt="Rules engine in action" width="600" />
+</p>
+
 ---
 
 ### Environment
@@ -321,6 +345,10 @@ The simulator (⏰ icon in the toolbar) lets you preview lighting at different t
 #### Sky
 
 Enable `sky: true` to display a realistic atmospheric sky that follows the sun position (colorful sunrise/sunset, dark night).
+
+<p align="center">
+  <img src="assets/meteo.gif" alt="Weather and sun effects" width="600" />
+</p>
 
 ---
 

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/MestrieEsteban/ha-owlnest/main/.github/assets/owlnest-logo.png" alt="Owlnest" width="120" />
+  <img src="assets/logo.svg" alt="Owlnest" width="200" />
 </p>
 
 <h1 align="center">Owlnest</h1>
@@ -26,6 +26,18 @@
 
 <p align="center">
   🌐 <a href="README.md"><strong>English version available here</strong></a>
+</p>
+
+---
+
+## 💬 Pourquoi Owlnest ?
+
+Les solutions de plan 3D pour Home Assistant reposent sur des rendus Blender statiques une image par état de lumière, un nouveau rendu à chaque couleur ou condition. Rien d'interactif, rien de vivant.
+
+J'ai voulu autre chose des lumières 3D temps réel, un éditeur visuel, de la météo, des animations. Tout ce que j'aurais aimé trouver. Et je me suis dit que d'autres étaient peut-être dans le même cas, alors j'ai partagé.
+
+<p align="center">
+  <img src="assets/OnOffLight.gif" alt="Démo contrôle des lumières en temps réel" width="700" />
 </p>
 
 ---
@@ -117,20 +129,15 @@ model_url: /local/models/maison.glb
 | Zoomer | Molette | Pincer |
 | Panoramique | Clic droit + glisser | Deux doigts + glisser |
 
-Les limites de navigation (distance min/max, angle max) sont configurables dans l'onglet **Config** de l'éditeur ou en YAML :
-
-```yaml
-orbit:
-  min_distance: 2
-  max_distance: 20
-  max_polar_angle: 85
-```
-
 ---
 
 ### Ancres
 
 Les ancres sont des points interactifs placés dans la scène 3D. Chaque ancre est liée à une entité Home Assistant.
+
+<p align="center">
+  <img src="assets/moveLight.gif" alt="Déplacement d'une ancre dans l'éditeur" width="600" />
+</p>
 
 #### Domaines supportés
 
@@ -144,6 +151,7 @@ Les ancres sont des points interactifs placés dans la scène 3D. Chaque ancre e
 | `climate` | Indicateur de mode (chauffage/refroidissement) | Orange/bleu selon l'action |
 | `media_player` | Indicateur lecture/pause | Icône media |
 
+
 #### Styles de lumière
 
 Pour les entités `light`, trois styles sont disponibles :
@@ -155,6 +163,7 @@ Pour les entités `light`, trois styles sont disponibles :
 | `beam` | Faisceau étroit et concentré (projecteur) |
 
 Le style et la direction se configurent dans les propriétés de l'ancre en mode édition.
+
 
 #### Interactions
 
@@ -222,9 +231,14 @@ Les vues caméra vous permettent de sauvegarder des points de vue et de naviguer
 3. Cliquez **Capturer la vue** et donnez un nom
 4. La vue apparaît dans la barre de navigation en bas de la scène
 
+<p align="center">
+  <img src="assets/vue.gif" alt="Navigation entre vues caméra" width="600" />
+</p>
+
 #### Vues cachées
 
 Une vue peut être marquée comme **cachée** : elle n'apparaît pas dans la barre de navigation mais reste utilisable par les règles (ex: « voler vers la cuisine quand un mouvement est détecté »).
+
 
 ---
 
@@ -279,6 +293,10 @@ Chaque condition peut être **inversée** (mode « Masquer si »).
 >   - Aller à la vue « Entrée »
 >   - Afficher la carte « Alerte porte »
 
+<p align="center">
+  <img src="assets/rules.gif" alt="Moteur de règles en action" width="600" />
+</p>
+
 ---
 
 ### Environnement
@@ -314,13 +332,10 @@ Configurez `weather_entity: weather.maison` pour des effets visuels dynamiques :
 | Grêle | Particules de grêle |
 | Vent | Effet de vent |
 
-#### Simulateur
 
-Le simulateur (icône ⏰ dans la barre d'outils) permet de prévisualiser l'éclairage à différentes heures et conditions météo, sans affecter les entités réelles.
-
-#### Ciel
-
-Activez `sky: true` pour afficher un ciel atmosphérique réaliste qui suit la position du soleil (lever/coucher coloré, nuit étoilée).
+<p align="center">
+  <img src="assets/meteo.gif" alt="Effets météo et soleil" width="600" />
+</p>
 
 ---
 
@@ -374,49 +389,6 @@ Voici l'ensemble des options disponibles :
 type: custom:owlnest-card
 scene_id: ma_maison
 model_url: /local/models/maison.glb
-
-# Entités environnement
-sun_entity: sun.sun
-weather_entity: weather.maison
-
-# Navigation
-orbit:
-  min_distance: 2
-  max_distance: 20
-  max_polar_angle: 85
-
-# Lumières
-lights:
-  distance: 8
-  decay: 2
-  transition: 0.4
-
-# Rendu
-rendering:
-  shadows: true
-  sky: true
-  exposure: 1.0
-  fog_density: 0.018
-  sun_mode: realistic
-  house_orientation: 45
-  sun_intensity: 0.8
-  ambient_intensity: 0.7
-  ground_style: disc
-  ground_color: '#1a1a2e'
-  ground_scale: 1.0
-  light_occlusion: none
-  transparent_background: false
-
-# Interface
-height: 600
-tap_to_toggle: true
-cluster_threshold: 50
-
-ui:
-  show_simulation: true
-  show_editor: true
-  show_lock: true
-  show_capture: true
 ```
 
 > **Note** : La plupart de ces options sont configurables directement depuis l'éditeur visuel. Le YAML n'est nécessaire que pour la configuration initiale (`scene_id` et `model_url`).
