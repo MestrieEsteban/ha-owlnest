@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { AnchorEntry, AnchorConfig, CardConfig, EditableAnchor, LightStyle } from './types';
+import { qualityFromConfig } from './quality';
 
 export async function loadGLTF(url: string): Promise<THREE.Group> {
   const loader = new GLTFLoader();
@@ -28,6 +29,9 @@ export function makeLight(
 ): { light: THREE.PointLight | THREE.SpotLight; target?: THREE.Object3D } {
   const dist = config.lights?.distance ?? 8;
   const decay = config.lights?.decay ?? 2;
+  // Une lumière qui projette une ombre fait rendre la scène 6 fois de plus
+  // (cube map). C'est le premier poste de coût sur GPU faible.
+  const q = qualityFromConfig(config);
 
   if (style === 'spot' || style === 'beam') {
     const angle = style === 'spot' ? Math.PI / 5 : Math.PI / 10;
@@ -35,8 +39,8 @@ export function makeLight(
     const light = new THREE.SpotLight(0xffffff, 0, dist * 1.5, angle, penumbra, decay);
     light.position.copy(pos);
     light.visible = false;
-    light.castShadow = true;
-    light.shadow.mapSize.set(512, 512);
+    light.castShadow = q.anchorShadows;
+    light.shadow.mapSize.set(q.anchorShadowMap, q.anchorShadowMap);
     light.shadow.camera.near = 0.1;
     light.shadow.camera.far = dist * 1.5;
     light.shadow.bias = -0.002;
@@ -51,8 +55,8 @@ export function makeLight(
   const light = new THREE.PointLight(0xffffff, 0, dist, decay);
   light.position.copy(pos);
   light.visible = false;
-  light.castShadow = true;
-  light.shadow.mapSize.set(512, 512);
+  light.castShadow = q.anchorShadows;
+  light.shadow.mapSize.set(q.anchorShadowMap, q.anchorShadowMap);
   light.shadow.camera.near = 0.1;
   light.shadow.camera.far = dist;
   light.shadow.bias = -0.002;

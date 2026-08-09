@@ -4,6 +4,8 @@ import { CARD_DEFAULT_ACCENT, CARD_TYPE_LABELS } from '../cards/types';
 import type { AnchorEditor, EditorTool } from '../editor';
 import type { OwlnestRule, Action } from '../rules/types';
 import { t, setLang } from '../i18n';
+import { detectionLabel, resolveLevel } from '../quality';
+import type { QualityLevel } from '../quality';
 
 /** Create a "?" tooltip badge with a fixed-position popup that escapes overflow containers. */
 function createHelpBadge(text: string): HTMLElement {
@@ -936,6 +938,48 @@ export class EditPanel {
       sceneLblRow.appendChild(helpBadge(t('helpSceneId')));
       sceneWrap.appendChild(sceneLblRow); sceneWrap.appendChild(sceneRow);
       root.appendChild(sceneWrap);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // 0b) PERFORMANCE — quality preset
+    // ══════════════════════════════════════════════════════════════════════
+    sec(t('cfgPerf'));
+
+    {
+      const current = rendering.quality ?? 'auto';
+      selectField(
+        t('cfgQuality'),
+        t('helpQuality'),
+        [
+          ['auto', t('cfgQualityAuto')],
+          ['high', t('cfgQualityHigh')],
+          ['balanced', t('cfgQualityBalanced')],
+          ['low', t('cfgQualityLow')],
+        ],
+        current,
+        (v) => {
+          this.onSceneSettingsChange?.({ rendering: { ...rendering, quality: v as QualityLevel } });
+          // Le libellé du matériel dépend du niveau retenu — on le rafraîchit.
+          detail.textContent = describe(v as QualityLevel);
+        },
+      );
+
+      // Rendre la détection lisible plutôt qu'opaque : l'utilisateur doit
+      // pouvoir vérifier ce qui a été choisi pour lui, et pourquoi.
+      const describe = (level: QualityLevel) =>
+        level === 'auto'
+          ? `${t('cfgQualityDetected')} : ${detectionLabel()} → ${resolveLevel('auto')}`
+          : `${t('cfgQualityDetected')} : ${detectionLabel()}`;
+
+      const detail = document.createElement('div');
+      detail.style.cssText = 'font-size:9px;color:#475569;margin:-4px 0 8px;line-height:1.5;';
+      detail.textContent = describe(current as QualityLevel);
+      root.appendChild(detail);
+
+      const reloadNote = document.createElement('div');
+      reloadNote.style.cssText = 'font-size:9px;color:#475569;margin:0 0 8px;line-height:1.5;';
+      reloadNote.textContent = t('cfgQualityReload');
+      root.appendChild(reloadNote);
     }
 
     // ══════════════════════════════════════════════════════════════════════

@@ -36,11 +36,32 @@ export class SceneCardRenderer {
   private _hoveredId: string | null = null;
   private _hass: Hass | null = null;
 
+  private _textureWidth = CANVAS_W;
+
   constructor(
     private scene: THREE.Scene,
     private camera: THREE.PerspectiveCamera,
     private requestRender: () => void,
   ) {}
+
+  /**
+   * Change la résolution des textures de cartes (profil qualité).
+   * Les canvas existants sont recréés : leur taille est figée à la création.
+   */
+  setTextureWidth(width: number) {
+    if (width === this._textureWidth) return;
+    this._textureWidth = width;
+    if (!this._objects.size) return;
+
+    const cards = [...this._objects.values()].map((o) => o.card);
+    this._objects.forEach((o) => this._destroyObj(o));
+    this._objects.clear();
+    for (const card of cards) {
+      this._create(card);
+      this._draw(this._objects.get(card.id)!, this._hass);
+    }
+    this.requestRender();
+  }
 
   // ── Accessors ─────────────────────────────────────────────────────────────
 
@@ -181,10 +202,11 @@ export class SceneCardRenderer {
 
   private _create(card: SceneCard) {
     const aspect = CARD_ASPECT[card.type];
-    const canvasH = Math.round(CANVAS_W * aspect);
+    const width = this._textureWidth;
+    const canvasH = Math.round(width * aspect);
 
     const canvas = document.createElement('canvas');
-    canvas.width = CANVAS_W;
+    canvas.width = width;
     canvas.height = canvasH;
     const ctx = canvas.getContext('2d')!;
 
@@ -217,8 +239,15 @@ export class SceneCardRenderer {
 
   private _draw(obj: CardObject, hass: Hass | null) {
     const { ctx, canvas, card } = obj;
-    const W = canvas.width;
-    const H = canvas.height;
+
+    // Tout le dessin ci-dessous est écrit en coordonnées 1024 (tailles de police
+    // et marges absolues). Le profil qualité ne change que la résolution réelle
+    // du canvas : on met le contexte à l'échelle pour que la mise en page reste
+    // identique quelle que soit cette résolution.
+    const scale = canvas.width / CANVAS_W;
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    const W = CANVAS_W;
+    const H = Math.round(obj.canvasH / scale);
 
     ctx.clearRect(0, 0, W, H);
 

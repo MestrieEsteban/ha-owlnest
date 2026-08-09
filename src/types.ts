@@ -104,6 +104,8 @@ export interface RenderingConfig {
   ground_style?: GroundStyle;
   /** Ground scale multiplier (default 1.0, range 0.5–3.0) */
   ground_scale?: number;
+  /** Quality/performance preset — see quality.ts. 'auto' probes the hardware. */
+  quality?: import('./quality').QualityLevel;
 }
 
 /** A full Owlnest scene, persisted by the backend integration. */
