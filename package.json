@@ -7,6 +7,9 @@
   "scripts": {
     "dev": "vite",
     "dev:ha": "node --env-file=.env --experimental-websocket scripts/ha-dev.mjs",
+    "dev:ha:restore": "node --env-file=.env --experimental-websocket scripts/ha-dev.mjs --restore",
+    "dev:ha:status": "node --env-file=.env --experimental-websocket scripts/ha-dev.mjs --status",
+    "dev:ha:clean": "node --env-file=.env --experimental-websocket scripts/ha-dev.mjs --clean",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "release": "node scripts/release.mjs",

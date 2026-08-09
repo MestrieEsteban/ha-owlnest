@@ -44,14 +44,20 @@ toute seule.
 Pour revenir au bundle de production :
 
 ```bash
-npm run dev:ha -- --restore
+npm run dev:ha:restore
 ```
 
 Et pour voir quelles ressources Lovelace sont déclarées :
 
 ```bash
-npm run dev:ha -- --status
+npm run dev:ha:status
 ```
+
+> Chaque option a son propre script npm volontairement. La forme
+> `npm run dev:ha -- --restore` ne fonctionne pas sous PowerShell : le shell
+> consomme le `--` (son jeton de fin de paramètres) avant npm, qui interprète
+> alors `--restore` comme une option pour lui-même — `npm warn Unknown cli
+> config "--restore"` — et le script tourne en mode dev sans rien restaurer.
 
 ### Comment HA sait quel code utiliser
 
@@ -73,11 +79,11 @@ chargée gagne** et la seconde est ignorée sans erreur visible. C'est pour ça 
 l'identifiant par son *contenu* (le tag qu'elle enregistre) et non par son nom de
 fichier — une installation manuelle peut très bien s'appeler `floorplan.js`.
 
-L'URL d'origine est mémorisée dans `.ha-dev-state.json` (gitignoré) pour que
-`--restore` soit exact. Si des ressources de dev en double traînent :
+L'URL d'origine est mémorisée dans `.ha-dev-state.json` (gitignoré) pour que la
+restauration soit exacte. Si des ressources de dev en double traînent :
 
 ```bash
-npm run dev:ha -- --clean
+npm run dev:ha:clean
 ```
 
 ### Tester sur la tablette
