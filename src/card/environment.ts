@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import type { CardConfig, Hass, SunMode, GroundStyle } from '../types';
+import { qualityFromConfig } from '../quality';
 
 export type WeatherEffect =
   | 'none'
@@ -39,6 +40,17 @@ export class EnvironmentController {
   private _weatherParticles: THREE.Object3D | null = null;
   private _weatherType: WeatherEffect = 'none';
   private _weatherTime = 0;
+
+  /**
+   * Distance du soleil à l'origine. Ajustée à la taille du modèle : si la
+   * lumière se retrouve à l'intérieur de la sphère englobante, une partie de la
+   * scène passe derrière la caméra d'ombre et cesse d'être ombrée.
+   */
+  private _sunDistance = 10;
+  setSunDistance(d: number) { this._sunDistance = d; }
+
+  /** Le soleil a bougé : les shadow maps ne sont plus valides. */
+  onSunMoved?: () => void;
 
   // Lightning flash state
   private _lightningTimer = 0;
@@ -156,13 +168,15 @@ export class EnvironmentController {
 
     const azRad = ((effectiveAzimuth - 180) * Math.PI) / 180;
     const elRad = (elevation * Math.PI) / 180;
+    const d = this._sunDistance;
     this.sunLight.position.set(
-      Math.sin(azRad) * Math.cos(elRad) * 10,
-      Math.sin(elRad) * 10,
-      Math.cos(azRad) * Math.cos(elRad) * 10,
+      Math.sin(azRad) * Math.cos(elRad) * d,
+      Math.sin(elRad) * d,
+      Math.cos(azRad) * Math.cos(elRad) * d,
     );
 
     this.setSkyPos(elevation, effectiveAzimuth);
+    this.onSunMoved?.();
     this.requestRender();
   }
 
@@ -254,13 +268,26 @@ export class EnvironmentController {
 
   // ── Particle creation dispatch ─────────────────────────────────────────────
 
+  /** Nombre de particules ajusté au profil qualité (jamais moins d'une). */
+  private _n(count: number): number {
+    return Math.max(1, Math.round(count * qualityFromConfig(this.getConfig()).particleScale));
+  }
+
+  /** Reconstruit les particules courantes — utilisé quand la qualité change. */
+  rebuildWeather() {
+    if (this._weatherType === 'none') return;
+    this.removeWeatherParticles();
+    this._createWeatherForEffect(this._weatherType);
+    this.requestRender();
+  }
+
   private _createWeatherForEffect(effect: WeatherEffect) {
     switch (effect) {
-      case 'rain':          this._createRain(900, 4.5, 2.5, 0xaac8e8, 0.5);   break;
-      case 'rain-heavy':    this._createRain(1400, 7.0, 3.0, 0x8ab0d0, 0.65);  break;
-      case 'rain-storm':    this._createRain(1400, 7.0, 3.0, 0x7098b8, 0.7);   break;
+      case 'rain':          this._createRain(this._n(900), 4.5, 2.5, 0xaac8e8, 0.5);   break;
+      case 'rain-heavy':    this._createRain(this._n(1400), 7.0, 3.0, 0x8ab0d0, 0.65);  break;
+      case 'rain-storm':    this._createRain(this._n(1400), 7.0, 3.0, 0x7098b8, 0.7);   break;
       case 'snow': {
-        const m = this._createSnow(500);
+        const m = this._createSnow(this._n(500));
         this._weatherParticles = m;
         this.scene.add(m);
         break;
@@ -354,7 +381,7 @@ export class EnvironmentController {
     const group = new THREE.Group();
     group.userData.particleType = 'snow-rain';
 
-    const snowMesh = this._createSnow(300, 0xc8d8e8, 0.11, 0.75);
+    const snowMesh = this._createSnow(this._n(300), 0xc8d8e8, 0.11, 0.75);
     group.add(snowMesh);
 
     // Light rain overlay
@@ -362,7 +389,7 @@ export class EnvironmentController {
     const meta = this._makeBoxMeta(box);
     const { cx, cz, yTop, yBot, spreadX, spreadZ } = meta;
     const spawnXZ = this._makeSpawnXZ(meta);
-    const COUNT = 500;
+    const COUNT = this._n(500);
     const pos     = new Float32Array(COUNT * 6);
     const speeds  = new Float32Array(COUNT);
     const lengths = new Float32Array(COUNT);
@@ -397,7 +424,7 @@ export class EnvironmentController {
     const { cx, cz, yTop, yBot, spreadX, spreadZ } = meta;
     const spawnXZ = this._makeSpawnXZ(meta);
 
-    const COUNT = 600;
+    const COUNT = this._n(600);
     const pos     = new Float32Array(COUNT * 6);
     const speeds  = new Float32Array(COUNT);
     const lengths = new Float32Array(COUNT);
@@ -431,7 +458,7 @@ export class EnvironmentController {
     const meta = this._makeBoxMeta(box);
     const { cx, cz, yTop, yBot, spreadX, spreadZ } = meta;
 
-    const COUNT   = 140;
+    const COUNT   = this._n(140);
     const pos     = new Float32Array(COUNT * 6);  // head + tail per trail
     const speeds  = new Float32Array(COUNT);
     const lengths = new Float32Array(COUNT);

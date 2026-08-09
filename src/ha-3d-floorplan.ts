@@ -11,6 +11,7 @@ import type { ClusterItem } from './overlay';
 import { AnchorEditor } from './editor';
 import { loadScene, saveScene, listScenes, sceneToEffectiveConfig, buildSceneFromEditor, normalizeViews } from './scene';
 import { setLang } from './i18n';
+import { qualityFromConfig, qualityKey, profileFor } from './quality';
 import './card-editor';
 import { EnvironmentController } from './card/environment';
 import { SimulationPanel } from './card/simulation';
@@ -70,6 +71,25 @@ class Ha3dFloorplan extends HTMLElement {
   private _dirty = false;
   private _lastTime = 0;
   private _lastGroundKey = '';
+  private _lastQualityKey = '';
+
+  // Profil qualité résolu, relu à chaque frame — mis à jour à l'init et à chaud.
+  private _quality = profileFor('auto');
+
+  /**
+   * Les shadow maps sont recalculées à la demande, pas à chaque image :
+   * tourner la caméra ne change aucune ombre.
+   */
+  private _shadowsDirty = true;
+
+  // Rendu suspendu quand la carte est masquée ou hors écran.
+  private _paused = false;
+  private _io: IntersectionObserver | null = null;
+  private _onVisibility: (() => void) | null = null;
+
+  // Réutilisé chaque frame pour la projection des overlays (évite un clone par
+  // ancre et par image).
+  private _projScratch = new THREE.Vector3();
 
   // Overlay visibility (tap-to-toggle)
   private _overlaysVisible = true;
@@ -859,6 +879,8 @@ class Ha3dFloorplan extends HTMLElement {
   }
 
   private _enterEditMode() {
+    // Les marqueurs et gizmos de l'éditeur modifient la géométrie de la scène.
+    this._requestShadowUpdate();
     this._editMode = true;
     if (this.editBtn) {
       this.editBtn.style.boxShadow = '0 0 0 2px rgba(59,130,246,0.9)';
@@ -983,6 +1005,7 @@ class Ha3dFloorplan extends HTMLElement {
     );
 
     this._editor.onChanged = () => {
+      this._requestShadowUpdate();
       this._syncEditorLightsToScene();
       this._evaluatePassiveConditions();
       this._requestRender();
@@ -1041,6 +1064,7 @@ class Ha3dFloorplan extends HTMLElement {
   }
 
   private _exitEditMode() {
+    this._requestShadowUpdate();
     this._editMode = false;
     if (this.editBtn) {
       this.editBtn.style.boxShadow = 'none';
@@ -1077,7 +1101,7 @@ class Ha3dFloorplan extends HTMLElement {
       if (entry.lightTarget) this.scene?.remove(entry.lightTarget);
     });
 
-    this.anchors = buildAnchorsFromEditable(editable, this.scene!, this._config!);
+    this.anchors = buildAnchorsFromEditable(editable, this.scene!, this._effectiveConfig);
 
     if (this.controls) this.controls.enabled = !this._locked;
 
@@ -1117,7 +1141,7 @@ class Ha3dFloorplan extends HTMLElement {
 
       if (ea.entity.split('.')[0] === 'light' && newStyle !== oldStyle) {
         // Rebuild light with new style
-        rebuildAnchorLight(entry, this.scene!, this._config!, newStyle, ea.lightDirection);
+        rebuildAnchorLight(entry, this.scene!, this._effectiveConfig, newStyle, ea.lightDirection);
         // Restore last intensity
         if (entry.light) {
           entry.light.intensity = entry.targetIntensity;
@@ -1423,12 +1447,20 @@ class Ha3dFloorplan extends HTMLElement {
     const shadows = rl.shadows !== false;
 
     const transparentBg = rl.transparent_background === true;
+    // Profil qualité : antialias est figé à la création du contexte WebGL, donc
+    // c'est le seul réglage qui exige un rechargement de la page pour changer.
+    const q = qualityFromConfig(this._effectiveConfig);
+    this._quality = q;
+    this._lastQualityKey = qualityKey(this._effectiveConfig);
     // Always alpha:true so transparent_background can be toggled live
-    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas!, antialias: true, alpha: true });
+    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas!, antialias: q.antialias, alpha: true });
     this.renderer.setSize(w, h, false);
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, q.maxPixelRatio));
     this.renderer.shadowMap.enabled = shadows;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = q.shadowFilter;
+    // Les ombres ne dépendent pas de la caméra : on ne les recalcule que
+    // lorsqu'une lumière, le soleil ou la géométrie change.
+    this.renderer.shadowMap.autoUpdate = false;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = rl.exposure ?? 1.4;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -1457,7 +1489,7 @@ class Ha3dFloorplan extends HTMLElement {
     this._sunLight = new THREE.DirectionalLight(0xfff4c2, rl.sun_intensity ?? 0.8);
     this._sunLight.position.set(5, 10, 5);
     this._sunLight.castShadow = shadows;
-    this._sunLight.shadow.mapSize.set(2048, 2048);
+    this._sunLight.shadow.mapSize.set(q.sunShadowMap, q.sunShadowMap);
     this._sunLight.shadow.camera.near = 0.1;
     this._sunLight.shadow.camera.far = 60;
     this._sunLight.shadow.camera.left = -15;
@@ -1491,10 +1523,14 @@ class Ha3dFloorplan extends HTMLElement {
       () => this._requestRender(),
     );
 
+    this._env.onSunMoved = () => this._requestShadowUpdate();
+
     // Set initial sky position
     if (useSky) {
       this._env.setSkyPos(rl.sky_elevation ?? 60, 180);
     }
+
+    this._setupVisibility(container);
 
     this._lastTime = performance.now();
     this._loop();
@@ -1505,7 +1541,16 @@ class Ha3dFloorplan extends HTMLElement {
   private _loop = () => {
     this.rafId = requestAnimationFrame(this._loop);
 
+    // Carte masquée (autre onglet HA, écran éteint) ou hors du viewport :
+    // aucune raison de consommer du GPU.
+    if (this._paused) return;
+
     const now = performance.now();
+    // Plafond d'images par seconde. La tolérance évite de rater une frame quand
+    // le pas de l'écran ne divise pas exactement l'intervalle visé.
+    const minInterval = 1000 / this._quality.maxFps - 0.5;
+    if (now - this._lastTime < minInterval) return;
+
     const dt = Math.min((now - this._lastTime) / 1000, 0.1);
     this._lastTime = now;
 
@@ -1532,7 +1577,11 @@ class Ha3dFloorplan extends HTMLElement {
     if (this._editMode) this._dirty = true;
 
     const transitioning = stepTransitions(this.anchors, dt, this._effectiveConfig);
-    if (transitioning) this._dirty = true;
+    if (transitioning) {
+      this._dirty = true;
+      // Une lumière dont l'intensité change modifie son ombre.
+      if (this._quality.anchorShadows) this._shadowsDirty = true;
+    }
 
     this._cardRenderer?.update();
 
@@ -1556,8 +1605,74 @@ class Ha3dFloorplan extends HTMLElement {
 
     if (!this._dirty) return;
     this._dirty = false;
+
+    if (this._shadowsDirty && this.renderer) {
+      this.renderer.shadowMap.needsUpdate = true;
+      this._shadowsDirty = false;
+    }
     this.renderer?.render(this.scene!, this.camera!);
   };
+
+  /** À appeler dès que les ombres cessent d'être valides (lumière, soleil, géométrie). */
+  private _requestShadowUpdate() {
+    this._shadowsDirty = true;
+    this._dirty = true;
+  }
+
+  // ── Mise en pause hors écran ───────────────────────────────────────────
+
+  private _setupVisibility(container: HTMLElement) {
+    this._onVisibility = () => this._setPaused(document.hidden);
+    document.addEventListener('visibilitychange', this._onVisibility);
+
+    // Un dashboard mural passe souvent d'une vue à l'autre : hors du viewport,
+    // la carte n'a aucune raison de continuer à rendre.
+    if (typeof IntersectionObserver !== 'undefined') {
+      this._io = new IntersectionObserver(
+        (entries) => this._setPaused(!entries[0]?.isIntersecting),
+        { threshold: 0 },
+      );
+      this._io.observe(container);
+    }
+  }
+
+  private _setPaused(paused: boolean) {
+    if (paused === this._paused) return;
+    this._paused = paused;
+    if (!paused) {
+      // Repartir du temps courant, sinon le premier dt vaut la durée de la pause.
+      this._lastTime = performance.now();
+      this._dirty = true;
+    }
+  }
+
+  /**
+   * Cadre la caméra d'ombre du soleil sur le modèle chargé.
+   *
+   * Elle était figée sur ±15 unités : sur un modèle plus petit, la majorité des
+   * texels de la shadow map tombait à côté de la maison, ce qui donnait des
+   * ombres crénelées même en haute résolution. Ajuster le cadrage multiplie la
+   * densité de texels utiles sans coûter une frame de plus.
+   */
+  private _fitSunShadow() {
+    if (!this._sunLight || this._modelBox.isEmpty()) return;
+
+    const sphere = this._modelBox.getBoundingSphere(new THREE.Sphere());
+    const r = Math.max(1, sphere.radius) * 1.05;
+    // La lumière doit rester hors de la sphère englobante.
+    const dist = Math.max(10, r * 2);
+    this._env?.setSunDistance(dist);
+
+    const cam = this._sunLight.shadow.camera;
+    cam.left = -r;
+    cam.right = r;
+    cam.top = r;
+    cam.bottom = -r;
+    cam.near = 0.1;
+    cam.far = dist + r * 2;
+    cam.updateProjectionMatrix();
+    this._sunLight.shadow.needsUpdate = true;
+  }
 
   // ── Live settings apply ────────────────────────────────────────────────
 
@@ -1588,6 +1703,48 @@ class Ha3dFloorplan extends HTMLElement {
         }
       });
     }
+    // Qualité — tout s'applique à chaud sauf l'antialias, figé à la création du
+    // contexte WebGL et donc effectif au prochain chargement de la page.
+    const qKey = qualityKey(ec);
+    if (qKey !== this._lastQualityKey) {
+      this._lastQualityKey = qKey;
+      const q = qualityFromConfig(ec);
+      this._quality = q;
+
+      this.renderer.setPixelRatio(Math.min(devicePixelRatio, q.maxPixelRatio));
+      this.renderer.shadowMap.type = q.shadowFilter;
+      this.renderer.shadowMap.needsUpdate = true;
+
+      // Changer mapSize ne suffit pas : la cible de rendu existante garde son
+      // ancienne taille tant qu'on ne la libère pas.
+      const resizeShadow = (
+        light: THREE.DirectionalLight | THREE.PointLight | THREE.SpotLight,
+        size: number,
+      ) => {
+        light.shadow.mapSize.set(size, size);
+        light.shadow.map?.dispose();
+        light.shadow.map = null;
+      };
+
+      if (this._sunLight) resizeShadow(this._sunLight, q.sunShadowMap);
+      this.anchors.forEach(({ light }) => {
+        if (!light) return;
+        light.castShadow = q.anchorShadows;
+        resizeShadow(light, q.anchorShadowMap);
+      });
+
+      // Le filtre d'ombre est compilé dans les shaders : sans cela, les
+      // matériaux déjà compilés gardent l'ancien.
+      this.scene.traverse((obj) => {
+        const mat = (obj as THREE.Mesh).material;
+        if (Array.isArray(mat)) mat.forEach((m) => { m.needsUpdate = true; });
+        else if (mat) (mat as THREE.Material).needsUpdate = true;
+      });
+
+      this._cardRenderer?.setTextureWidth(q.cardTextureWidth);
+      this._env?.rebuildWeather();
+    }
+
     // Ground color
     if (rl.ground_color !== undefined) {
       this._env?.updateGroundColor(rl.ground_color);
@@ -1651,6 +1808,8 @@ class Ha3dFloorplan extends HTMLElement {
         this._env.updateFromHass(this._hass);
       }
     }
+
+    this._requestShadowUpdate();
   }
 
   // ── Scene content cleanup (keeps renderer/canvas/HUD intact) ─────────
@@ -1750,6 +1909,8 @@ class Ha3dFloorplan extends HTMLElement {
     const centre = box.getCenter(new THREE.Vector3());
     model.position.sub(centre);
     this._modelBox.copy(box).translate(centre.negate());
+    this._fitSunShadow();
+    this._requestShadowUpdate();
 
     const saved = this._loadView();
     if (saved) {
@@ -1787,6 +1948,12 @@ class Ha3dFloorplan extends HTMLElement {
     this._createOverlays();
 
     this._overlaysVisible = !(ec.tap_to_toggle ?? false);
+
+    // Le renderer a été créé avant que la scène ne soit chargée, donc avec les
+    // seuls réglages du YAML. On applique ici ceux qui viennent de la scène
+    // (qualité, exposition, brouillard…), sinon ils n'auraient d'effet qu'après
+    // une modification manuelle dans l'éditeur.
+    this._applySettingsLive();
 
     this.modelLoaded = true;
     if (this._hass) {
@@ -1855,7 +2022,9 @@ class Ha3dFloorplan extends HTMLElement {
     const behind = new Set<string>();
 
     this.anchors.forEach((entry, name) => {
-      const p = entry.worldPos.clone().project(this.camera!);
+      // Vecteur de travail réutilisé : un clone par ancre et par image finissait
+      // par peser en collecte mémoire sur les scènes chargées.
+      const p = this._projScratch.copy(entry.worldPos).project(this.camera!);
       if (p.z >= 1) { behind.add(name); return; }
       pos2d.set(name, {
         x: ((p.x + 1) / 2) * w,
@@ -1865,11 +2034,14 @@ class Ha3dFloorplan extends HTMLElement {
 
     // 2. Cluster visible anchors (opt-in via cluster_threshold)
     const threshold = this._effectiveConfig?.cluster_threshold ?? 0;
-    const groups = threshold > 0
-      ? this._computeClusters([...pos2d.entries()], threshold)
-      : [...pos2d.keys()].map(k => [k]);
     const inCluster = new Set<string>();
     const activeIds = new Set<string>();
+
+    // Sans regroupement, inutile de construire un tableau par ancre à chaque
+    // image : aucun groupe ne peut dépasser un élément.
+    const groups = threshold > 0
+      ? this._computeClusters([...pos2d.entries()], threshold)
+      : [];
 
     groups.filter(g => g.length > 1).forEach(group => {
       const id = [...group].sort().join('|');
@@ -2170,6 +2342,11 @@ class Ha3dFloorplan extends HTMLElement {
     this._hudRight = null;
     this._hudViews = null;
     if (this._controlsHideTimer) clearTimeout(this._controlsHideTimer);
+    this._io?.disconnect();
+    this._io = null;
+    if (this._onVisibility) document.removeEventListener('visibilitychange', this._onVisibility);
+    this._onVisibility = null;
+    this._paused = false;
     this.modelLoaded = false;
     this._editMode = false;
     this._modelRoot = null;
