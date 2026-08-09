@@ -4,7 +4,9 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "strict": true,
+    "noEmit": true,
     "lib": ["ES2020", "DOM"],
+    "types": ["vite/client"],
     "skipLibCheck": true
   },
   "include": ["src"]

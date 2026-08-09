@@ -106,7 +106,7 @@ export class ViewManager {
     this._rebuildList(listBody);
   }
 
-  private _rebuildList(listBody: HTMLDivElement) {
+  private _rebuildList(listBody: HTMLElement) {
     listBody.innerHTML = '';
     const views = normalizeViews(this.getEffectiveConfig().camera_views ?? []);
 
@@ -220,7 +220,7 @@ export class ViewManager {
     });
   }
 
-  private _capturePrompt(listBody: HTMLDivElement) {
+  private _capturePrompt(listBody: HTMLElement) {
     const camera = this.getCamera();
     const controls = this.getControls();
     if (!camera || !controls) return;
@@ -276,7 +276,7 @@ export class ViewManager {
     setTimeout(() => inp.focus(), 30);
   }
 
-  private async _updateView(id: string, listBody: HTMLDivElement) {
+  private async _updateView(id: string, listBody: HTMLElement) {
     const camera = this.getCamera();
     const controls = this.getControls();
     if (!camera || !controls) return;
@@ -288,7 +288,7 @@ export class ViewManager {
     await this.saveViews(views, listBody);
   }
 
-  private _renameInline(lbl: HTMLSpanElement, id: string, listBody: HTMLDivElement) {
+  private _renameInline(lbl: HTMLSpanElement, id: string, listBody: HTMLElement) {
     const current = lbl.textContent ?? '';
     const inp = document.createElement('input');
     inp.value = current;
@@ -314,12 +314,12 @@ export class ViewManager {
     setTimeout(() => { inp.focus(); inp.select(); }, 10);
   }
 
-  private async _deleteView(id: string, listBody: HTMLDivElement) {
+  private async _deleteView(id: string, listBody: HTMLElement) {
     const views = normalizeViews(this.getEffectiveConfig().camera_views ?? []).filter((v) => v.id !== id);
     await this.saveViews(views, listBody);
   }
 
-  async saveViews(views: CameraView[], listBody?: HTMLDivElement) {
+  async saveViews(views: CameraView[], listBody?: HTMLElement) {
     const sceneId = this.getSceneId();
     const hass = this.getHass();
     if (!sceneId || !hass) {

@@ -875,7 +875,7 @@ class Ha3dFloorplan extends HTMLElement {
     if (this._hudBar) {
       this._hudBar.style.background = 'rgba(8,12,24,0.72)';
       this._hudBar.style.backdropFilter = 'blur(12px)';
-      this._hudBar.style.webkitBackdropFilter = 'blur(12px)';
+      this._hudBar.style.setProperty('-webkit-backdrop-filter', 'blur(12px)');
       this._hudBar.style.border = '1px solid rgba(255,255,255,0.1)';
     }
     // Hide view pill; move buttons back to _hudLeft for showToolbar() to use
@@ -1363,7 +1363,7 @@ class Ha3dFloorplan extends HTMLElement {
     if (this._hudBar) {
       this._hudBar.style.background = 'none';
       this._hudBar.style.backdropFilter = 'none';
-      this._hudBar.style.webkitBackdropFilter = 'none';
+      this._hudBar.style.setProperty('-webkit-backdrop-filter', 'none');
       this._hudBar.style.border = 'none';
     }
     // Restore sep to hidden
@@ -2182,4 +2182,8 @@ class Ha3dFloorplan extends HTMLElement {
   }
 }
 
-customElements.define('ha-3d-floorplan', Ha3dFloorplan);
+// Garde-fou : redéfinir un custom element lève une exception. Le cas se produit
+// si le module est chargé deux fois (ressource HACS + ressource de dev, par ex.).
+if (!customElements.get('ha-3d-floorplan')) {
+  customElements.define('ha-3d-floorplan', Ha3dFloorplan);
+}

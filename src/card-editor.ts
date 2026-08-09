@@ -174,4 +174,6 @@ class Ha3dFloorplanEditor extends HTMLElement {
   }
 }
 
-customElements.define('ha-3d-floorplan-editor', Ha3dFloorplanEditor);
+if (!customElements.get('ha-3d-floorplan-editor')) {
+  customElements.define('ha-3d-floorplan-editor', Ha3dFloorplanEditor);
+}
