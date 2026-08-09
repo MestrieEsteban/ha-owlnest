@@ -15,4 +15,15 @@ export default defineConfig({
     outDir: 'dist',
     minify: true,
   },
+  server: {
+    // Écoute sur 0.0.0.0 : le module est chargé par le navigateur qui affiche
+    // HA (PC ou tablette), pas par cette machine — localhost ne suffirait pas.
+    host: true,
+    port: Number(process.env.DEV_PORT ?? 5173),
+    // Sans strictPort, un repli sur 5174 laisserait la ressource Lovelace
+    // pointer vers un port mort, sans message d'erreur.
+    strictPort: true,
+    // HA charge le module depuis une autre origine.
+    cors: true,
+  },
 });

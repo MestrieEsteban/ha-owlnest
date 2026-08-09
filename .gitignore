@@ -299,3 +299,5 @@ $RECYCLE.BIN/
 
 
 specs
+# Owlnest — état local de la boucle de dev
+.ha-dev-state.json
