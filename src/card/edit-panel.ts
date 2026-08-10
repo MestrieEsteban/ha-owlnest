@@ -4,7 +4,9 @@ import { CARD_DEFAULT_ACCENT, CARD_TYPE_LABELS } from '../cards/types';
 import type { AnchorEditor, EditorTool } from '../editor';
 import type { OwlnestRule, Action } from '../rules/types';
 import { t, setLang } from '../i18n';
+import { openEntityPicker } from '../entities/picker';
 import { detectionLabel, resolveLevel } from '../quality';
+import type { TapAction } from '../entities/descriptors';
 import type { QualityLevel } from '../quality';
 
 /** Create a "?" tooltip badge with a fixed-position popup that escapes overflow containers. */
@@ -1265,6 +1267,44 @@ export class EditPanel {
     }
   }
 
+  /**
+   * Champ entity_id : saisie libre (coller un identifiant reste le plus rapide)
+   * doublée d'un bouton qui ouvre le sélecteur complet — pièces, états,
+   * recherche. Remplace les datalist tronqués à 200 entrées, qui n'offraient
+   * ni contexte ni exhaustivité.
+   */
+  private _entityField(
+    value: string,
+    inputStyle: string,
+    onChange: (entityId: string) => void,
+  ): { wrap: HTMLDivElement; input: HTMLInputElement } {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;gap:5px;align-items:center;';
+
+    const input = document.createElement('input');
+    input.value = value;
+    input.placeholder = 'entity_id…';
+    input.style.cssText = inputStyle + ';flex:1;min-width:0;';
+    input.addEventListener('change', () => onChange(input.value.trim()));
+
+    const btn = document.createElement('button');
+    btn.textContent = t('anchorBrowse');
+    btn.title = t('pickTitle');
+    btn.style.cssText = 'flex:0 0 auto;background:rgba(125,209,252,0.12);border:1px solid rgba(125,209,252,0.3);border-radius:7px;color:#7dd3fc;font-size:10px;padding:6px 9px;cursor:pointer;font-family:inherit;white-space:nowrap;';
+    btn.addEventListener('click', () => {
+      const hass = this.getHass();
+      if (!hass) return;
+      openEntityPicker({
+        container: this.overlayContainer,
+        hass,
+        onPick: (entityId) => { input.value = entityId; onChange(entityId); },
+      });
+    });
+
+    wrap.append(input, btn);
+    return { wrap, input };
+  }
+
   private _buildPropsSection(container: HTMLDivElement, key: string, anchor: EditableAnchor, goBack?: () => void) {
     container.innerHTML = '';
 
@@ -1358,8 +1398,6 @@ export class EditPanel {
     const entityWrap = document.createElement('div');
     entityWrap.style.cssText = 'position:relative;';
     const entityInput = document.createElement('input');
-    const dlId = `owlnest-dl-${key}`;
-    entityInput.setAttribute('list', dlId);
     entityInput.value = anchor.entity;
     entityInput.placeholder = 'light.salon, switch.tv…';
     entityInput.style.cssText = inputStyle;
@@ -1369,19 +1407,40 @@ export class EditPanel {
       const v = entityInput.value.trim();
       if (v) { this.getEditor()?.updateAnchor(key, { entity: v }); this.scheduleAutoSave(); }
     });
-    const datalist = document.createElement('datalist');
-    datalist.id = dlId;
-    const hass = this.getHass();
-    if (hass?.states) {
-      for (const eid of Object.keys(hass.states).sort()) {
-        const opt = document.createElement('option');
-        opt.value = eid;
-        const fn = (hass.states[eid] as any)?.attributes?.friendly_name;
-        if (fn) opt.label = fn;
-        datalist.appendChild(opt);
-      }
-    }
-    entityWrap.appendChild(entityInput); entityWrap.appendChild(datalist);
+    // Le champ reste libre (coller un entity_id est parfois le plus rapide),
+    // mais le bouton ouvre le vrai sélecteur : pièces, états, recherche.
+    // Un datalist de 469 entrées ne rendait aucun de ces services.
+    const browseBtn = document.createElement('button');
+    browseBtn.textContent = t('anchorBrowse');
+    browseBtn.title = t('pickTitle');
+    browseBtn.style.cssText = 'flex:0 0 auto;background:rgba(125,209,252,0.12);border:1px solid rgba(125,209,252,0.3);border-radius:7px;color:#7dd3fc;font-size:11px;padding:6px 10px;cursor:pointer;font-family:inherit;';
+    browseBtn.addEventListener('click', () => {
+      const hass = this.getHass();
+      if (!hass) return;
+      const placed = new Set<string>();
+      this.getEditor()?.anchors.forEach((a) => placed.add(a.entity));
+      openEntityPicker({
+        container: this.overlayContainer,
+        hass,
+        placed,
+        onPick: (entity, name) => {
+          entityInput.value = entity;
+          this.getEditor()?.updateAnchor(key, {
+            entity,
+            // Un libellé encore au défaut de l'ancienne entité n'a plus de sens.
+            ...(anchor.label === anchor.entity.split('.')[1] ? { label: name } : {}),
+          });
+          this.scheduleAutoSave();
+          this.updateAnchorList();
+        },
+      });
+    });
+
+    entityWrap.style.cssText = 'display:flex;gap:6px;align-items:center;';
+    entityInput.style.cssText = inputStyle + ';flex:1;min-width:0;';
+    entityInput.removeAttribute('list');
+    entityWrap.appendChild(entityInput);
+    entityWrap.appendChild(browseBtn);
     field(t('anchorFieldEntity'), entityWrap);
 
     const labelInput = document.createElement('input');
@@ -1439,6 +1498,71 @@ export class EditPanel {
     iconWrap.appendChild(preview);
 
     field(t('anchorFieldIcon') || 'Icon', iconWrap);
+
+    // ── Section: Comportement ─────────────────────────────────────────
+    // Surcharges par ancre : le descripteur du domaine donne un défaut correct,
+    // ces champs servent aux cas particuliers (déverrouiller une serrure depuis
+    // la scène, neutraliser un appui, forcer une couleur de repérage).
+    {
+      secDiv(t('anchorSectionBehavior'));
+
+      const tapSel = document.createElement('select');
+      tapSel.style.cssText = inputStyle + ';cursor:pointer;';
+      const tapOptions: [string, string][] = [
+        ['default', t('anchorTapDefault')],
+        ['toggle', t('anchorTapToggle')],
+        ['more_info', t('anchorTapMoreInfo')],
+        ['activate', t('anchorTapActivate')],
+        ['media_play_pause', t('anchorTapPlayPause')],
+        ['none', t('anchorTapNone')],
+      ];
+      for (const [val, label] of tapOptions) {
+        const o = document.createElement('option');
+        o.value = val; o.textContent = label;
+        if ((anchor.tapAction ?? 'default') === val) o.selected = true;
+        tapSel.appendChild(o);
+      }
+      tapSel.addEventListener('change', () => {
+        const v = tapSel.value === 'default' ? undefined : (tapSel.value as TapAction);
+        this.getEditor()?.updateAnchor(key, { tapAction: v });
+        this.scheduleAutoSave();
+      });
+      field(t('anchorFieldTap'), tapSel);
+
+      // La couleur d'une lampe vient de l'entité elle-même : la surcharger
+      // n'aurait pas de sens.
+      if (!isLight) {
+        const colorWrap = document.createElement('div');
+        colorWrap.style.cssText = 'display:flex;gap:6px;align-items:center;';
+
+        const colorInput = document.createElement('input');
+        colorInput.type = 'color';
+        colorInput.value = anchor.color ?? '#44aaff';
+        colorInput.style.cssText = 'width:38px;height:28px;padding:0;border:1px solid rgba(255,255,255,0.1);border-radius:6px;background:transparent;cursor:pointer;';
+        colorInput.addEventListener('change', () => {
+          this.getEditor()?.updateAnchor(key, { color: colorInput.value });
+          this.scheduleAutoSave();
+        });
+
+        const resetBtn = document.createElement('button');
+        resetBtn.textContent = t('anchorColorAuto');
+        resetBtn.style.cssText = 'flex:1;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#94a3b8;font-size:10px;padding:6px;cursor:pointer;font-family:inherit;';
+        resetBtn.addEventListener('click', () => {
+          this.getEditor()?.updateAnchor(key, { color: undefined });
+          this.scheduleAutoSave();
+          resetBtn.style.color = '#94a3b8';
+        });
+
+        colorWrap.appendChild(colorInput);
+        colorWrap.appendChild(resetBtn);
+        field(t('anchorFieldColor'), colorWrap);
+
+        const colorHint = document.createElement('div');
+        colorHint.style.cssText = 'font-size:9px;color:#475569;margin-top:-5px;margin-bottom:8px;';
+        colorHint.textContent = t('anchorColorHint');
+        container.appendChild(colorHint);
+      }
+    }
 
     // ── Section: Sensor precision ─────────────────────────────────────
     if (isSensor) {
@@ -1953,25 +2077,9 @@ export class EditPanel {
     secTpl.textContent = CARD_TYPE_LABELS[card.type as import('../cards/types').SceneCardType]();
     container.appendChild(secTpl);
 
-    const mkEntityInput = (val: string, id: string, onChange: (v: string) => void) => {
-      const wrap = document.createElement('div');
-      wrap.style.cssText = 'margin-bottom:8px;';
-      const dlId = `dl-card-${card.id}-${id}`;
-      const inp = document.createElement('input');
-      inp.value = val;
-      inp.placeholder = 'entity_id…';
-      inp.setAttribute('list', dlId);
-      inp.style.cssText = inputStyle;
-      inp.addEventListener('change', () => onChange(inp.value.trim()));
-      const dl = document.createElement('datalist');
-      dl.id = dlId;
-      if (hass?.states) {
-        Object.keys(hass.states).sort().slice(0, 200).forEach((eid) => {
-          const opt = document.createElement('option'); opt.value = eid; dl.appendChild(opt);
-        });
-      }
-      wrap.appendChild(inp);
-      wrap.appendChild(dl);
+    const mkEntityInput = (val: string, _id: string, onChange: (v: string) => void) => {
+      const { wrap } = this._entityField(val, inputStyle, onChange);
+      wrap.style.marginBottom = '8px';
       return wrap;
     };
 
@@ -2029,24 +2137,12 @@ export class EditPanel {
         entities.forEach((eid, idx) => {
           const row = document.createElement('div');
           row.style.cssText = 'display:flex;gap:4px;align-items:center;margin-bottom:4px;';
-          const dlId = `dl-room-ent-${card.id}-${idx}`;
-          const inp = document.createElement('input');
-          inp.value = eid;
-          inp.placeholder = 'entity_id…';
-          inp.setAttribute('list', dlId);
-          inp.style.cssText = inputStyle + 'flex:1;';
-          inp.addEventListener('change', () => {
+          const { wrap: entField } = this._entityField(eid, inputStyle, (v) => {
             const newList = [...getFreshEntities()];
-            newList[idx] = inp.value.trim();
+            newList[idx] = v;
             this._updateCard(card.id, { entities: newList.filter(Boolean) } as Partial<import('../cards/types').RoomCard>);
           });
-          const dl = document.createElement('datalist');
-          dl.id = dlId;
-          if (hass?.states) {
-            Object.keys(hass.states).sort().slice(0, 200).forEach((e) => {
-              const opt = document.createElement('option'); opt.value = e; dl.appendChild(opt);
-            });
-          }
+          entField.style.flex = '1';
           const rmBtn = document.createElement('button');
           rmBtn.textContent = '×';
           rmBtn.style.cssText = 'background:none;border:none;color:rgba(248,113,113,0.6);cursor:pointer;font-size:14px;padding:0 4px;line-height:1;';
@@ -2055,7 +2151,7 @@ export class EditPanel {
             this._updateCard(card.id, { entities: newList } as Partial<import('../cards/types').RoomCard>);
             renderEntityList();
           });
-          row.appendChild(inp); row.appendChild(dl); row.appendChild(rmBtn);
+          row.appendChild(entField); row.appendChild(rmBtn);
           entitiesWrap.appendChild(row);
         });
         if (entities.length < maxEntities) {
@@ -2267,24 +2363,9 @@ export class EditPanel {
     // Entity input
     const entityWrap = document.createElement('div');
     entityWrap.style.cssText = 'margin-bottom:4px;';
-    const entityDlId = `${idPrefix}-eid`;
-    const entityInp = document.createElement('input');
-    entityInp.value = current?.entity_id ?? '';
-    entityInp.placeholder = 'entity_id…';
-    entityInp.setAttribute('list', entityDlId);
-    entityInp.style.cssText = inputStyle;
-    const entityDl = document.createElement('datalist');
-    entityDl.id = entityDlId;
-    if (hass?.states) {
-      for (const eid of Object.keys(hass.states).sort().slice(0, 300)) {
-        const opt = document.createElement('option');
-        opt.value = eid;
-        opt.label = (hass.states[eid]?.attributes?.friendly_name as string) ?? '';
-        entityDl.appendChild(opt);
-      }
-    }
-    entityWrap.appendChild(entityInp);
-    entityWrap.appendChild(entityDl);
+    const entityField = this._entityField(current?.entity_id ?? '', inputStyle, () => apply());
+    const entityInp = entityField.input;
+    entityWrap.appendChild(entityField.wrap);
     fields.appendChild(entityWrap);
 
     // State hint (current state of selected entity)
@@ -2522,20 +2603,10 @@ export class EditPanel {
       const i = mk('input') as HTMLInputElement;
       i.value = val; i.placeholder = placeholder; i.style.cssText = inputStyle; return i;
     };
-    const mkEntityInput = (val: string, uid: string) => {
-      const wrap = mk('div') as HTMLDivElement;
-      const dlId = `dl-rule-${uid}`;
-      const i = mkInp(val, 'entity_id…');
-      i.setAttribute('list', dlId);
-      const dl = mk('datalist') as HTMLDataListElement;
-      dl.id = dlId;
-      if (hass?.states) {
-        Object.keys(hass.states).sort().slice(0, 200).forEach((e) => {
-          const opt = mk('option') as HTMLOptionElement; opt.value = e; dl.appendChild(opt);
-        });
-      }
-      wrap.appendChild(i); wrap.appendChild(dl);
-      return { wrap, input: i };
+    const mkEntityInput = (val: string, _uid: string) => {
+      const { wrap, input } = this._entityField(val, inputStyle, () => {});
+      input.value = val;
+      return { wrap, input };
     };
     const secHdr = (text: string) => {
       const d = mk('div') as HTMLDivElement;

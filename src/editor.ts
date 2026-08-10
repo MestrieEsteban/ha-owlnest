@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { openEntityPicker } from './entities/picker';
 import type { EditableAnchor, LightStyle } from './types';
 
 export type EditorTool = 'select' | 'add' | 'delete' | 'rotate' | 'add_panel';
@@ -535,138 +536,41 @@ export class AnchorEditor {
 
   private _showEntityPicker() {
     this._closePopup();
+    if (!this._hass || !this._pendingPos) return;
 
-    const el = document.createElement('div');
-    el.style.cssText = [
-      'position:absolute', 'top:50%', 'left:50%',
-      'transform:translate(-50%,-50%)',
-      'background:#1a1f2e', 'border:1px solid rgba(255,255,255,0.15)',
-      'border-radius:10px', 'padding:16px 20px',
-      'z-index:200', 'width:340px',
-      'box-shadow:0 8px 32px rgba(0,0,0,0.7)',
-      'font-family:var(--primary-font-family,sans-serif)',
-      'color:#fff', 'pointer-events:auto',
-    ].join(';');
+    // Les entités déjà posées sont signalées : c'est la question la plus
+    // fréquente au moment de placer une ancre de plus.
+    const placed = new Set<string>();
+    this._anchors.forEach((a) => placed.add(a.entity));
 
-    const titleEl = document.createElement('div');
-    titleEl.style.cssText = 'font-size:13px;font-weight:600;margin-bottom:12px;color:#aac8e8';
-    titleEl.textContent = 'Nouvelle ancre';
-    el.appendChild(titleEl);
-
-    const acWrap = document.createElement('div');
-    acWrap.style.cssText = 'position:relative;margin-bottom:8px;';
-
-    const entityInput = document.createElement('input');
-    entityInput.placeholder = 'entity_id  (ex: light.salon)';
-    entityInput.style.cssText = this._inputStyle('');
-    acWrap.appendChild(entityInput);
-
-    let dropdown: HTMLDivElement | null = null;
-
-    const DOMAIN_COLORS: Record<string, string> = {
-      light: '#ffd700', switch: '#4caf50', cover: '#ff9800',
-      sensor: '#2196f3', binary_sensor: '#00bcd4',
-      climate: '#f44336', media_player: '#9c27b0',
-    };
-
-    const showDropdown = (q: string) => {
-      dropdown?.remove(); dropdown = null;
-      if (!this._hass || q.length < 1) return;
-      const lq = q.toLowerCase();
-      const matches = Object.entries(this._hass.states)
-        .filter(([id, s]) => {
-          const fn = (s.attributes.friendly_name as string ?? '').toLowerCase();
-          return id.includes(lq) || fn.includes(lq);
-        })
-        .slice(0, 12);
-      if (!matches.length) return;
-
-      dropdown = document.createElement('div');
-      dropdown.style.cssText = [
-        'position:absolute', 'top:100%', 'left:0', 'right:0',
-        'background:#1a1f2e', 'border:1px solid rgba(255,255,255,0.2)',
-        'border-top:none', 'border-radius:0 0 8px 8px',
-        'max-height:180px', 'overflow-y:auto',
-        'z-index:10', 'box-shadow:0 6px 20px rgba(0,0,0,0.6)',
-      ].join(';');
-
-      for (const [id, s] of matches) {
-        const fn = s.attributes.friendly_name as string ?? '';
-        const domain = id.split('.')[0];
-        const name = id.split('.')[1];
-        const color = DOMAIN_COLORS[domain] ?? '#aaa';
-
-        const item = document.createElement('div');
-        item.style.cssText = 'padding:7px 10px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.05);line-height:1.4;';
-        item.innerHTML =
-          `<span style="color:${color};font-size:10px;font-weight:700;">${domain}</span>` +
-          `<span style="color:#fff">.</span>` +
-          `<span style="color:#7dd3fc;font-size:13px;">${name}</span>` +
-          (fn ? `<br><span style="font-size:10px;color:#888;">${fn}</span>` : '');
-
-        item.addEventListener('mouseover', () => { item.style.background = 'rgba(255,255,255,0.08)'; });
-        item.addEventListener('mouseout', () => { item.style.background = ''; });
-        item.addEventListener('mousedown', (e) => {
-          e.preventDefault();
-          entityInput.value = id;
-          if (!labelInput.value) {
-            labelInput.value = fn || name || '';
-          }
-          dropdown?.remove(); dropdown = null;
-        });
-        dropdown.appendChild(item);
-      }
-      acWrap.appendChild(dropdown);
-    };
-
-    entityInput.addEventListener('input', () => showDropdown(entityInput.value));
-    entityInput.addEventListener('blur', () => setTimeout(() => { dropdown?.remove(); dropdown = null; }, 200));
-    el.appendChild(acWrap);
-
-    const labelInput = document.createElement('input');
-    labelInput.placeholder = 'Label (optionnel — sinon déduit de l\'entity)';
-    labelInput.style.cssText = this._inputStyle('margin-bottom:14px');
-    el.appendChild(labelInput);
-
-    const btnRow = document.createElement('div');
-    btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;';
-
-    const cancelBtn = document.createElement('button');
-    cancelBtn.textContent = 'Annuler';
-    cancelBtn.style.cssText = this._btnStyle('transparent', true);
-    cancelBtn.addEventListener('click', () => { this._closePopup(); this._pendingPos = null; });
-
-    const okBtn = document.createElement('button');
-    okBtn.textContent = 'Ajouter';
-    okBtn.style.cssText = this._btnStyle('#1a6bff');
-    okBtn.addEventListener('click', () => {
-      const entity = entityInput.value.trim();
-      const label = labelInput.value.trim();
-      if (!entity || !this._pendingPos) return;
-      const key = `anchor_${Date.now()}_${entity}`;
-      const anchor: EditableAnchor = {
-        entity,
-        position: this._pendingPos.clone(),
-        label: label || entity.split('.')[1] || entity,
-      };
-      this._pushUndo();
-      this._anchors.set(key, anchor);
-      this._addMarker(key, anchor.position);
-      this.setTool('select');
-      this._selectAnchor(key);
-      this._closePopup();
-      this._pendingPos = null;
-      this.onChanged?.();
-      this.onToolChange?.('select');
+    const close = openEntityPicker({
+      container: this._overlayContainer,
+      hass: this._hass,
+      placed,
+      onCancel: () => { this._popup = null; this._pendingPos = null; },
+      onPick: (entity, label) => {
+        this._popup = null;
+        if (!this._pendingPos) return;
+        const key = `anchor_${Date.now()}_${entity}`;
+        const anchor: EditableAnchor = {
+          entity,
+          position: this._pendingPos.clone(),
+          label: label || entity.split('.')[1] || entity,
+        };
+        this._pushUndo();
+        this._anchors.set(key, anchor);
+        this._addMarker(key, anchor.position);
+        this.setTool('select');
+        this._selectAnchor(key);
+        this._pendingPos = null;
+        this.onChanged?.();
+        this.onToolChange?.('select');
+      },
     });
 
-    btnRow.appendChild(cancelBtn);
-    btnRow.appendChild(okBtn);
-    el.appendChild(btnRow);
-
-    this._popup = el;
-    this._overlayContainer.appendChild(el);
-    setTimeout(() => entityInput.focus(), 50);
+    // _closePopup() doit pouvoir refermer le sélecteur comme n'importe quel
+    // popup : on lui présente un objet porteur de remove().
+    this._popup = { remove: close } as unknown as HTMLDivElement;
   }
 
   // ── Popup helpers ───────────────────────────────────────────────────────
@@ -676,34 +580,6 @@ export class AnchorEditor {
     this._popup = null;
   }
 
-  private _inputStyle(extra = ''): string {
-    return [
-      'width:100%',
-      'box-sizing:border-box',
-      'background:#0d1117',
-      'border:1px solid rgba(255,255,255,0.15)',
-      'border-radius:6px',
-      'color:#fff',
-      'padding:7px 10px',
-      'font-size:13px',
-      'outline:none',
-      'display:block',
-      extra,
-    ].join(';');
-  }
-
-  private _btnStyle(bg: string, outline = false): string {
-    return [
-      `background:${bg}`,
-      outline ? 'border:1px solid rgba(255,255,255,0.2)' : 'border:none',
-      'color:' + (outline ? '#aaa' : '#fff'),
-      'border-radius:6px',
-      'padding:6px 14px',
-      'cursor:pointer',
-      'font-size:12px',
-      outline ? '' : 'font-weight:600',
-    ].filter(Boolean).join(';');
-  }
 
   private _startGrab(offset = new THREE.Vector3()) {
     if (!this._selectedKey) return;
