@@ -4,12 +4,15 @@ import type { EditableAnchor, LightStyle } from './types';
 
 export type EditorTool = 'select' | 'add' | 'delete' | 'rotate' | 'add_panel';
 
-type AnchorSnap = {
-  key: string; entity: string; label: string;
-  pos: [number, number, number];
-  hidden?: boolean; lightStyle?: LightStyle; lightIntensity?: number;
-  lightDirection?: [number, number, number];
-}[];
+/**
+ * Instantané pour annuler/refaire.
+ *
+ * C'etait une liste blanche de huit champs, qui perdait donc `visibleIf`,
+ * `precision`, `icon`, `color`, `tapAction`, `kind`, `actions` et `navViewId` a
+ * chaque Ctrl+Z. On copie desormais l'ancre entiere : plus aucun champ a penser
+ * a ajouter ici lorsqu'on en introduit un nouveau.
+ */
+type AnchorSnap = { key: string; anchor: EditableAnchor }[];
 
 const AXIS_COLORS = { x: 0xFF3333, y: 0x33DD33, z: 0x3388FF };
 const AXIS_DIRS: Record<string, THREE.Vector3> = {
@@ -225,12 +228,9 @@ export class AnchorEditor {
 
   private _snap(): AnchorSnap {
     return [...this._anchors.entries()].map(([key, a]) => ({
-      key, entity: a.entity, label: a.label,
-      pos: [+a.position.x.toFixed(4), +a.position.y.toFixed(4), +a.position.z.toFixed(4)],
-      hidden: a.hidden,
-      lightStyle: a.lightStyle,
-      lightIntensity: a.lightIntensity,
-      lightDirection: a.lightDirection,
+      key,
+      // Vector3 n'est pas clonable par le spread : sa position doit l'etre a part.
+      anchor: { ...a, position: a.position.clone() },
     }));
   }
 
@@ -252,13 +252,9 @@ export class AnchorEditor {
     this._anchors.clear();
 
     for (const s of snap) {
-      const pos = new THREE.Vector3(...s.pos);
-      this._anchors.set(s.key, {
-        entity: s.entity, label: s.label, position: pos,
-        hidden: s.hidden, lightStyle: s.lightStyle, lightIntensity: s.lightIntensity,
-        lightDirection: s.lightDirection,
-      });
-      this._addMarker(s.key, pos, s.hidden);
+      const restored: EditableAnchor = { ...s.anchor, position: s.anchor.position.clone() };
+      this._anchors.set(s.key, restored);
+      this._addMarker(s.key, restored.position, restored.hidden);
     }
     // Re-select the previously selected anchor if it still exists
     const keyToReselect = prevSelectedKey && this._anchors.has(prevSelectedKey) ? prevSelectedKey : null;
@@ -543,29 +539,37 @@ export class AnchorEditor {
     const placed = new Set<string>();
     this._anchors.forEach((a) => placed.add(a.entity));
 
+    /** Crée l'ancre à la position en attente et la sélectionne. */
+    const create = (props: Partial<EditableAnchor> & { entity: string; label: string }) => {
+      this._popup = null;
+      if (!this._pendingPos) return;
+      const key = `anchor_${Date.now()}_${props.entity || props.kind || 'x'}`;
+      const anchor: EditableAnchor = {
+        position: this._pendingPos.clone(),
+        ...props,
+      };
+      this._pushUndo();
+      this._anchors.set(key, anchor);
+      this._addMarker(key, anchor.position);
+      this.setTool('select');
+      this._selectAnchor(key);
+      this._pendingPos = null;
+      this.onChanged?.();
+      this.onToolChange?.('select');
+    };
+
     const close = openEntityPicker({
       container: this._overlayContainer,
       hass: this._hass,
       placed,
       onCancel: () => { this._popup = null; this._pendingPos = null; },
-      onPick: (entity, label) => {
-        this._popup = null;
-        if (!this._pendingPos) return;
-        const key = `anchor_${Date.now()}_${entity}`;
-        const anchor: EditableAnchor = {
-          entity,
-          position: this._pendingPos.clone(),
-          label: label || entity.split('.')[1] || entity,
-        };
-        this._pushUndo();
-        this._anchors.set(key, anchor);
-        this._addMarker(key, anchor.position);
-        this.setTool('select');
-        this._selectAnchor(key);
-        this._pendingPos = null;
-        this.onChanged?.();
-        this.onToolChange?.('select');
-      },
+      // Ancre sans entité : créée en étiquette, sa nature se change ensuite dans
+      // ses propriétés.
+      onPickNone: () => create({ entity: '', label: 'Étiquette', kind: 'label' }),
+      onPick: (entity, label) => create({
+        entity,
+        label: label || entity.split('.')[1] || entity,
+      }),
     });
 
     // _closePopup() doit pouvoir refermer le sélecteur comme n'importe quel

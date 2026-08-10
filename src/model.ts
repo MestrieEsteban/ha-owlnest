@@ -126,6 +126,9 @@ export function detectAnchors(
         icon: ac.icon,
         color: ac.color,
         tapAction: ac.tapAction,
+        kind: ac.kind,
+        actions: ac.actions,
+        navViewId: ac.navViewId,
       });
     });
     return anchors;
@@ -186,6 +189,9 @@ export function buildAnchorsFromEditable(
       icon: ea.icon,
       color: ea.color,
       tapAction: ea.tapAction,
+      kind: ea.kind,
+      actions: ea.actions,
+      navViewId: ea.navViewId,
     });
   });
   return anchors;

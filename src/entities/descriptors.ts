@@ -390,6 +390,122 @@ function makeActivatable(icon: string, color: number): EntityDescriptor {
   };
 }
 
+// ── Domaines porteurs d'une valeur ───────────────────────────────────────────
+
+/**
+ * Un `input_number`, un `select` ou un `input_text` n'a pas d'etat « allume » :
+ * son interet est sa valeur. Comme un capteur, il se lit — d'ou `overlay:
+ * 'badge'`, qui fait afficher la valeur au lieu d'une icone muette.
+ */
+function valueDescriptor(color: number): EntityDescriptor {
+  return {
+    overlay: 'badge',
+    tap: 'more_info',
+    isOn: () => true,
+    level: () => 1,
+    color: () => color,
+    icon: () => undefined,
+    stateText: (s) => (isUnavailable(s) ? t('stUnavailable') : (s?.state ?? '—')),
+  };
+}
+
+/** Domaine binaire simple : une paire d'icones et un basculement. */
+function toggleDescriptor(onIcon: string, offIcon: string, color: number, tap: TapAction): EntityDescriptor {
+  return {
+    overlay: 'icon',
+    tap,
+    isOn: isActive,
+    level: (s) => (isActive(s) ? 1 : 0),
+    color: (s) => (isActive(s) ? color : OFF_COLOR),
+    icon: (s) => (isActive(s) ? onIcon : offIcon),
+    stateText: (s) => (isUnavailable(s) ? t('stUnavailable') : t(isActive(s) ? 'stOn' : 'stOff')),
+  };
+}
+
+/** Conditions meteo HA vers icones MDI. */
+const WEATHER_ICONS: Record<string, string> = {
+  'sunny': 'mdi:weather-sunny',
+  'clear-night': 'mdi:weather-night',
+  'partlycloudy': 'mdi:weather-partly-cloudy',
+  'cloudy': 'mdi:weather-cloudy',
+  'fog': 'mdi:weather-fog',
+  'rainy': 'mdi:weather-rainy',
+  'pouring': 'mdi:weather-pouring',
+  'lightning': 'mdi:weather-lightning',
+  'lightning-rainy': 'mdi:weather-lightning-rainy',
+  'snowy': 'mdi:weather-snowy',
+  'snowy-rainy': 'mdi:weather-snowy-rainy',
+  'hail': 'mdi:weather-hail',
+  'windy': 'mdi:weather-windy',
+  'windy-variant': 'mdi:weather-windy-variant',
+  'exceptional': 'mdi:alert-circle-outline',
+};
+
+const weather: EntityDescriptor = {
+  overlay: 'icon',
+  tap: 'more_info',
+  isOn: () => true,
+  level: () => 1,
+  color: () => 0x7dd3fc,
+  icon: (s) => WEATHER_ICONS[s?.state ?? ''] ?? 'mdi:weather-partly-cloudy',
+  stateText: (s) => {
+    if (isUnavailable(s)) return t('stUnavailable');
+    const temp = s?.attributes?.temperature;
+    return typeof temp === 'number' ? `${Math.round(temp)}°` : (s?.state ?? '—');
+  },
+};
+
+const sun: EntityDescriptor = {
+  overlay: 'icon',
+  tap: 'more_info',
+  isOn: (s) => s?.state === 'above_horizon',
+  level: (s) => (s?.state === 'above_horizon' ? 1 : 0),
+  color: (s) => (s?.state === 'above_horizon' ? 0xfbbf24 : 0x64748b),
+  icon: (s) => (s?.state === 'above_horizon' ? 'mdi:white-balance-sunny' : 'mdi:weather-night'),
+  stateText: (s) => {
+    if (isUnavailable(s)) return t('stUnavailable');
+    const el = s?.attributes?.elevation;
+    return typeof el === 'number' ? `${Math.round(el)}°` : (s?.state ?? '—');
+  },
+};
+
+const update: EntityDescriptor = {
+  overlay: 'icon',
+  tap: 'more_info',
+  isOn: isActive,
+  level: (s) => (isActive(s) ? 1 : 0),
+  color: (s) => (isActive(s) ? OPEN : OFF_COLOR),
+  icon: (s) => (isActive(s) ? 'mdi:package-up' : 'mdi:package-variant-closed'),
+  stateText: (s) =>
+    isUnavailable(s) ? t('stUnavailable') : t(isActive(s) ? 'stUpdateAvailable' : 'stOk'),
+};
+
+// ── Icones de repli, partagees avec le selecteur et la roue ─────────────────
+
+/**
+ * Pour les domaines qu'aucun descripteur dedie ne couvre. Sans cela, chacun
+ * choisissait sa propre icone par defaut et on obtenait un « play » generique
+ * partout.
+ */
+const FALLBACK_ICONS: Record<string, string> = {
+  calendar: 'mdi:calendar',
+  camera: 'mdi:cctv',
+  conversation: 'mdi:forum',
+  event: 'mdi:flash',
+  image: 'mdi:image',
+  input_datetime: 'mdi:clock-outline',
+  notify: 'mdi:message-badge',
+  stt: 'mdi:microphone-message',
+  todo: 'mdi:check-circle-outline',
+  tts: 'mdi:account-voice',
+  zone: 'mdi:map-marker-radius',
+};
+
+/** Icone a utiliser quand le descripteur n'en impose pas. */
+export function fallbackIcon(domain: string): string {
+  return FALLBACK_ICONS[domain] ?? 'mdi:help-circle-outline';
+}
+
 const BY_DOMAIN: Record<string, EntityDescriptor> = {
   lock,
   vacuum,
@@ -407,6 +523,18 @@ const BY_DOMAIN: Record<string, EntityDescriptor> = {
   light,
   switch: switchDesc,
   input_boolean: switchDesc,
+  // Domaines porteurs d'une valeur : ils affichent leur etat, pas une icone.
+  number: valueDescriptor(0x38bdf8),
+  input_number: valueDescriptor(0x38bdf8),
+  select: valueDescriptor(0xa78bfa),
+  input_select: valueDescriptor(0xa78bfa),
+  input_text: valueDescriptor(0x94a3b8),
+  input_datetime: valueDescriptor(0x94a3b8),
+  weather,
+  sun,
+  update,
+  automation: toggleDescriptor('mdi:robot', 'mdi:robot-off', 0x4ade80, 'toggle'),
+  remote: toggleDescriptor('mdi:remote', 'mdi:remote-off', NEUTRAL, 'toggle'),
   cover,
   climate,
   media_player: mediaPlayer,

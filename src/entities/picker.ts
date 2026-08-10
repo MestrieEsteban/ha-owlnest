@@ -15,7 +15,7 @@
 
 import type { Hass } from '../types';
 import { t, tn } from '../i18n';
-import { describeEntity } from './descriptors';
+import { describeEntity, fallbackIcon } from './descriptors';
 import {
   loadRegistry, areaOf, deviceOf, floorOf, isTechnical, displayName,
   type Registry,
@@ -26,9 +26,21 @@ export type GroupMode = 'area' | 'device' | 'domain';
 export interface PickerOptions {
   container: HTMLElement;
   hass: Hass;
+  /**
+   * Quand fourni, un bouton propose de créer une ancre sans entité (étiquette,
+   * roue d'actions, navigation) — sa nature se règle ensuite dans ses
+   * propriétés.
+   */
+  onPickNone?: () => void;
   /** Entités déjà posées dans la scène — signalées, et masquables. */
   placed?: Set<string>;
   onPick: (entityId: string, label: string) => void;
+  /**
+   * Active la selection multiple. Cliquer une ligne la coche au lieu de valider,
+   * et un bouton confirme l'ensemble — indispensable pour composer un groupe.
+   */
+  multi?: boolean;
+  onPickMany?: (entityIds: string[]) => void;
   onCancel?: () => void;
 }
 
@@ -71,27 +83,11 @@ const CSS = {
   ].join(';'),
 };
 
-/** Icônes de liste pour les domaines dont le descripteur n'en impose pas. */
-const FALLBACK_ICON: Record<string, string> = {
-  sensor: 'mdi:gauge',
-  number: 'mdi:ray-vertex',
-  select: 'mdi:format-list-bulleted',
-  input_number: 'mdi:ray-vertex',
-  input_select: 'mdi:format-list-bulleted',
-  input_text: 'mdi:form-textbox',
-  automation: 'mdi:robot',
-  update: 'mdi:package-up',
-  weather: 'mdi:weather-partly-cloudy',
-  sun: 'mdi:white-balance-sunny',
-  zone: 'mdi:map-marker-radius',
-  todo: 'mdi:check-circle-outline',
-  calendar: 'mdi:calendar',
-  remote: 'mdi:remote',
-  image: 'mdi:image',
-};
-
 export function openEntityPicker(opts: PickerOptions): () => void {
-  const { container, hass, placed = new Set(), onPick, onCancel } = opts;
+  const { container, hass, placed = new Set(), onPick, onPickNone, onCancel } = opts;
+  const multi = opts.multi === true && !!opts.onPickMany;
+  /** Selection en cours, en mode multiple. */
+  const chosen = new Set<string>();
 
   let reg: Registry | null = null;
   let group: GroupMode = 'area';
@@ -113,7 +109,7 @@ export function openEntityPicker(opts: PickerOptions): () => void {
   titleRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
   const title = document.createElement('div');
   title.style.cssText = 'font-size:13px;font-weight:600;color:#aac8e8;flex:1;';
-  title.textContent = t('pickTitle');
+  title.textContent = multi ? t('pickTitleMulti') : t('pickTitle');
   const count = document.createElement('div');
   count.style.cssText = 'font-size:10px;color:#64748b;';
   titleRow.append(title, count);
@@ -134,11 +130,40 @@ export function openEntityPicker(opts: PickerOptions): () => void {
   footer.style.cssText = 'padding:8px 14px;border-top:1px solid rgba(255,255,255,0.07);display:flex;justify-content:space-between;align-items:center;gap:8px;';
   const hint = document.createElement('div');
   hint.style.cssText = 'font-size:9px;color:#475569;';
-  hint.textContent = t('pickHint');
+  hint.textContent = multi ? t('pickHintMulti') : t('pickHint');
   const cancelBtn = document.createElement('button');
   cancelBtn.textContent = t('pickCancel');
   cancelBtn.style.cssText = 'background:transparent;border:1px solid rgba(255,255,255,0.14);border-radius:7px;color:#94a3b8;font-size:11px;padding:6px 12px;cursor:pointer;font-family:inherit;';
-  footer.append(hint, cancelBtn);
+  const actions = document.createElement('div');
+  actions.style.cssText = 'display:flex;gap:6px;align-items:center;';
+
+  const confirmBtn = document.createElement('button');
+  confirmBtn.style.cssText = 'background:rgba(74,222,128,0.14);border:1px solid rgba(74,222,128,0.4);border-radius:7px;color:#4ade80;font-size:11px;padding:6px 12px;cursor:pointer;font-family:inherit;white-space:nowrap;';
+  const syncConfirm = () => {
+    confirmBtn.textContent = tn('pickAddN', chosen.size);
+    confirmBtn.disabled = chosen.size === 0;
+    confirmBtn.style.opacity = chosen.size === 0 ? '0.45' : '1';
+  };
+  if (multi) {
+    syncConfirm();
+    confirmBtn.addEventListener('click', () => {
+      if (!chosen.size) return;
+      const ids = [...chosen];
+      close();
+      opts.onPickMany?.(ids);
+    });
+    actions.appendChild(confirmBtn);
+  }
+  if (onPickNone) {
+    const noneBtn = document.createElement('button');
+    noneBtn.textContent = t('pickNoEntity');
+    noneBtn.title = t('pickNoEntityHint');
+    noneBtn.style.cssText = 'background:rgba(125,209,252,0.1);border:1px solid rgba(125,209,252,0.28);border-radius:7px;color:#7dd3fc;font-size:11px;padding:6px 11px;cursor:pointer;font-family:inherit;white-space:nowrap;';
+    noneBtn.addEventListener('click', () => { close(); onPickNone(); });
+    actions.appendChild(noneBtn);
+  }
+  actions.appendChild(cancelBtn);
+  footer.append(hint, actions);
 
   panel.append(header, list, footer);
   container.appendChild(panel);
@@ -305,7 +330,7 @@ export function openEntityPicker(opts: PickerOptions): () => void {
 
     // Les descripteurs renvoient `undefined` quand l'overlay 3D utilise son SVG
     // intégré. Dans une liste, il faut malgré tout une icône.
-    const mdi = desc.icon(st) ?? FALLBACK_ICON[row.entityId.split('.')[0]] ?? 'mdi:circle-outline';
+    const mdi = desc.icon(st) ?? fallbackIcon(row.entityId.split('.')[0]);
     const icon = document.createElement('div');
     icon.style.cssText = 'width:26px;height:26px;flex:0 0 26px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.05);';
     icon.style.color = on ? hex : '#556070';
@@ -336,6 +361,32 @@ export function openEntityPicker(opts: PickerOptions): () => void {
       badge.title = t('pickPlaced');
       badge.style.cssText = 'color:#4ade80;font-size:9px;flex:0 0 auto;';
       el.appendChild(badge);
+    }
+
+    // En mode multiple, une marque remplace la validation immediate.
+    const tick = document.createElement('span');
+    if (multi) {
+      tick.style.cssText = 'flex:0 0 auto;width:14px;text-align:center;font-size:11px;color:#4ade80;';
+      const syncTick = () => {
+        const sel = chosen.has(row.entityId);
+        tick.textContent = sel ? '✓' : '';
+        el.style.background = sel ? 'rgba(74,222,128,0.1)' : '';
+      };
+      syncTick();
+      el.insertBefore(tick, el.firstChild);
+      el.addEventListener('click', () => {
+        if (chosen.has(row.entityId)) chosen.delete(row.entityId);
+        else chosen.add(row.entityId);
+        syncTick();
+        syncConfirm();
+      });
+      el.addEventListener('mouseenter', () => {
+        if (!chosen.has(row.entityId)) el.style.background = 'rgba(255,255,255,0.06)';
+      });
+      el.addEventListener('mouseleave', () => {
+        if (!chosen.has(row.entityId)) el.style.background = '';
+      });
+      return el;
     }
 
     el.addEventListener('mouseenter', () => { el.style.background = 'rgba(255,255,255,0.06)'; });
@@ -370,6 +421,13 @@ export function openEntityPicker(opts: PickerOptions): () => void {
     if (e.key === 'Enter' && cursor >= 0 && cursor < flat.length) {
       e.preventDefault(); e.stopPropagation();
       const id = flat[cursor];
+      if (multi) {
+        // Entree coche et laisse le panneau ouvert : on compose une liste.
+        const el = Array.from(list.querySelectorAll<HTMLElement>('[data-entity]'))
+          .find((c) => c.dataset.entity === id);
+        el?.dispatchEvent(new MouseEvent('click'));
+        return;
+      }
       const name = rows.find((r) => r.entityId === id)?.name ?? id;
       close();
       onPick(id, name);

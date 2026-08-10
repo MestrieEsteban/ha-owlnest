@@ -96,6 +96,38 @@ const STRINGS = {
     viewDelete:      'Delete',
     noViews:         'No saved views',
 
+    // Nature d'ancre
+    anchorSectionKind:   'Kind',
+    anchorFieldKind:     'Anchor kind',
+    anchorKindEntity:    'Entity state',
+    anchorKindLabel:     'Label',
+    anchorKindMenu:      'Entity group',
+    anchorKindNav:       'Navigation',
+    anchorKindEntityHint:'Shows the state of one entity and reacts to taps.',
+    anchorKindLabelHint: 'Plain text pinned in space. No entity, not clickable.',
+    anchorKindMenuHint:  'A tap opens a wheel holding several entities, each behaving like its own anchor. Can also hold scripts, scenes or camera views.',
+    anchorKindNavHint:   'A tap flies the camera to a saved view.',
+    anchorSectionNav:    'Target view',
+    anchorNavView:       'Camera view',
+    anchorNavNone:       '— none —',
+    anchorNavNoViews:    'No saved view yet — save one from the Camera tab.',
+    anchorSectionActions:'Wheel contents',
+    anchorActionAdd:     '+ Other…',
+    anchorActionAddEntities: '+ Add entities',
+    anchorActionAddHint: 'Add a script, a scene, a service call or a camera view',
+    anchorActionNew:     'Action',
+    anchorActionEmpty:   'No action yet',
+    anchorActionDelete:  'Remove this action',
+    anchorActionLabelPh: 'Label…',
+    anchorActionLabelAuto: 'Label — auto from the target',
+    anchorActionNoService: 'No service set: this entry will do nothing.',
+    anchorActionNoView:    'No view selected: this entry will do nothing.',
+    anchorActionEntity:  'An entity (recommended)',
+    anchorActionNoEntity: 'No entity chosen: this entry will do nothing.',
+    anchorActionService: 'Call a service',
+    anchorActionView:    'Go to a view',
+    anchorActionServicePh: 'light.turn_on, script.turn_on…',
+
     anchorSectionBehavior: 'Behaviour',
     anchorFieldTap:      'Tap action',
     anchorTapDefault:    'Default (by domain)',
@@ -110,6 +142,9 @@ const STRINGS = {
 
     // Selecteur d'entites
     pickTitle:        'Choose an entity',
+    pickTitleMulti:   'Choose entities',
+    pickHintMulti:    'Click to tick · Enter toggles · Esc closes',
+    pickAddN:         (n: number) => n === 0 ? 'Add' : `Add ${n}`,
     anchorBrowse:     'Browse…',
     pickSearch:       'Search name, id, room, device…',
     pickGroupBy:      'Group',
@@ -123,6 +158,8 @@ const STRINGS = {
     pickNoDevice:     'No device',
     pickNoResult:     'No match',
     pickLoading:      'Loading registry…',
+    pickNoEntity:     'No entity',
+    pickNoEntityHint: 'Create a label, action wheel or navigation anchor',
     pickCancel:       'Cancel',
     pickHint:         '↑ ↓ navigate · Enter select · Esc close',
     pickCount:        (n: number) => `${n} entit${n !== 1 ? 'ies' : 'y'}`,
@@ -166,6 +203,7 @@ const STRINGS = {
     stTap:           'Tap to run',
     stRecording:     'Recording',
     stStreaming:     'Streaming',
+    stUpdateAvailable: 'Update available',
     stUnavailable:   'Unavailable',
 
     // Config tab — Rendering
@@ -482,6 +520,38 @@ const STRINGS = {
     viewDelete:      'Supprimer',
     noViews:         'Aucune vue sauvegardée',
 
+    // Nature d'ancre
+    anchorSectionKind:   'Nature',
+    anchorFieldKind:     "Nature de l'ancre",
+    anchorKindEntity:    "État d'une entité",
+    anchorKindLabel:     'Étiquette',
+    anchorKindMenu:      "Groupe d'entités",
+    anchorKindNav:       'Navigation',
+    anchorKindEntityHint:"Affiche l'état d'une entité et réagit à l'appui.",
+    anchorKindLabelHint: "Texte fixé dans l'espace. Sans entité, non cliquable.",
+    anchorKindMenuHint:  "Un appui ouvre une roue contenant plusieurs entités, chacune se comportant comme sa propre ancre. Peut aussi contenir scripts, scènes ou vues caméra.",
+    anchorKindNavHint:   'Un appui amène la caméra sur une vue enregistrée.',
+    anchorSectionNav:    'Vue cible',
+    anchorNavView:       'Vue caméra',
+    anchorNavNone:       '— aucune —',
+    anchorNavNoViews:    "Aucune vue enregistrée — crées-en une depuis l'onglet Caméra.",
+    anchorSectionActions:'Contenu de la roue',
+    anchorActionAdd:     '+ Autre…',
+    anchorActionAddEntities: '+ Ajouter des entités',
+    anchorActionAddHint: 'Ajouter un script, une scène, un appel de service ou une vue caméra',
+    anchorActionNew:     'Action',
+    anchorActionEmpty:   'Aucune action',
+    anchorActionDelete:  'Retirer cette action',
+    anchorActionLabelPh: 'Libellé…',
+    anchorActionLabelAuto: "Libellé — auto d'après la cible",
+    anchorActionNoService: 'Aucun service renseigné : cette entrée ne fera rien.',
+    anchorActionNoView:    'Aucune vue choisie : cette entrée ne fera rien.',
+    anchorActionEntity:  'Une entité (recommandé)',
+    anchorActionNoEntity: 'Aucune entité choisie : cette entrée ne fera rien.',
+    anchorActionService: 'Appeler un service',
+    anchorActionView:    'Aller à une vue',
+    anchorActionServicePh: 'light.turn_on, script.turn_on…',
+
     anchorSectionBehavior: 'Comportement',
     anchorFieldTap:      'Action au tap',
     anchorTapDefault:    'Par défaut (selon le type)',
@@ -496,6 +566,9 @@ const STRINGS = {
 
     // Selecteur d'entites
     pickTitle:        'Choisir une entité',
+    pickTitleMulti:   'Choisir des entités',
+    pickHintMulti:    'Clic pour cocher · Entrée bascule · Échap ferme',
+    pickAddN:         (n: number) => n === 0 ? 'Ajouter' : `Ajouter ${n}`,
     anchorBrowse:     'Parcourir…',
     pickSearch:       'Rechercher nom, id, pièce, appareil…',
     pickGroupBy:      'Grouper',
@@ -509,6 +582,8 @@ const STRINGS = {
     pickNoDevice:     'Sans appareil',
     pickNoResult:     'Aucun résultat',
     pickLoading:      'Chargement du registre…',
+    pickNoEntity:     'Sans entité',
+    pickNoEntityHint: "Créer une étiquette, une roue d'actions ou une ancre de navigation",
     pickCancel:       'Annuler',
     pickHint:         '↑ ↓ naviguer · Entrée choisir · Échap fermer',
     pickCount:        (n: number) => `${n} entité${n !== 1 ? 's' : ''}`,
@@ -552,6 +627,7 @@ const STRINGS = {
     stTap:           'Appuyer',
     stRecording:     'Enregistre',
     stStreaming:     'En direct',
+    stUpdateAvailable: 'Mise à jour dispo',
     stUnavailable:   'Indisponible',
 
     // Config tab — Rendu
@@ -798,6 +874,6 @@ export function t(key: StringKey): string {
 }
 
 // For string keys that map to a function (pluralization helpers)
-export function tn(key: 'anchors_n' | 'cards_n' | 'rules_n' | 'pickCount', n: number): string {
+export function tn(key: 'anchors_n' | 'cards_n' | 'rules_n' | 'pickCount' | 'pickAddN', n: number): string {
   return (STRINGS[_lang][key] as (n: number) => string)(n);
 }

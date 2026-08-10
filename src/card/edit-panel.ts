@@ -1,6 +1,6 @@
 import type { Hass, CardConfig, EditableAnchor, CameraView, SceneSettings } from '../types';
 import type { SceneCard, SceneCardType } from '../cards/types';
-import { CARD_DEFAULT_ACCENT, CARD_TYPE_LABELS } from '../cards/types';
+import { CARD_DEFAULT_ACCENT, CARD_TYPE_LABELS, CARDS_ENABLED } from '../cards/types';
 import type { AnchorEditor, EditorTool } from '../editor';
 import type { OwlnestRule, Action } from '../rules/types';
 import { t, setLang } from '../i18n';
@@ -8,6 +8,43 @@ import { openEntityPicker } from '../entities/picker';
 import { detectionLabel, resolveLevel } from '../quality';
 import type { TapAction } from '../entities/descriptors';
 import type { QualityLevel } from '../quality';
+import type { AnchorKind } from '../types';
+
+/**
+ * Une liste déroulante native se dessine avec les couleurs du système, pas
+ * celles du <select> : un texte clair posé sur le fond blanc de la popup
+ * devenait illisible. `color-scheme:dark` fait rendre la popup en sombre, et
+ * les styles appliqués à chaque <option> couvrent les navigateurs qui
+ * l'ignorent.
+ */
+const SELECT_STYLE = ';cursor:pointer;color-scheme:dark;';
+
+function styleOption(o: HTMLOptionElement): HTMLOptionElement {
+  o.style.backgroundColor = '#1a1f2e';
+  o.style.color = '#e2e8f0';
+  return o;
+}
+
+/** Libelle d'une ancre pour les listes — une nature sans entite n'en a pas. */
+function anchorTitle(a: { label?: string; entity: string; kind?: AnchorKind }): string {
+  if (a.label) return a.label;
+  const name = a.entity.split('.')[1];
+  if (name) return name;
+  return KIND_LABEL[a.kind ?? 'entity']();
+}
+
+/** Seconde ligne : l'entity_id, ou la nature quand il n'y en a pas. */
+function anchorSubtitle(a: { entity: string; kind?: AnchorKind }): string {
+  if (a.entity) return a.entity;
+  return KIND_LABEL[a.kind ?? 'entity']();
+}
+
+const KIND_LABEL: Record<AnchorKind, () => string> = {
+  entity: () => t('anchorKindEntity'),
+  label:  () => t('anchorKindLabel'),
+  menu:   () => t('anchorKindMenu'),
+  nav:    () => t('anchorKindNav'),
+};
 
 /** Create a "?" tooltip badge with a fixed-position popup that escapes overflow containers. */
 function createHelpBadge(text: string): HTMLElement {
@@ -453,8 +490,15 @@ export class EditPanel {
     ] as const;
     type TabId = typeof TAB_DEFS[number]['id'];
 
-    const defaultTab: TabId = this.getSelectedCardId?.() ? 'cards' : 'anchors';
-    let activeTab: TabId = (TAB_DEFS.find(d => d.id === this._activeInspectorTab) ? this._activeInspectorTab as TabId : null) ?? defaultTab;
+    const defaultTab: TabId = CARDS_ENABLED && this.getSelectedCardId?.() ? 'cards' : 'anchors';
+    // Un onglet masqué mémorisé d'un précédent rendu ne doit pas être restauré :
+    // son volet existe toujours, mais aucun bouton ne permettrait d'en sortir.
+    const tabVisible = (id: string) => id !== 'cards' || CARDS_ENABLED;
+    const remembered = this._activeInspectorTab;
+    let activeTab: TabId =
+      (remembered && TAB_DEFS.find(d => d.id === remembered) && tabVisible(remembered)
+        ? remembered as TabId
+        : null) ?? defaultTab;
 
     // Left icon rail
     const sidebar = document.createElement('div');
@@ -486,23 +530,30 @@ export class EditPanel {
     };
 
     TAB_DEFS.forEach(({ id, icon, label }) => {
-      const btn = document.createElement('button');
-      btn.style.cssText = [
-        'width:32px', 'height:32px',
-        'background:transparent',
-        'border:none', 'border-left:2px solid transparent',
-        'border-radius:6px',
-        'cursor:pointer', 'color:rgba(255,255,255,0.22)',
-        'font-size:14px', 'line-height:1',
-        'display:flex', 'align-items:center', 'justify-content:center',
-        'transition:all .15s', 'flex-shrink:0',
-      ].join(';');
-      btn.textContent = icon;
-      btn.title = label;
-      btn.addEventListener('click', () => switchTab(id));
-      tabBtns.set(id, btn);
-      sidebar.appendChild(btn);
+      // Onglet masqué : pas de bouton dans la barre latérale…
+      const hideTab = id === 'cards' && !CARDS_ENABLED;
+      if (!hideTab) {
+        const btn = document.createElement('button');
+        btn.style.cssText = [
+          'width:32px', 'height:32px',
+          'background:transparent',
+          'border:none', 'border-left:2px solid transparent',
+          'border-radius:6px',
+          'cursor:pointer', 'color:rgba(255,255,255,0.22)',
+          'font-size:14px', 'line-height:1',
+          'display:flex', 'align-items:center', 'justify-content:center',
+          'transition:all .15s', 'flex-shrink:0',
+        ].join(';');
+        btn.textContent = icon;
+        btn.title = label;
+        btn.addEventListener('click', () => switchTab(id));
+        tabBtns.set(id, btn);
+        sidebar.appendChild(btn);
+      }
 
+      // …mais le volet est toujours créé : la suite de cette fonction y accède
+      // par son identifiant, et une absence ferait échouer toute la construction
+      // des onglets suivants.
       const pane = document.createElement('div');
       pane.style.cssText = 'flex-direction:column;flex:1;min-height:0;overflow:hidden;display:none;';
       tabPanes.set(id, pane);
@@ -645,10 +696,10 @@ export class EditPanel {
         col.style.cssText = 'flex:1;min-width:0;';
         const nameEl = document.createElement('div');
         nameEl.style.cssText = `font-size:12px;font-weight:500;${a.hidden ? 'color:rgba(255,255,255,0.25);' : 'color:#e2e8f0;'}overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.3;`;
-        nameEl.textContent = a.label || a.entity.split('.')[1];
+        nameEl.textContent = anchorTitle(a);
         const entityEl = document.createElement('div');
         entityEl.style.cssText = `font-size:10px;color:${a.hidden ? 'rgba(255,255,255,0.15)' : color};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.3;opacity:0.8;`;
-        entityEl.textContent = a.entity;
+        entityEl.textContent = anchorSubtitle(a);
         col.appendChild(nameEl); col.appendChild(entityEl);
 
         const rowBtnStyle = 'background:none;border:none;cursor:pointer;padding:2px 4px;font-size:12px;flex-shrink:0;line-height:1;border-radius:4px;color:rgba(255,255,255,0.4);transition:all .12s;opacity:0;';
@@ -841,9 +892,9 @@ export class EditPanel {
       if (helpText) row.appendChild(helpBadge(helpText));
       wrap.appendChild(row);
       const sel = document.createElement('select');
-      sel.style.cssText = inputStyle + ';cursor:pointer;';
+      sel.style.cssText = inputStyle + SELECT_STYLE;
       options.forEach(([val, label]) => {
-        const o = document.createElement('option');
+        const o = styleOption(document.createElement('option'));
         o.value = val; o.textContent = label;
         if (current === val) o.selected = true;
         sel.appendChild(o);
@@ -1154,10 +1205,10 @@ export class EditPanel {
     }
 
     const langSelect = document.createElement('select');
-    langSelect.style.cssText = inputStyle + ';cursor:pointer;';
+    langSelect.style.cssText = inputStyle + SELECT_STYLE;
     const langs: ['en' | 'fr', string][] = [['en', t('langEn')], ['fr', t('langFr')]];
     langs.forEach(([val, label]) => {
-      const opt = document.createElement('option');
+      const opt = styleOption(document.createElement('option'));
       opt.value = val; opt.textContent = label;
       if ((settings.language ?? 'en') === val) opt.selected = true;
       langSelect.appendChild(opt);
@@ -1309,8 +1360,12 @@ export class EditPanel {
     container.innerHTML = '';
 
     const domain = anchor.entity.split('.')[0];
-    const isLight = domain === 'light';
-    const isSensor = domain === 'sensor' || domain === 'binary_sensor';
+    const kind: AnchorKind = anchor.kind ?? 'entity';
+    const isEntityKind = kind === 'entity';
+    // Les réglages de lumière, de précision et d'action n'ont de sens que pour
+    // une ancre liée à une entité.
+    const isLight = isEntityKind && domain === 'light';
+    const isSensor = isEntityKind && (domain === 'sensor' || domain === 'binary_sensor');
 
     // ── Back navigation ───────────────────────────────────────────────
     if (goBack) {
@@ -1385,15 +1440,55 @@ export class EditPanel {
     // Title
     const title = document.createElement('div');
     title.style.cssText = 'font-size:12px;font-weight:700;color:#7dd3fc;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-    title.textContent = anchor.label || anchor.entity.split('.')[1];
+    title.textContent = anchorTitle(anchor);
     container.appendChild(title);
     const subtitle = document.createElement('div');
     subtitle.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.3);margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-    subtitle.textContent = anchor.entity;
+    subtitle.textContent = anchorSubtitle(anchor);
     container.appendChild(subtitle);
 
+    // ── Section: Nature ──────────────────────────────────────────────
+    // La nature commande tout le reste du panneau : changer de nature
+    // reconstruit la section pour n'afficher que les champs pertinents.
+    secDiv(t('anchorSectionKind'));
+    {
+      const kindSel = document.createElement('select');
+      kindSel.style.cssText = inputStyle + SELECT_STYLE;
+      const kinds: [AnchorKind, string][] = [
+        ['entity', t('anchorKindEntity')],
+        ['label',  t('anchorKindLabel')],
+        ['menu',   t('anchorKindMenu')],
+        ['nav',    t('anchorKindNav')],
+      ];
+      for (const [val, lab] of kinds) {
+        const o = styleOption(document.createElement('option'));
+        o.value = val; o.textContent = lab;
+        if (kind === val) o.selected = true;
+        kindSel.appendChild(o);
+      }
+      kindSel.addEventListener('change', () => {
+        const next = kindSel.value as AnchorKind;
+        this.getEditor()?.updateAnchor(key, { kind: next === 'entity' ? undefined : next });
+        this.scheduleAutoSave();
+        // Rechargement complet : les champs affichés dépendent de la nature.
+        const fresh = this.getEditor()?.anchors.get(key);
+        if (fresh) this._buildPropsSection(container, key, fresh, goBack);
+      });
+      field(t('anchorFieldKind'), kindSel);
+
+      const kindHint = document.createElement('div');
+      kindHint.style.cssText = 'font-size:9px;color:#475569;margin-top:-5px;margin-bottom:8px;line-height:1.5;';
+      kindHint.textContent = t(
+        kind === 'label' ? 'anchorKindLabelHint'
+        : kind === 'menu' ? 'anchorKindMenuHint'
+        : kind === 'nav' ? 'anchorKindNavHint'
+        : 'anchorKindEntityHint',
+      );
+      container.appendChild(kindHint);
+    }
+
     // ── Section: Liaison HA ──────────────────────────────────────────
-    secDiv(t('anchorSectionHA'));
+    if (isEntityKind) secDiv(t('anchorSectionHA'));
 
     const entityWrap = document.createElement('div');
     entityWrap.style.cssText = 'position:relative;';
@@ -1418,7 +1513,7 @@ export class EditPanel {
       const hass = this.getHass();
       if (!hass) return;
       const placed = new Set<string>();
-      this.getEditor()?.anchors.forEach((a) => placed.add(a.entity));
+      this.getEditor()?.anchors.forEach((a) => { if (a.entity) placed.add(a.entity); });
       openEntityPicker({
         container: this.overlayContainer,
         hass,
@@ -1441,7 +1536,7 @@ export class EditPanel {
     entityInput.removeAttribute('list');
     entityWrap.appendChild(entityInput);
     entityWrap.appendChild(browseBtn);
-    field(t('anchorFieldEntity'), entityWrap);
+    if (isEntityKind) field(t('anchorFieldEntity'), entityWrap);
 
     const labelInput = document.createElement('input');
     labelInput.value = anchor.label;
@@ -1450,10 +1545,250 @@ export class EditPanel {
     labelInput.addEventListener('focus', () => { labelInput.style.borderColor = 'rgba(125,209,252,0.5)'; });
     labelInput.addEventListener('blur', () => { labelInput.style.borderColor = 'rgba(255,255,255,0.1)'; });
     labelInput.addEventListener('change', () => {
-      this.getEditor()?.updateAnchor(key, { label: labelInput.value.trim() || anchor.entity.split('.')[1] });
+      this.getEditor()?.updateAnchor(key, { label: labelInput.value.trim() || anchorTitle(anchor) });
       this.scheduleAutoSave();
     });
     field(t('anchorFieldName'), labelInput);
+
+    // ── Nature `nav` : vue cible ──────────────────────────────────────
+    if (kind === 'nav') {
+      secDiv(t('anchorSectionNav'));
+      const views = this.getViews?.() ?? [];
+      const viewSel = document.createElement('select');
+      viewSel.style.cssText = inputStyle + SELECT_STYLE;
+      const none = styleOption(document.createElement('option'));
+      none.value = ''; none.textContent = t('anchorNavNone');
+      viewSel.appendChild(none);
+      for (const v of views) {
+        const o = styleOption(document.createElement('option'));
+        o.value = v.id ?? ''; o.textContent = v.label;
+        if (anchor.navViewId === v.id) o.selected = true;
+        viewSel.appendChild(o);
+      }
+      viewSel.addEventListener('change', () => {
+        this.getEditor()?.updateAnchor(key, { navViewId: viewSel.value || undefined });
+        this.scheduleAutoSave();
+      });
+      field(t('anchorNavView'), viewSel);
+      if (!views.length) {
+        const warn = document.createElement('div');
+        warn.style.cssText = 'font-size:9px;color:#fbbf24;margin-top:-5px;margin-bottom:8px;';
+        warn.textContent = t('anchorNavNoViews');
+        container.appendChild(warn);
+      }
+    }
+
+    // ── Nature `menu` : roue d'actions ────────────────────────────────
+    if (kind === 'menu') {
+      secDiv(t('anchorSectionActions'));
+      const listWrap = document.createElement('div');
+      container.appendChild(listWrap);
+
+      const getActions = (): import('../types').AnchorAction[] =>
+        this.getEditor()?.anchors.get(key)?.actions ?? [];
+
+      const writeActions = (next: import('../types').AnchorAction[]) => {
+        this.getEditor()?.updateAnchor(key, { actions: next });
+        this.scheduleAutoSave();
+        renderActions();
+      };
+
+      const renderActions = () => {
+        listWrap.innerHTML = '';
+        const actions = getActions();
+
+        actions.forEach((act, idx) => {
+          const row = document.createElement('div');
+          row.style.cssText = 'border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:7px;margin-bottom:6px;display:flex;flex-direction:column;gap:5px;';
+
+          const head = document.createElement('div');
+          head.style.cssText = 'display:flex;gap:5px;align-items:center;';
+
+          const labInp = document.createElement('input');
+          labInp.value = act.label;
+          labInp.placeholder = t('anchorActionLabelAuto');
+          labInp.style.cssText = inputStyle + ';flex:1;min-width:0;';
+          labInp.addEventListener('change', () => {
+            const next = [...getActions()];
+            next[idx] = { ...next[idx], label: labInp.value.trim() };
+            writeActions(next);
+          });
+
+          const icoInp = document.createElement('input');
+          icoInp.value = act.icon ?? '';
+          icoInp.placeholder = 'mdi:…';
+          icoInp.style.cssText = inputStyle + ';width:92px;flex:0 0 auto;';
+          icoInp.addEventListener('change', () => {
+            const next = [...getActions()];
+            next[idx] = { ...next[idx], icon: icoInp.value.trim() || undefined };
+            writeActions(next);
+          });
+
+          const del = document.createElement('button');
+          del.textContent = '×';
+          del.title = t('anchorActionDelete');
+          del.style.cssText = 'background:none;border:none;color:rgba(248,113,113,0.7);cursor:pointer;font-size:15px;padding:0 3px;line-height:1;flex:0 0 auto;';
+          del.addEventListener('click', () => writeActions(getActions().filter((_, j) => j !== idx)));
+
+          head.append(labInp, icoInp, del);
+          row.appendChild(head);
+
+          const typeSel = document.createElement('select');
+          typeSel.style.cssText = inputStyle + SELECT_STYLE;
+          const typeOpts: [string, string][] = [
+            ['entity', t('anchorActionEntity')],
+            ['service', t('anchorActionService')],
+            ['view', t('anchorActionView')],
+          ];
+          for (const [v, l] of typeOpts) {
+            const o = styleOption(document.createElement('option'));
+            o.value = v; o.textContent = l;
+            if (act.type === v) o.selected = true;
+            typeSel.appendChild(o);
+          }
+          typeSel.addEventListener('change', () => {
+            const next = [...getActions()];
+            next[idx] = { ...next[idx], type: typeSel.value as 'service' | 'view' };
+            writeActions(next);
+          });
+          row.appendChild(typeSel);
+
+          if (act.type === 'entity') {
+            // Tout vient du descripteur : il n'y a que la cible a choisir.
+            const target = this._entityField(
+              act.entity_id ?? (act.service_data?.entity_id as string) ?? '',
+              inputStyle,
+              (v) => {
+                const next = [...getActions()];
+                next[idx] = { ...next[idx], entity_id: v || undefined };
+                writeActions(next);
+              },
+            );
+            row.appendChild(target.wrap);
+          } else if (act.type === 'view') {
+            const vs = document.createElement('select');
+            vs.style.cssText = inputStyle + SELECT_STYLE;
+            const n0 = styleOption(document.createElement('option'));
+            n0.value = ''; n0.textContent = t('anchorNavNone');
+            vs.appendChild(n0);
+            for (const v of this.getViews?.() ?? []) {
+              const o = styleOption(document.createElement('option'));
+              o.value = v.id ?? ''; o.textContent = v.label;
+              if (act.view_id === v.id) o.selected = true;
+              vs.appendChild(o);
+            }
+            vs.addEventListener('change', () => {
+              const next = [...getActions()];
+              next[idx] = { ...next[idx], view_id: vs.value || undefined };
+              writeActions(next);
+            });
+            row.appendChild(vs);
+          } else {
+            // Un seul champ « domaine.service » : plus court a saisir que deux,
+            // et c'est la forme sous laquelle HA les documente.
+            const svc = document.createElement('input');
+            svc.value = act.domain && act.service ? act.domain + '.' + act.service : '';
+            svc.placeholder = t('anchorActionServicePh');
+            svc.style.cssText = inputStyle;
+            svc.addEventListener('change', () => {
+              const parts = svc.value.trim().split('.');
+              const d = parts.shift();
+              const next = [...getActions()];
+              next[idx] = { ...next[idx], domain: d || undefined, service: parts.join('.') || undefined };
+              writeActions(next);
+            });
+            row.appendChild(svc);
+
+            const target = this._entityField(
+              (act.service_data?.entity_id as string) ?? '',
+              inputStyle,
+              (v) => {
+                const next = [...getActions()];
+                const data: Record<string, unknown> = { ...(next[idx].service_data ?? {}) };
+                if (v) data.entity_id = v; else delete data.entity_id;
+                next[idx] = { ...next[idx], service_data: Object.keys(data).length ? data : undefined };
+                writeActions(next);
+              },
+            );
+            row.appendChild(target.wrap);
+          }
+
+          // Une action de service sans service ne fait rien : le dire, plutot
+          // que de laisser une entree muette dans la roue.
+          const missing =
+            act.type === 'entity' ? (!act.entity_id && !act.service_data?.entity_id ? t('anchorActionNoEntity') : null)
+            : act.type === 'service' ? (!act.domain || !act.service ? t('anchorActionNoService') : null)
+            : (!act.view_id ? t('anchorActionNoView') : null);
+          if (missing) {
+            const warn = document.createElement('div');
+            warn.style.cssText = 'font-size:9px;color:#fbbf24;line-height:1.4;';
+            warn.textContent = missing;
+            row.appendChild(warn);
+          }
+
+          listWrap.appendChild(row);
+        });
+
+        if (!actions.length) {
+          const empty = document.createElement('div');
+          empty.style.cssText = 'font-size:10px;color:#475569;text-align:center;padding:8px 0;';
+          empty.textContent = t('anchorActionEmpty');
+          listWrap.appendChild(empty);
+        }
+
+        const btnRow = document.createElement('div');
+        btnRow.style.cssText = 'display:flex;gap:5px;';
+
+        // Voie principale : composer un groupe en cochant plusieurs entités.
+        // Passer par « ajouter une action » puis « choisir le type » pour chaque
+        // entité était le vrai irritant.
+        const addEntities = document.createElement('button');
+        addEntities.textContent = t('anchorActionAddEntities');
+        addEntities.style.cssText = 'flex:1;background:rgba(125,209,252,0.12);border:1px solid rgba(125,209,252,0.3);border-radius:6px;color:#7dd3fc;padding:6px 10px;font-size:10px;font-family:inherit;cursor:pointer;';
+        addEntities.addEventListener('click', () => {
+          const hass = this.getHass();
+          if (!hass) return;
+          // Les entités déjà dans la roue sont signalées, pas ajoutées deux fois.
+          const already = new Set<string>();
+          for (const a of getActions()) {
+            const id = a.entity_id ?? (a.service_data?.entity_id as string | undefined);
+            if (id) already.add(id);
+          }
+          openEntityPicker({
+            container: this.overlayContainer,
+            hass,
+            placed: already,
+            multi: true,
+            onPick: () => {},
+            onPickMany: (ids) => writeActions([
+              ...getActions(),
+              ...ids
+                .filter((id) => !already.has(id))
+                .map((id, n) => ({
+                  id: `act_${Date.now()}_${n}`,
+                  label: '',
+                  type: 'entity' as const,
+                  entity_id: id,
+                })),
+            ]),
+          });
+        });
+
+        const add = document.createElement('button');
+        add.textContent = t('anchorActionAdd');
+        add.title = t('anchorActionAddHint');
+        add.style.cssText = 'flex:0 0 auto;background:rgba(255,255,255,0.04);border:1px dashed rgba(255,255,255,0.15);border-radius:6px;color:#64748b;padding:6px 10px;font-size:10px;font-family:inherit;cursor:pointer;';
+        add.addEventListener('click', () => writeActions([
+          ...getActions(),
+          { id: 'act_' + Date.now(), label: '', type: 'entity' },
+        ]));
+
+        btnRow.append(addEntities, add);
+        listWrap.appendChild(btnRow);
+      };
+
+      renderActions();
+    }
 
     // Icon override — use HA's <ha-icon-picker> for visual autocomplete, fallback to plain input
     const iconWrap = document.createElement('div');
@@ -1503,11 +1838,11 @@ export class EditPanel {
     // Surcharges par ancre : le descripteur du domaine donne un défaut correct,
     // ces champs servent aux cas particuliers (déverrouiller une serrure depuis
     // la scène, neutraliser un appui, forcer une couleur de repérage).
-    {
+    if (isEntityKind) {
       secDiv(t('anchorSectionBehavior'));
 
       const tapSel = document.createElement('select');
-      tapSel.style.cssText = inputStyle + ';cursor:pointer;';
+      tapSel.style.cssText = inputStyle + SELECT_STYLE;
       const tapOptions: [string, string][] = [
         ['default', t('anchorTapDefault')],
         ['toggle', t('anchorTapToggle')],
@@ -1517,7 +1852,7 @@ export class EditPanel {
         ['none', t('anchorTapNone')],
       ];
       for (const [val, label] of tapOptions) {
-        const o = document.createElement('option');
+        const o = styleOption(document.createElement('option'));
         o.value = val; o.textContent = label;
         if ((anchor.tapAction ?? 'default') === val) o.selected = true;
         tapSel.appendChild(o);
@@ -2377,9 +2712,9 @@ export class EditPanel {
     const condRow = document.createElement('div');
     condRow.style.cssText = 'display:grid;grid-template-columns:90px 1fr;gap:5px;margin-bottom:6px;';
     const opSel = document.createElement('select');
-    opSel.style.cssText = 'background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:7px;color:#e2e8f0;padding:5px 6px;font-size:11px;outline:none;font-family:inherit;cursor:pointer;';
+    opSel.style.cssText = 'background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:7px;color:#e2e8f0;padding:5px 6px;font-size:11px;outline:none;font-family:inherit;' + SELECT_STYLE;
     ops.forEach(([v, l]) => {
-      const o = document.createElement('option'); o.value = v; o.textContent = l;
+      const o = styleOption(document.createElement('option')); o.value = v; o.textContent = l;
       if (current?.operator === v) o.selected = true;
       opSel.appendChild(o);
     });

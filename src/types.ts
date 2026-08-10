@@ -14,6 +14,46 @@ export type EntityDomain =
 
 export type LightStyle = 'point' | 'spot' | 'beam';
 
+/**
+ * Nature d'une ancre — orthogonale au domaine de l'entité.
+ *
+ * Les descripteurs (entities/descriptors.ts) disent *quoi* affiche une ancre
+ * liée à une entité ; la nature dit *comment* elle se présente et ce que fait
+ * un appui.
+ *
+ *   entity  pastille d'état classique, liée a une entite (defaut)
+ *   label   texte ancre dans l'espace, sans entite
+ *   menu    roue d'actions (scripts, scenes, appels de service, vues)
+ *   nav     vole vers une vue camera enregistree
+ *
+ * Seule la nature `entity` exige un `entity` renseigne. Le champ reste de type
+ * `string` et vaut une chaine vide pour les autres : le rendre optionnel
+ * ferait remonter `string | undefined` dans une trentaine de sites sans rien
+ * apporter, la nature suffisant a savoir s'il faut le lire.
+ */
+export type AnchorKind = 'entity' | 'label' | 'menu' | 'nav';
+
+/** Une entree de la roue d'actions. */
+export interface AnchorAction {
+  id: string;
+  label: string;
+  icon?: string;
+  /**
+   *   entity   delegue tout au descripteur de l'entite ciblee : icone, couleur,
+   *            valeur affichee et effet de l'appui (basculer une lampe, ouvrir
+   *            la fiche d'un capteur). C'est le cas courant.
+   *   service  appel de service explicite, pour ce que `entity` ne couvre pas.
+   *   view     vol vers une vue camera.
+   */
+  type: 'entity' | 'service' | 'view';
+  /** Nature `entity` : l'entite representee. */
+  entity_id?: string;
+  domain?: string;
+  service?: string;
+  service_data?: Record<string, unknown>;
+  view_id?: string;
+}
+
 export interface HassState {
   state: string;
   attributes: Record<string, unknown>;
@@ -60,6 +100,12 @@ export interface AnchorConfig {
   color?: string;
   /** Action au tap imposee — 'default' laisse decider le descripteur. */
   tapAction?: import('./entities/descriptors').TapAction | 'default';
+  /** Nature de l'ancre — `entity` par defaut. */
+  kind?: AnchorKind;
+  /** Nature `menu` : les entrees de la roue. */
+  actions?: AnchorAction[];
+  /** Nature `nav` : identifiant de la vue camera cible. */
+  navViewId?: string;
 }
 
 // ── Owlnest scene (backend-persisted) ─────────────────────────────────────
@@ -82,6 +128,12 @@ export interface OwlnestAnchor {
   color?: string;
   /** Action au tap imposee — 'default' laisse decider le descripteur. */
   tapAction?: import('./entities/descriptors').TapAction | 'default';
+  /** Nature de l'ancre — `entity` par defaut. */
+  kind?: AnchorKind;
+  /** Nature `menu` : les entrees de la roue. */
+  actions?: AnchorAction[];
+  /** Nature `nav` : identifiant de la vue camera cible. */
+  navViewId?: string;
 }
 
 /** Scene-level settings stored in the backend (configured from edit mode, not YAML). */
@@ -204,6 +256,12 @@ export interface AnchorEntry {
   color?: string;
   /** Action au tap imposee — 'default' laisse decider le descripteur. */
   tapAction?: import('./entities/descriptors').TapAction | 'default';
+  /** Nature de l'ancre — `entity` par defaut. */
+  kind?: AnchorKind;
+  /** Nature `menu` : les entrees de la roue. */
+  actions?: AnchorAction[];
+  /** Nature `nav` : identifiant de la vue camera cible. */
+  navViewId?: string;
 }
 
 export interface SavedView {
@@ -228,4 +286,10 @@ export interface EditableAnchor {
   color?: string;
   /** Action au tap imposee — 'default' laisse decider le descripteur. */
   tapAction?: import('./entities/descriptors').TapAction | 'default';
+  /** Nature de l'ancre — `entity` par defaut. */
+  kind?: AnchorKind;
+  /** Nature `menu` : les entrees de la roue. */
+  actions?: AnchorAction[];
+  /** Nature `nav` : identifiant de la vue camera cible. */
+  navViewId?: string;
 }

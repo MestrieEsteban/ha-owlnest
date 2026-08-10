@@ -71,11 +71,15 @@
     },
   };
 
+  const multi = new URLSearchParams(location.search).has('multi');
+  window.__picked = null;
   openEntityPicker({
     container: document.getElementById('stage'),
     hass,
     placed: new Set(['light.lampadaire']),
-    onPick: (id, name) => { log.textContent = `choisi : ${id} — ${name}`; },
+    multi,
+    onPick: (id, name) => { window.__picked = [id]; log.textContent = `choisi : ${id} — ${name}`; },
+    onPickMany: (ids) => { window.__picked = ids; log.textContent = `choisis (${ids.length}) : ${ids.join(', ')}`; },
     onCancel: () => { log.textContent = 'annulé'; },
   });
   log.textContent = 'sélecteur monté';

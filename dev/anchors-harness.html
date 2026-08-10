@@ -1,0 +1,80 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Owlnest — banc de test des natures d'ancres</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #10141c; font-family: system-ui, sans-serif; }
+  #stage { position: relative; width: 100%; height: 70vh; }
+  pre { color: #7dd3fc; font: 11px monospace; padding: 8px 14px; margin: 0; white-space: pre-wrap; }
+</style>
+<div id="stage"></div>
+<pre id="out">…</pre>
+<script type="module">
+  import { LabelOverlay, ClusterOverlay, AnchorOverlay } from '/src/overlay.ts';
+  import { setLang } from '/src/i18n.ts';
+  import * as THREE from 'three';
+
+  setLang('fr');
+  customElements.define('ha-icon', class extends HTMLElement {
+    connectedCallback() {
+      this.dataset.icon = this.getAttribute('icon') ?? '';
+      this.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;font-size:8px;';
+      this.textContent = '◆';
+    }
+  });
+
+  const stage = document.getElementById('stage');
+  let flew = null;
+  const log = [];
+  const fired = [];
+  // Expose pour l'inspection depuis la console.
+  window.__owlnest = { fired, get flew() { return flew; } };
+
+  // ── Étiquette ────────────────────────────────────────────────────────────
+  const label = new LabelOverlay(stage, 'Garage', 'mdi:garage', '#fbbf24');
+  label.el.style.left = '120px'; label.el.style.top = '60px';
+  log.push(['étiquette texte', label.el.textContent.trim()]);
+  log.push(['étiquette non cliquable', getComputedStyle(label.el).pointerEvents]);
+  label.updateText('Chaufferie');
+  log.push(['après updateText', label.el.textContent.trim()]);
+
+  // ── Roue d'actions ───────────────────────────────────────────────────────
+  const wheel = new ClusterOverlay(stage, { icon: 'mdi:dots-horizontal-circle', title: 'Coin salon' });
+  // Reproduit ce que _buildWheelItems produit : un capteur affiche sa valeur,
+  // une lampe son icone d'etat.
+  const actions = [
+    { label: 'Température cuisine', value: '21.4 °C' },
+    { label: 'Humidité cuisine',    value: '48 %' },
+    { label: 'Plafonnier',          icon: 'mdi:lightbulb-on' },
+  ];
+  wheel.update(actions.map((a) => ({
+    domain: '', label: a.label, on: !!a.icon,
+    color: new THREE.Color('#7dd3fc'), icon: a.icon, value: a.value,
+    onShortClick: () => fired.push(a.label),
+    onLongPress: () => fired.push(a.label + ' (long)'),
+  })));
+  wheel.updatePosition(320, 120);
+  wheel.show();
+  log.push(['roue : icône centrale', wheel.el.querySelector('ha-icon')?.dataset.icon ?? '(svg défaut)']);
+  log.push(['roue : title', wheel.el.title]);
+  log.push(['roue : conditionHidden existe', typeof wheel.conditionHidden]);
+
+  // Ouvre le menu et compte les entrées
+  wheel.el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 60));
+  const items = stage.querySelectorAll('div[style*="border-radius:50%"]');
+  log.push(['roue : entrées après ouverture', wheel.el.parentElement.querySelectorAll('ha-icon').length]);
+
+  // ── Navigation ───────────────────────────────────────────────────────────
+  const nav = new AnchorOverlay(stage, 'nav', 'Monter à l’étage',
+    () => { flew = 'view_etage'; }, () => { flew = 'long'; }, 'mdi:arrow-right-circle');
+  nav.el.style.left = '520px'; nav.el.style.top = '60px';
+  log.push(['nav : icône', nav.el.querySelector('ha-icon')?.dataset.icon]);
+  nav.el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  nav.el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 30));
+  log.push(['nav : appui déclenche', flew]);
+
+  log.push(['actions déclenchées', JSON.stringify(fired)]);
+  document.getElementById('out').textContent =
+    log.map(([k, v]) => k.padEnd(34) + ' → ' + v).join('\n');
+</script>

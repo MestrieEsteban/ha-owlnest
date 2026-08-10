@@ -16,6 +16,9 @@ export function syncLights(
       return;
     }
 
+    // Étiquette, roue, navigation : aucune entité à refléter.
+    if ((entry.kind ?? 'entity') !== 'entity') { entry.targetIntensity = 0; return; }
+
     const stateObj = hass.states[entry.entityId];
     if (!stateObj) return;
 

@@ -6,13 +6,13 @@ import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import type { Hass, CardConfig, AnchorEntry, SavedView, EditableAnchor, OwlnestScene } from './types';
 import { syncLights, stepTransitions } from './lights';
 import { loadGLTF, detectAnchors, buildAnchorsFromEditable, rebuildAnchorLight, lightTargetPos } from './model';
-import { AnchorOverlay, SensorOverlay, ClusterOverlay } from './overlay';
+import { AnchorOverlay, SensorOverlay, ClusterOverlay, LabelOverlay } from './overlay';
 import type { ClusterItem } from './overlay';
 import { AnchorEditor } from './editor';
 import { loadScene, saveScene, listScenes, sceneToEffectiveConfig, buildSceneFromEditor, normalizeViews } from './scene';
-import { setLang } from './i18n';
+import { setLang, t } from './i18n';
 import { qualityFromConfig, qualityKey, profileFor } from './quality';
-import { describeEntity } from './entities/descriptors';
+import { describeEntity, fallbackIcon } from './entities/descriptors';
 import './card-editor';
 import { EnvironmentController } from './card/environment';
 import { SimulationPanel } from './card/simulation';
@@ -24,7 +24,7 @@ import type { SceneCard, SceneCardType } from './cards/types';
 import { evalCondition, triggerFired, conditionsMet } from './rules/engine';
 import type { OwlnestRule, Action } from './rules/types';
 
-type AnyOverlay = AnchorOverlay | SensorOverlay;
+type AnyOverlay = AnchorOverlay | SensorOverlay | LabelOverlay | ClusterOverlay;
 
 /** Format a sensor state string respecting optional decimal precision. */
 function _formatSensorValue(raw: string, precision?: number): string {
@@ -118,6 +118,7 @@ class Ha3dFloorplan extends HTMLElement {
   private _editor: AnchorEditor | null = null;
   private _modelRoot: THREE.Object3D | null = null;
   private _savePending = false;  // true while a callWS is in flight
+  private _saveQueued = false;   // une modification est arrivee pendant l'envoi
 
   // Modules
   private _env: EnvironmentController | null = null;
@@ -250,30 +251,46 @@ class Ha3dFloorplan extends HTMLElement {
       });
   }
 
+  /**
+   * Enregistre la scene.
+   *
+   * Une sauvegarde arrivant pendant qu'une autre est en vol etait auparavant
+   * abandonnee, ce qui perdait silencieusement la derniere modification — et le
+   * toast de la sauvegarde precedente laissait croire au succes. On memorise
+   * desormais la demande et on rejoue un tour, en reconstruisant la scene a
+   * chaque passage pour toujours ecrire l'etat le plus recent.
+   */
   async _saveScene() {
     const sceneId = this._getActiveSceneId();
     if (!sceneId || !this._hass || !this._editor) return;
-    if (this._savePending) return;  // don't pile up concurrent saves
 
-    const sceneData = buildSceneFromEditor(
-      sceneId,
-      this._editor.anchors as Map<string, EditableAnchor>,
-      this._scene,
-      this._config!,
-    );
-    // Preserve scene settings (env, rendering, language configured from Config tab)
-    sceneData.settings = this._scene?.settings;
-
+    if (this._savePending) { this._saveQueued = true; return; }
     this._savePending = true;
+
     try {
-      await saveScene(this._hass, sceneId, sceneData);
-      this._scene = sceneData;
+      do {
+        this._saveQueued = false;
+
+        const sceneData = buildSceneFromEditor(
+          sceneId,
+          this._editor.anchors as Map<string, EditableAnchor>,
+          this._scene,
+          this._config!,
+        );
+        // Preserve scene settings (env, rendering, language configured from Config tab)
+        sceneData.settings = this._scene?.settings;
+
+        await saveScene(this._hass, sceneId, sceneData);
+        this._scene = sceneData;
+      } while (this._saveQueued);
+
       this._showToast('✓ Scène sauvegardée');
     } catch (err) {
       console.error('[Owlnest] Save failed:', err);
       this._showToast('✗ Erreur lors de la sauvegarde', true);
     } finally {
       this._savePending = false;
+      this._saveQueued = false;
     }
   }
 
@@ -915,6 +932,10 @@ class Ha3dFloorplan extends HTMLElement {
 
     const editable = new Map<string, EditableAnchor>();
     this.anchors.forEach((entry, key) => {
+      // ⚠ Recopie exhaustive obligatoire : ce qui manque ici est perdu à
+      // l'entrée en édition, puis écrasé dans la scène au prochain
+      // enregistrement. Tout nouveau champ d'ancre doit être ajouté ici, dans
+      // scene.ts (les deux sens) et dans model.ts (les deux fabriques).
       editable.set(key, {
         entity: entry.entityId,
         position: entry.worldPos.clone(),
@@ -926,6 +947,11 @@ class Ha3dFloorplan extends HTMLElement {
         visibleIf: entry.visibleIf,
         precision: entry.precision,
         icon: entry.icon,
+        color: entry.color,
+        tapAction: entry.tapAction,
+        kind: entry.kind,
+        actions: entry.actions,
+        navViewId: entry.navViewId,
       });
     });
 
@@ -2021,12 +2047,20 @@ class Ha3dFloorplan extends HTMLElement {
     // 1. Compute 2D screen positions
     const pos2d = new Map<string, { x: number; y: number }>();
     const behind = new Set<string>();
+    // Ancres exclues du regroupement automatique (natures non-entité).
+    const noCluster = new Set<string>();
 
     this.anchors.forEach((entry, name) => {
       // Vecteur de travail réutilisé : un clone par ancre et par image finissait
       // par peser en collecte mémoire sur les scènes chargées.
       const p = this._projScratch.copy(entry.worldPos).project(this.camera!);
       if (p.z >= 1) { behind.add(name); return; }
+      // Seules les ancres d'entité entrent dans un regroupement : une étiquette
+      // ou une roue n'a rien à faire dans un menu radial de voisinage.
+      if ((entry.kind ?? 'entity') !== 'entity') { pos2d.set(name, {
+        x: ((p.x + 1) / 2) * w,
+        y: ((-p.y + 1) / 2) * h,
+      }); noCluster.add(name); return; }
       pos2d.set(name, {
         x: ((p.x + 1) / 2) * w,
         y: ((-p.y + 1) / 2) * h,
@@ -2041,7 +2075,10 @@ class Ha3dFloorplan extends HTMLElement {
     // Sans regroupement, inutile de construire un tableau par ancre à chaque
     // image : aucun groupe ne peut dépasser un élément.
     const groups = threshold > 0
-      ? this._computeClusters([...pos2d.entries()], threshold)
+      ? this._computeClusters(
+          [...pos2d.entries()].filter(([k]) => !noCluster.has(k)),
+          threshold,
+        )
       : [];
 
     groups.filter(g => g.length > 1).forEach(group => {
@@ -2087,10 +2124,20 @@ class Ha3dFloorplan extends HTMLElement {
     this.anchors.forEach((_entry, name) => {
       const ov = this.overlays.get(name);
       if (!ov) return;
-      if (behind.has(name) || inCluster.has(name) || this.anchors.get(name)?.hidden || ov.conditionHidden) {
-        ov.el.style.display = 'none';
+      const hide = behind.has(name) || inCluster.has(name)
+        || this.anchors.get(name)?.hidden || ov.conditionHidden;
+
+      // Une roue d'actions gère elle-même son positionnement et sa visibilité :
+      // son menu ouvert doit rester en place.
+      if (ov instanceof ClusterOverlay) {
+        if (hide) { ov.hide(); return; }
+        const p = pos2d.get(name)!;
+        ov.updatePosition(p.x, p.y);
+        ov.show();
         return;
       }
+
+      if (hide) { ov.el.style.display = 'none'; return; }
       const p = pos2d.get(name)!;
       ov.el.style.display = ov instanceof SensorOverlay ? 'block' : 'flex';
       ov.el.style.left = `${p.x}px`;
@@ -2128,6 +2175,42 @@ class Ha3dFloorplan extends HTMLElement {
     this.overlays.clear();
 
     this.anchors.forEach((entry, name) => {
+      const kind = entry.kind ?? 'entity';
+
+      // Étiquette : texte seul, aucune entité.
+      if (kind === 'label') {
+        this.overlays.set(name, new LabelOverlay(
+          this.overlayContainer!, entry.label, entry.icon, entry.color,
+        ));
+        return;
+      }
+
+      // Roue d'actions : le menu radial des regroupements, alimenté par les
+      // actions de l'ancre au lieu des ancres voisines.
+      if (kind === 'menu') {
+        const wheel = new ClusterOverlay(this.overlayContainer!, {
+          icon: entry.icon ?? 'mdi:dots-horizontal-circle',
+          title: entry.label,
+        });
+        wheel.update(this._buildWheelItems(entry));
+        wheel.show();
+        this.overlays.set(name, wheel);
+        return;
+      }
+
+      // Navigation : une pastille dont l'appui vole vers une vue.
+      if (kind === 'nav') {
+        this.overlays.set(name, new AnchorOverlay(
+          this.overlayContainer!,
+          'nav',
+          entry.label,
+          () => this._flyToViewId(entry.navViewId),
+          () => this._flyToViewId(entry.navViewId),
+          entry.icon ?? 'mdi:arrow-right-circle',
+        ));
+        return;
+      }
+
       if (describeEntity(entry.entityId).overlay === 'badge') {
         const overlay = new SensorOverlay(
           this.overlayContainer!,
@@ -2150,6 +2233,115 @@ class Ha3dFloorplan extends HTMLElement {
     });
   }
 
+  /**
+   * Entrees d'une roue d'actions.
+   *
+   * Reconstruites a chaque mise a jour d'etat : une valeur de capteur affichee
+   * dans la roue doit suivre l'entite, pas rester figee au chargement.
+   */
+  private _buildWheelItems(entry: AnchorEntry): ClusterItem[] {
+    return (entry.actions ?? []).map((a) => {
+      const target = this._actionTarget(a);
+      const st = target ? this._hass?.states[target] : undefined;
+      const desc = target ? describeEntity(target) : null;
+
+      // Un capteur se lit : on affiche sa valeur et son unite au lieu d'une
+      // icone qui ne dirait rien. Le texte vient du descripteur, pour qu'une
+      // entite indisponible affiche « Indisponible » et non « unavailable ».
+      const showsValue = !!desc && desc.overlay === 'badge' && !a.icon;
+      const broken = !st || st.state === 'unavailable' || st.state === 'unknown';
+      const unit = (st?.attributes?.unit_of_measurement as string) ?? '';
+      const value = showsValue
+        ? desc!.stateText(st) + (unit && !broken ? ` ${unit}` : '')
+        : undefined;
+
+      return {
+        domain: '',
+        // Un libellé vide se déduit de l'entité ciblée, puis du service :
+        // retaper le nom d'une entité qu'on vient de choisir n'a pas de sens.
+        label: a.label || this._actionFallbackLabel(a),
+        on: desc ? desc.isOn(st) : false,
+        color: new THREE.Color(
+          a.icon || !desc
+            ? (entry.color ?? '#7dd3fc')
+            : '#' + desc.color(st).toString(16).padStart(6, '0'),
+        ),
+        icon: a.icon ?? desc?.icon(st) ?? this._actionDefaultIcon(a),
+        value,
+        onShortClick: () => this._runAnchorAction(a),
+        onLongPress: () => this._runAnchorAction(a),
+      };
+    });
+  }
+
+  /** Entité visée par une action, quand il y en a une. */
+  private _actionTarget(a: import('./types').AnchorAction): string | undefined {
+    if (a.entity_id) return a.entity_id;
+    // Repli : les premieres roues stockaient la cible dans service_data.
+    const id = a.service_data?.entity_id;
+    return typeof id === 'string' && id ? id : undefined;
+  }
+
+  /** Libellé de repli : nom de l'entité, sinon service, sinon vue. */
+  private _actionFallbackLabel(a: import('./types').AnchorAction): string {
+    const target = this._actionTarget(a);
+    if (target) {
+      const fn = this._hass?.states[target]?.attributes?.friendly_name;
+      if (typeof fn === 'string' && fn) return fn;
+      return target.split('.')[1] ?? target;
+    }
+    if (a.type === 'view') {
+      const v = normalizeViews(this._scene?.camera_views ?? []).find((x) => x.id === a.view_id);
+      if (v) return v.label;
+    }
+    if (a.domain && a.service) return `${a.domain}.${a.service}`;
+    return t('anchorActionNew');
+  }
+
+  /** Icône de repli quand ni l'action ni l'entité n'en fournissent. */
+  private _actionDefaultIcon(a: import('./types').AnchorAction): string {
+    if (a.type === 'view') return 'mdi:video';
+    if (a.domain === 'script') return 'mdi:script-text';
+    if (a.domain === 'scene') return 'mdi:palette';
+    // Même table que le sélecteur : une entrée de roue et sa ligne de liste
+    // doivent porter la même icône.
+    const target = this._actionTarget(a);
+    if (target) return fallbackIcon(target.split('.')[0]);
+    return 'mdi:play-circle-outline';
+  }
+
+  // ── Actions d'ancres (natures menu / nav) ──────────────────────────────
+
+  /** Exécute une entrée de roue : appel de service, ou vol vers une vue. */
+  private _runAnchorAction(action: import('./types').AnchorAction) {
+    if (action.type === 'view') {
+      this._flyToViewId(action.view_id);
+      return;
+    }
+    if (action.type === 'entity') {
+      const target = this._actionTarget(action);
+      if (target) this._entityTapHandler(target)();
+      return;
+    }
+    if (!action.domain || !action.service) {
+      console.warn('[Owlnest] Action incomplète, ignorée :', action);
+      return;
+    }
+    this._hass?.callService(action.domain, action.service, action.service_data ?? {});
+  }
+
+  /** Vole vers une vue caméra enregistrée, par identifiant. */
+  private _flyToViewId(viewId: string | undefined) {
+    if (!viewId) return;
+    const view = normalizeViews(this._scene?.camera_views ?? [])
+      .find((v) => v.id === viewId);
+    if (!view) {
+      console.warn(`[Owlnest] Vue « ${viewId} » introuvable.`);
+      return;
+    }
+    this._viewMgr?.flyTo(view);
+  }
+
   /** Service naturel des domaines « à déclencher ». */
   private static readonly ACTIVATE_SERVICE: Record<string, string> = {
     button: 'press',
@@ -2157,26 +2349,40 @@ class Ha3dFloorplan extends HTMLElement {
     script: 'turn_on',
   };
 
-  private _getShortClickHandler(entry: AnchorEntry): () => void {
-    // La surcharge par ancre prime ; 'default' rend la main au descripteur.
-    const override = entry.tapAction;
-    const tap = override && override !== 'default' ? override : describeEntity(entry.entityId).tap;
-    const data = { entity_id: entry.entityId };
+  /**
+   * Effet d'un appui sur une entite, selon son descripteur.
+   *
+   * Partage entre les pastilles d'ancres et les entrees de roue : une lampe se
+   * bascule, un capteur ouvre sa fiche, et ce choix ne doit pas etre reecrit a
+   * deux endroits.
+   */
+  private _entityTapHandler(
+    entityId: string,
+    override?: import('./entities/descriptors').TapAction | 'default',
+  ): () => void {
+    if (!entityId) return () => {};
+    const domain = entityId.split('.')[0];
+    const tap = override && override !== 'default' ? override : describeEntity(entityId).tap;
+    const data = { entity_id: entityId };
 
     switch (tap) {
       case 'toggle':
-        return () => this._hass?.callService(entry.domain, 'toggle', data);
+        return () => this._hass?.callService(domain, 'toggle', data);
       case 'media_play_pause':
         return () => this._hass?.callService('media_player', 'media_play_pause', data);
       case 'activate': {
-        const service = Ha3dFloorplan.ACTIVATE_SERVICE[entry.domain] ?? 'turn_on';
-        return () => this._hass?.callService(entry.domain, service, data);
+        const service = Ha3dFloorplan.ACTIVATE_SERVICE[domain] ?? 'turn_on';
+        return () => this._hass?.callService(domain, service, data);
       }
       case 'none':
         return () => {};
       default:
-        return () => this._openMoreInfo(entry.entityId);
+        return () => this._openMoreInfo(entityId);
     }
+  }
+
+  private _getShortClickHandler(entry: AnchorEntry): () => void {
+    return this._entityTapHandler(entry.entityId, entry.tapAction);
   }
 
   // ── Rules engine ────────────────────────────────────────────────────────
@@ -2279,6 +2485,17 @@ class Ha3dFloorplan extends HTMLElement {
     this.anchors.forEach((entry, name) => {
       const overlay = this.overlays.get(name);
       if (!overlay) return;
+
+      // Étiquette, roue et navigation ne reflètent aucun état d'entité — sauf
+      // une roue dont les entrées ciblent des entités.
+      const kind = entry.kind ?? 'entity';
+      if (kind !== 'entity') {
+        if (overlay instanceof LabelOverlay) overlay.updateText(entry.label);
+        if (overlay instanceof ClusterOverlay && entry.actions?.length) {
+          overlay.update(this._buildWheelItems(entry));
+        }
+        return;
+      }
 
       const stateObj = this._hass?.states[entry.entityId];
 

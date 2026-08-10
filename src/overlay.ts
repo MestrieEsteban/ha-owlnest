@@ -10,6 +10,11 @@ export interface ClusterItem {
   icon?: string;
   onShortClick: () => void;
   onLongPress: () => void;
+  /**
+   * Valeur a afficher a la place de l'icone (capteurs). Une temperature se lit,
+   * elle ne se symbolise pas.
+   */
+  value?: string;
 }
 
 const ICONS: Record<string, string> = {
@@ -306,7 +311,23 @@ const CLUSTER_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" xmlns="htt
   <circle cx="7" cy="17" r="2.5"/><circle cx="17" cy="17" r="2.5"/>
 </svg>`;
 
+/**
+ * Options d'un ClusterOverlay. Sans elles, il se comporte comme un regroupement
+ * automatique ; avec, il sert de roue d'actions pour une ancre `menu`.
+ */
+export interface ClusterOptions {
+  /** Icone MDI du bouton central (defaut : l'icone de regroupement). */
+  icon?: string;
+  /** Libelle au survol du bouton central. */
+  title?: string;
+}
+
 export class ClusterOverlay {
+  /**
+   * Masquage par condition (`visibleIf`). Inutile pour un regroupement
+   * automatique, mais une ancre `menu` s'appuie dessus comme les autres.
+   */
+  conditionHidden = false;
   readonly el: HTMLDivElement;
   private _badge: HTMLSpanElement;
   private _menu: HTMLDivElement | null = null;
@@ -314,7 +335,7 @@ export class ClusterOverlay {
   private _items: ClusterItem[] = [];
   private _container: HTMLElement;
 
-  constructor(container: HTMLElement) {
+  constructor(container: HTMLElement, opts: ClusterOptions = {}) {
     this._container = container;
 
     this.el = document.createElement('div');
@@ -334,7 +355,8 @@ export class ClusterOverlay {
       'color:#fff',
     ].join(';');
 
-    this.el.innerHTML = CLUSTER_ICON;
+    this.el.innerHTML = opts.icon ? renderIconHTML('', opts.icon) : CLUSTER_ICON;
+    if (opts.title) this.el.title = opts.title;
 
     this._badge = document.createElement('span');
     this._badge.style.cssText = [
@@ -466,11 +488,23 @@ export class ClusterOverlay {
       'user-select:none', '-webkit-user-select:none',
     ].join(';');
 
-    el.innerHTML = renderIconHTML(item.domain, item.icon);
-    const haIcon = el.querySelector('ha-icon') as HTMLElement | null;
-    if (haIcon) haIcon.style.color = color;
-    const path = !haIcon ? (el.querySelector('path,circle,rect') as SVGElement | null) : null;
-    if (path) path.style.fill = color;
+    if (item.value !== undefined) {
+      const val = document.createElement('span');
+      val.textContent = item.value;
+      val.style.cssText = [
+        'font-size:11px', 'font-weight:700', 'line-height:1',
+        'font-family:var(--primary-font-family,sans-serif)',
+        `color:${color}`, 'pointer-events:none', 'text-align:center',
+        'padding:0 2px', 'white-space:nowrap',
+      ].join(';');
+      el.appendChild(val);
+    } else {
+      el.innerHTML = renderIconHTML(item.domain, item.icon);
+      const haIcon = el.querySelector('ha-icon') as HTMLElement | null;
+      if (haIcon) haIcon.style.color = color;
+      const path = !haIcon ? (el.querySelector('path,circle,rect') as SVGElement | null) : null;
+      if (path) path.style.fill = color;
+    }
 
     const label = document.createElement('div');
     label.textContent = item.label;
@@ -512,5 +546,62 @@ export class ClusterOverlay {
     }, idx * 35);
 
     return el;
+  }
+}
+
+// ── Étiquette — texte ancré dans l'espace, sans entité ──────────────────────
+
+/**
+ * Nature `label` : annote un lieu (« Garage », « Chaufferie ») sans être liée à
+ * une entité. C'est ce que faisait la carte 3D `info`, mais en DOM — donc du
+ * texte net à toute distance, sans texture à téléverser.
+ */
+export class LabelOverlay {
+  readonly el: HTMLDivElement;
+  conditionHidden = false;
+  private _text: HTMLSpanElement;
+
+  constructor(container: HTMLElement, text: string, icon?: string, color?: string) {
+    const tint = color || 'rgba(255,255,255,0.82)';
+
+    this.el = document.createElement('div');
+    this.el.style.cssText = [
+      'position:absolute',
+      'transform:translate(-50%,-50%)',
+      'display:flex', 'align-items:center', 'gap:5px',
+      'padding:3px 9px', 'border-radius:11px',
+      'background:rgba(12,16,28,0.62)',
+      'backdrop-filter:blur(5px)', '-webkit-backdrop-filter:blur(5px)',
+      'border:1px solid rgba(255,255,255,0.09)',
+      `color:${tint}`,
+      'font-size:11px', 'font-weight:600', 'letter-spacing:.02em',
+      'font-family:var(--primary-font-family,sans-serif)',
+      'white-space:nowrap',
+      // Purement informative : ne capte pas le pointeur, pour ne pas gêner
+      // l'orbite ni masquer une ancre interactive placée derrière.
+      'pointer-events:none',
+      'user-select:none', '-webkit-user-select:none',
+    ].join(';');
+
+    if (icon) {
+      const ic = document.createElement('span');
+      ic.style.cssText = 'display:flex;align-items:center;';
+      ic.innerHTML = renderIconHTML('', icon);
+      this.el.appendChild(ic);
+    }
+
+    this._text = document.createElement('span');
+    this._text.textContent = text;
+    this.el.appendChild(this._text);
+
+    container.appendChild(this.el);
+  }
+
+  updateText(text: string) {
+    if (this._text.textContent !== text) this._text.textContent = text;
+  }
+
+  destroy() {
+    this.el.remove();
   }
 }

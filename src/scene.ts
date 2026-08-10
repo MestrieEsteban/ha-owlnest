@@ -90,6 +90,9 @@ export function sceneToEffectiveConfig(scene: OwlnestScene, base: CardConfig): C
       icon: a.icon,
       color: a.color,
       tapAction: a.tapAction,
+      kind: a.kind,
+      actions: a.actions,
+      navViewId: a.navViewId,
     })),
     camera_views: scene.camera_views?.length
       ? normalizeViews(scene.camera_views)
@@ -131,6 +134,9 @@ export function buildSceneFromEditor(
       icon: a.icon,
       color: a.color,
       tapAction: a.tapAction,
+      kind: a.kind,
+      actions: a.actions,
+      navViewId: a.navViewId,
     });
   });
 
