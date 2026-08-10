@@ -1,0 +1,82 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Owlnest — banc de test du sélecteur</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0d1117; font-family: system-ui, sans-serif; }
+  #stage { position: relative; width: 100%; height: 100vh; }
+  #log { position: absolute; left: 10px; bottom: 10px; color: #4ade80; font: 12px monospace; z-index: 5; }
+</style>
+<div id="stage"><div id="log">…</div></div>
+<script type="module">
+  import { openEntityPicker } from '/src/entities/picker.ts';
+  import { setLang } from '/src/i18n.ts';
+
+  setLang('fr');
+  const log = document.getElementById('log');
+
+  // ha-icon n'existe pas hors HA : stub visuel pour ne pas fausser la mise en page.
+  customElements.define('ha-icon', class extends HTMLElement {
+    connectedCallback() {
+      this.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;font-size:8px;opacity:.85;';
+      this.textContent = '◆';
+    }
+  });
+
+  const AREAS = [
+    { area_id: 'salon', name: 'Salon', floor_id: 'rdc' },
+    { area_id: 'cuisine', name: 'Cuisine', floor_id: 'rdc' },
+    { area_id: 'chambre', name: 'Chambre', floor_id: 'etage' },
+    { area_id: 'garage', name: 'Garage' },
+  ];
+  const FLOORS = [
+    { floor_id: 'rdc', name: 'Principal', level: 0 },
+    { floor_id: 'etage', name: 'Etage', level: 1 },
+  ];
+  const DEVICES = [
+    { id: 'dev1', name: 'Plafonnier Salon', area_id: 'salon' },
+    { id: 'dev2', name: 'Capteur Porte', area_id: 'cuisine' },
+    { id: 'dev3', name: 'Thermostat', area_id: 'chambre' },
+  ];
+
+  const states = {};
+  const entities = [];
+  const add = (id, state, attributes, meta) => {
+    states[id] = { state, attributes };
+    entities.push({ entity_id: id, ...meta });
+  };
+
+  add('light.plafonnier_salon', 'on', { friendly_name: 'Plafonnier salon', brightness: 200 }, { device_id: 'dev1' });
+  add('light.lampadaire', 'off', { friendly_name: 'Lampadaire' }, { area_id: 'salon' });
+  add('binary_sensor.porte_cuisine', 'on', { friendly_name: 'Porte cuisine', device_class: 'door' }, { device_id: 'dev2' });
+  add('binary_sensor.fuite_evier', 'on', { friendly_name: 'Fuite évier', device_class: 'moisture' }, { area_id: 'cuisine' });
+  add('climate.chambre', 'heat', { friendly_name: 'Chauffage chambre', hvac_action: 'heating', current_temperature: 19.5 }, { device_id: 'dev3' });
+  add('cover.volet_chambre', 'open', { friendly_name: 'Volet chambre', current_position: 45 }, { area_id: 'chambre' });
+  add('sensor.temp_salon', '21.4', { friendly_name: 'Température salon', unit_of_measurement: '°C' }, { area_id: 'salon' });
+  add('vacuum.robot', 'docked', { friendly_name: 'Aspirateur' }, {});
+  add('switch.porte_garage', 'off', { friendly_name: 'Porte garage' }, { area_id: 'garage' });
+  add('scene.soiree', '2026-01-01', { friendly_name: 'Ambiance soirée' }, {});
+  add('sensor.batterie_porte', '87', { friendly_name: 'Batterie porte' }, { device_id: 'dev2', entity_category: 'diagnostic' });
+  add('update.hacs', 'off', { friendly_name: 'Mise à jour HACS' }, { entity_category: 'config' });
+  add('switch.desactive', 'off', { friendly_name: 'Prise désactivée' }, { disabled_by: 'user' });
+
+  const hass = {
+    states,
+    callService() {},
+    callWS: async (msg) => {
+      if (msg.type === 'config/area_registry/list') return AREAS;
+      if (msg.type === 'config/device_registry/list') return DEVICES;
+      if (msg.type === 'config/entity_registry/list') return entities;
+      if (msg.type === 'config/floor_registry/list') return FLOORS;
+      throw new Error('inconnu: ' + msg.type);
+    },
+  };
+
+  openEntityPicker({
+    container: document.getElementById('stage'),
+    hass,
+    placed: new Set(['light.lampadaire']),
+    onPick: (id, name) => { log.textContent = `choisi : ${id} — ${name}`; },
+    onCancel: () => { log.textContent = 'annulé'; },
+  });
+  log.textContent = 'sélecteur monté';
+</script>
