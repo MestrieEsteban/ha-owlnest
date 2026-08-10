@@ -10,7 +10,23 @@ import { describeEntity, knownStates, stateLabel } from '../entities/descriptors
 import { detectionLabel, resolveLevel } from '../quality';
 import type { TapAction } from '../entities/descriptors';
 import type { QualityLevel } from '../quality';
-import type { AnchorKind } from '../types';
+import type { AnchorKind, OwlnestPart } from '../types';
+
+/** Ce que la carte renvoie quand l'utilisateur clique une pièce du modèle. */
+export interface PickedPart {
+  mesh: string;
+  meshIndex: number;
+  triangle: number;
+  /** Dimensions en centimètres, du plus grand axe au plus petit. */
+  size: [number, number, number];
+  guess: 'door' | 'window' | 'other';
+  triangles: number;
+}
+
+const MOTION_LABEL: Record<string, () => string> = {
+  swing: () => t('partSwing'),
+  slide: () => t('partSlide'),
+};
 
 /**
  * Une liste déroulante native se dessine avec les couleurs du système, pas
@@ -254,6 +270,12 @@ export class EditPanel {
     private getSceneSettings?: () => SceneSettings,
     private onSceneSettingsChange?: (s: SceneSettings, reloadScene?: boolean) => void,
     private listScenesFn?: () => Promise<string[]>,
+    private getParts?: () => OwlnestPart[],
+    private saveParts?: (parts: OwlnestPart[]) => Promise<void>,
+    /** Passe la carte en mode « clique une pièce du modèle ». */
+    private onStartPartPicking?: (onPicked: (hit: PickedPart) => void) => void,
+    /** Entrouvre un ouvrant pour vérifier son sens sans toucher à la maison. */
+    private onPreviewPart?: (id: string, fraction: number) => void,
   ) {}
 
   // ── Card undo/redo ────────────────────────────────────────────────────────
@@ -552,6 +574,7 @@ export class EditPanel {
 
     const cards = this.getCards ? this.getCards() : [];
     const rulesCount = (this.getRules?.() ?? []).length;
+    const partsCount = (this.getParts?.() ?? []).length;
 
     // ── Sidebar + content layout ──────────────────────────────────────
     listView.style.flexDirection = 'row';
@@ -559,6 +582,7 @@ export class EditPanel {
     const TAB_DEFS = [
       { id: 'anchors', icon: '⊕', label: anchors.size > 0 ? `${t('tabAnchors')} (${anchors.size})` : t('tabAnchors') },
       { id: 'cards',   icon: '☰', label: cards.length > 0  ? `${t('tabCards')} (${cards.length})`  : t('tabCards') },
+      { id: 'parts',   icon: '🚪', label: partsCount > 0    ? `${t('tabParts')} (${partsCount})`    : t('tabParts') },
       { id: 'rules',   icon: '⚡', label: rulesCount > 0    ? `${t('tabRules')} (${rulesCount})`    : t('tabRules') },
       { id: 'camera',  icon: '◎', label: t('tabCamera') },
       { id: 'weather', icon: '☁', label: t('tabWeather') },
@@ -883,6 +907,20 @@ export class EditPanel {
     rulesBody.style.cssText = 'overflow-y:auto;flex:1;min-height:0;';
     rulesPane.appendChild(rulesBody);
     this._fillRulesList(rulesBody);
+
+    // ── Ouvrants ──────────────────────────────────────────────────────
+    const partsPane = tabPanes.get('parts')!;
+    partsPane.style.cssText += ';overflow:hidden;';
+    buildTabHeader(partsPane, t('tabParts'), t('tabPartsDesc'), {
+      label: t('addPart'),
+      badge: 'BETA',
+      onClick: () => this._startPartPick(),
+    });
+    const partsBody = document.createElement('div');
+    partsBody.style.cssText = 'overflow-y:auto;flex:1;min-height:0;';
+    partsPane.appendChild(partsBody);
+    this._partsBody = partsBody;
+    this._fillPartsList(partsBody);
 
     // ── Camera pane ───────────────────────────────────────────────────
     const cameraPane = tabPanes.get('camera')!;
@@ -2988,6 +3026,325 @@ export class EditPanel {
       row.appendChild(delBtn);
       body.appendChild(row);
     });
+  }
+
+  // ── Ouvrants ──────────────────────────────────────────────────────────────
+
+  private _partsBody: HTMLElement | null = null;
+
+  /** Passe la carte en mode sélection, puis ouvre le formulaire sur la pièce. */
+  private _startPartPick() {
+    if (!this.onStartPartPicking) return;
+    this.showStatusBar?.(t('partPickHint'));
+    this.onStartPartPicking((hit) => {
+      this.hideStatusBar?.();
+      const existing = (this.getParts?.() ?? []).find(
+        (p) => p.mesh === hit.mesh && p.triangle === hit.triangle,
+      );
+      if (existing) { this._openPartModal(existing, hit); return; }
+      this._openPartModal({
+        id: `part_${Date.now()}`,
+        entity: '',
+        mesh: hit.mesh,
+        meshIndex: hit.meshIndex,
+        triangle: hit.triangle,
+        motion: hit.guess === 'window' ? 'slide' : 'swing',
+        hinge: 'start',
+        angle: 90,
+        slide: 'down',
+        travel: 1,
+        duration: 1.2,
+      }, hit);
+    });
+  }
+
+  private _fillPartsList(pane: HTMLElement) {
+    pane.innerHTML = '';
+    const parts = this.getParts?.() ?? [];
+    const hass = this.getHass();
+
+    if (parts.length === 0) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'padding:22px 16px;text-align:center;color:#64748b;font-size:11px;line-height:1.65;';
+      empty.innerHTML = `${t('partsEmpty')}`;
+      pane.appendChild(empty);
+      return;
+    }
+
+    for (const part of parts) {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer;';
+      row.addEventListener('mouseenter', () => { row.style.background = 'rgba(255,255,255,0.03)'; });
+      row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
+
+      const icon = document.createElement('span');
+      icon.style.cssText = 'font-size:13px;flex-shrink:0;';
+      icon.textContent = part.motion === 'slide' ? '🪟' : '🚪';
+      row.appendChild(icon);
+
+      const text = document.createElement('div');
+      text.style.cssText = 'flex:1;min-width:0;';
+      const name = document.createElement('div');
+      name.style.cssText = 'font-size:11px;color:#e2e8f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+      const friendly = hass?.states[part.entity]?.attributes?.friendly_name;
+      name.textContent = part.label
+        || (typeof friendly === 'string' ? friendly : '')
+        || part.entity
+        || t('partNoEntity');
+      const sub = document.createElement('div');
+      sub.style.cssText = 'font-size:9px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+      sub.textContent = `${MOTION_LABEL[part.motion]?.() ?? part.motion}${part.entity ? ` · ${part.entity}` : ''}`;
+      text.append(name, sub);
+      row.appendChild(text);
+
+      if (!part.entity) {
+        const warn = document.createElement('span');
+        warn.style.cssText = 'font-size:10px;color:#fbbf24;flex-shrink:0;';
+        warn.textContent = '⚠';
+        warn.title = t('partNoEntity');
+        row.appendChild(warn);
+      }
+
+      const del = document.createElement('button');
+      del.style.cssText = 'background:none;border:none;color:rgba(248,113,113,0.5);cursor:pointer;font-size:13px;padding:2px 4px;flex-shrink:0;';
+      del.textContent = '×';
+      del.title = t('partDelete');
+      del.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const next = (this.getParts?.() ?? []).filter((p) => p.id !== part.id);
+        this.saveParts?.(next).then(() => this._fillPartsList(pane));
+      });
+      row.appendChild(del);
+
+      row.addEventListener('click', () => this._openPartModal(part, null));
+      pane.appendChild(row);
+    }
+  }
+
+  /**
+   * Formulaire d'un ouvrant.
+   *
+   * Le curseur d'aperçu est le cœur de l'écran : le seul moyen fiable de savoir
+   * si les gonds sont du bon côté est de voir le vantail bouger.
+   */
+  private _openPartModal(part: OwlnestPart, hit: PickedPart | null) {
+    document.getElementById('owlnest-part-modal')?.remove();
+    const draft: OwlnestPart = JSON.parse(JSON.stringify(part));
+
+    const inputStyle = 'width:100%;box-sizing:border-box;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#e2e8f0;padding:5px 8px;font-size:11px;outline:none;font-family:inherit;';
+    const lblStyle = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;display:block;';
+
+    const dialog = document.createElement('dialog');
+    dialog.id = 'owlnest-part-modal';
+    dialog.style.cssText = [
+      'position:fixed', 'top:50%', 'left:50%', 'transform:translate(-50%,-50%)',
+      'width:min(420px,94vw)', 'max-height:86vh',
+      'background:rgba(6,10,22,0.97)', 'backdrop-filter:blur(20px)',
+      'border:1px solid rgba(255,255,255,0.1)', 'border-radius:14px',
+      'box-shadow:0 20px 60px rgba(0,0,0,0.8)', 'padding:0',
+      'color:#e2e8f0', 'font-family:var(--primary-font-family,sans-serif)',
+      'display:flex', 'flex-direction:column', 'overflow:hidden',
+    ].join(';');
+    dialog.addEventListener('keydown', (e) => e.stopPropagation());
+
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.08);flex-shrink:0;gap:8px;';
+    const title = document.createElement('div');
+    title.style.cssText = 'font-size:12px;font-weight:700;flex:1;';
+    title.textContent = t('partTitle');
+    hdr.appendChild(title);
+    if (hit) {
+      const dims = document.createElement('div');
+      dims.style.cssText = 'font-size:9px;color:#64748b;font-variant-numeric:tabular-nums;';
+      dims.textContent = `${hit.size.map((v) => v.toFixed(0)).join(' × ')} cm · ${hit.triangles} tri`;
+      hdr.appendChild(dims);
+    }
+    dialog.appendChild(hdr);
+
+    const body = document.createElement('div');
+    body.style.cssText = 'padding:14px 16px;overflow-y:auto;flex:1;min-height:0;';
+    dialog.appendChild(body);
+
+    const field = (label: string, control: HTMLElement) => {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'margin-bottom:12px;';
+      const l = document.createElement('label');
+      l.style.cssText = lblStyle;
+      l.textContent = label;
+      wrap.append(l, control);
+      body.appendChild(wrap);
+      return wrap;
+    };
+
+    // ── Entité ────────────────────────────────────────────────────────────
+    const { wrap: entityWrap } = this._entityField(draft.entity, inputStyle, (id) => {
+      draft.entity = id;
+    });
+    field(t('partEntity'), entityWrap);
+
+    // ── Mouvement ─────────────────────────────────────────────────────────
+    const motionSel = document.createElement('select');
+    motionSel.style.cssText = inputStyle + SELECT_STYLE;
+    for (const [value, label] of [['swing', t('partSwing')], ['slide', t('partSlide')]] as const) {
+      const o = document.createElement('option');
+      o.value = value; o.textContent = label;
+      motionSel.appendChild(styleOption(o));
+    }
+    motionSel.value = draft.motion;
+    field(t('partMotion'), motionSel);
+
+    // ── Réglages propres au mouvement ─────────────────────────────────────
+    const specific = document.createElement('div');
+    body.appendChild(specific);
+
+    const rebuildSpecific = () => {
+      specific.innerHTML = '';
+      const sub = (label: string, control: HTMLElement) => {
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'margin-bottom:12px;';
+        const l = document.createElement('label');
+        l.style.cssText = lblStyle;
+        l.textContent = label;
+        wrap.append(l, control);
+        specific.appendChild(wrap);
+      };
+
+      if (draft.motion === 'swing') {
+        const hinge = document.createElement('select');
+        hinge.style.cssText = inputStyle + SELECT_STYLE;
+        for (const [v, lab] of [['start', t('partHingeStart')], ['end', t('partHingeEnd')]] as const) {
+          const o = document.createElement('option');
+          o.value = v; o.textContent = lab;
+          hinge.appendChild(styleOption(o));
+        }
+        hinge.value = draft.hinge ?? 'start';
+        hinge.addEventListener('change', () => {
+          draft.hinge = hinge.value as 'start' | 'end';
+          // Le côté des gonds change la géométrie détachée : il faut
+          // reconstruire avant de pouvoir en montrer l'effet.
+          void this._commitPart(draft, false).then(() => preview(previewRange.valueAsNumber / 100));
+        });
+        sub(t('partHinge'), hinge);
+
+        const angle = document.createElement('input');
+        angle.type = 'range'; angle.min = '15'; angle.max = '170'; angle.step = '5';
+        angle.value = String(draft.angle ?? 90);
+        angle.style.cssText = 'width:100%;';
+        const angleVal = document.createElement('span');
+        angleVal.style.cssText = 'font-size:10px;color:#94a3b8;margin-left:6px;';
+        angleVal.textContent = `${draft.angle ?? 90}°`;
+        angle.addEventListener('input', () => {
+          draft.angle = angle.valueAsNumber;
+          angleVal.textContent = `${draft.angle}°`;
+        });
+        const angleRow = document.createElement('div');
+        angleRow.style.cssText = 'display:flex;align-items:center;';
+        angleRow.append(angle, angleVal);
+        sub(t('partAngle'), angleRow);
+      } else {
+        const dir = document.createElement('select');
+        dir.style.cssText = inputStyle + SELECT_STYLE;
+        for (const [v, lab] of [
+          ['down', t('partSlideDown')], ['up', t('partSlideUp')],
+          ['start', t('partSlideStart')], ['end', t('partSlideEnd')],
+        ] as const) {
+          const o = document.createElement('option');
+          o.value = v; o.textContent = lab;
+          dir.appendChild(styleOption(o));
+        }
+        dir.value = draft.slide ?? 'down';
+        dir.addEventListener('change', () => { draft.slide = dir.value as OwlnestPart['slide']; });
+        sub(t('partSlideDir'), dir);
+
+        const travel = document.createElement('input');
+        travel.type = 'range'; travel.min = '20'; travel.max = '120'; travel.step = '5';
+        travel.value = String(Math.round((draft.travel ?? 1) * 100));
+        travel.style.cssText = 'width:100%;';
+        travel.addEventListener('input', () => { draft.travel = travel.valueAsNumber / 100; });
+        sub(t('partTravel'), travel);
+      }
+    };
+
+    motionSel.addEventListener('change', () => {
+      draft.motion = motionSel.value as OwlnestPart['motion'];
+      rebuildSpecific();
+      void this._commitPart(draft, false);
+    });
+    rebuildSpecific();
+
+    // ── Durée et inversion ────────────────────────────────────────────────
+    const dur = document.createElement('input');
+    dur.type = 'number'; dur.min = '0.1'; dur.max = '10'; dur.step = '0.1';
+    dur.value = String(draft.duration ?? 1.2);
+    dur.style.cssText = inputStyle;
+    dur.addEventListener('change', () => { draft.duration = Math.max(0.1, dur.valueAsNumber || 1.2); });
+    field(t('partDuration'), dur);
+
+    const invWrap = document.createElement('label');
+    invWrap.style.cssText = 'display:flex;align-items:center;gap:7px;font-size:11px;color:#cbd5e1;cursor:pointer;margin-bottom:12px;';
+    const inv = document.createElement('input');
+    inv.type = 'checkbox'; inv.checked = !!draft.invert;
+    inv.addEventListener('change', () => { draft.invert = inv.checked || undefined; });
+    invWrap.append(inv, document.createTextNode(t('partInvert')));
+    body.appendChild(invWrap);
+
+    // ── Aperçu ────────────────────────────────────────────────────────────
+    const previewRange = document.createElement('input');
+    previewRange.type = 'range'; previewRange.min = '0'; previewRange.max = '100'; previewRange.step = '1';
+    previewRange.value = '0';
+    previewRange.style.cssText = 'width:100%;';
+    const preview = (f: number) => this.onPreviewPart?.(draft.id, f);
+    previewRange.addEventListener('input', () => preview(previewRange.valueAsNumber / 100));
+    const previewNote = document.createElement('div');
+    previewNote.style.cssText = 'font-size:9px;color:#64748b;line-height:1.5;margin-top:4px;';
+    previewNote.textContent = t('partPreviewNote');
+    const previewBox = document.createElement('div');
+    previewBox.append(previewRange, previewNote);
+    field(t('partPreview'), previewBox);
+
+    // ── Pied ──────────────────────────────────────────────────────────────
+    const foot = document.createElement('div');
+    foot.style.cssText = 'display:flex;gap:8px;padding:12px 16px;border-top:1px solid rgba(255,255,255,0.08);flex-shrink:0;';
+    const btn = (label: string, primary: boolean) => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      b.style.cssText = [
+        'flex:1', 'padding:7px 10px', 'border-radius:7px', 'font-size:11px',
+        'font-weight:600', 'cursor:pointer', 'font-family:inherit',
+        primary ? 'background:#0ea5e9' : 'background:rgba(255,255,255,0.06)',
+        primary ? 'color:#04121f' : 'color:#cbd5e1',
+        primary ? 'border:none' : 'border:1px solid rgba(255,255,255,0.12)',
+      ].join(';');
+      return b;
+    };
+    const cancel = btn(t('ruleModalCancel'), false);
+    const ok = btn(t('ruleModalSave'), true);
+    cancel.addEventListener('click', () => { preview(0); dialog.close(); dialog.remove(); });
+    ok.addEventListener('click', async () => {
+      await this._commitPart(draft, true);
+      dialog.close(); dialog.remove();
+    });
+    foot.append(cancel, ok);
+    dialog.appendChild(foot);
+
+    document.body.appendChild(dialog);
+    dialog.showModal();
+    dialog.addEventListener('cancel', (e) => { e.preventDefault(); preview(0); dialog.close(); dialog.remove(); });
+
+    // La pièce n'existe pas encore côté carte tant qu'elle n'est pas
+    // enregistrée : on la crée immédiatement pour que l'aperçu fonctionne.
+    void this._commitPart(draft, false);
+  }
+
+  /** Enregistre le brouillon. `refreshList` évite de redessiner à chaque réglage. */
+  private async _commitPart(draft: OwlnestPart, refreshList: boolean) {
+    const current = this.getParts?.() ?? [];
+    const exists = current.some((p) => p.id === draft.id);
+    const next = exists
+      ? current.map((p) => (p.id === draft.id ? { ...draft } : p))
+      : [...current, { ...draft }];
+    await this.saveParts?.(next);
+    if (refreshList && this._partsBody) this._fillPartsList(this._partsBody);
   }
 
   private _openRuleModal(existing: OwlnestRule | null, onSaved: () => void) {

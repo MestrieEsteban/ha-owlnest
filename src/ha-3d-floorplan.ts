@@ -21,6 +21,8 @@ import { EditPanel } from './card/edit-panel';
 import { SceneCardRenderer } from './cards/renderer';
 import { PanelGizmo } from './panels/gizmo';
 import type { SceneCard, SceneCardType } from './cards/types';
+import { PartController, meshOrder } from './parts-runtime';
+import { partIndexOf, partFrame, guessPart } from './parts';
 import { evalCondition, RuleEngine } from './rules/engine';
 import type { OwlnestRule, Action } from './rules/types';
 
@@ -137,6 +139,10 @@ class Ha3dFloorplan extends HTMLElement {
   // Moteur de regles : porte lui-meme ses etats precedents, ses minuteries de
   // duree et ses anti-rebonds.
   private _ruleEngine = new RuleEngine();
+  /** Ouvrants du modèle animés par l'état des entités (portes, volets…). */
+  private _parts = new PartController();
+  /** Renseigné pendant que l'éditeur attend un clic sur une pièce du modèle. */
+  private _partPickHandler: ((hit: import('./card/edit-panel').PickedPart) => void) | null = null;
 
   // Environment lights
   private _hemiLight: THREE.HemisphereLight | null = null;
@@ -236,6 +242,12 @@ class Ha3dFloorplan extends HTMLElement {
       this._sceneLoading = true;
       this._fetchAndLoadScene(activeSceneId);
       return;
+    }
+
+    // Les ouvrants suivent l'état même en édition : voir une porte s'ouvrir est
+    // le seul moyen de vérifier qu'on a choisi le bon côté de gonds.
+    if (this.modelLoaded && this._parts.built && this._parts.applyStates(hass.states)) {
+      this._requestRender();
     }
 
     if (this.modelLoaded && !this._editMode) {
@@ -649,6 +661,19 @@ class Ha3dFloorplan extends HTMLElement {
           ((e.clientX - rect.left) / rect.width) * 2 - 1,
           -((e.clientY - rect.top) / rect.height) * 2 + 1,
         );
+
+        // La sélection d'une pièce du modèle passe avant tout : l'éditeur
+        // attend explicitement ce clic.
+        if (this._partPickHandler) {
+          if (!this._handlePartPick(ndc)) {
+            // Clic dans le vide : on annule plutôt que de laisser l'éditeur
+            // attendre indéfiniment.
+            this._partPickHandler = null;
+            if (this.canvas) this.canvas.style.cursor = '';
+            this._editPanel?.hideStatusBar();
+          }
+          return;
+        }
 
         // Card placement mode takes priority
         if (this._cardPlacementMode && this._cardPlacementType && this.scene && this.camera) {
@@ -1065,6 +1090,10 @@ class Ha3dFloorplan extends HTMLElement {
         if (!this._hass) return [];
         return listScenes(this._hass).catch(() => []);
       },
+      () => this._scene?.parts ?? [],
+      async (parts) => this._savePartsDirect(parts),
+      (onPicked) => this._startPartPicking(onPicked),
+      (id, fraction) => { this._parts.preview(id, fraction); this._requestRender(); },
     );
 
     this._editPanel.onTestRule = (rule) => this.runRuleNow(rule);
@@ -1414,6 +1443,88 @@ class Ha3dFloorplan extends HTMLElement {
     }
   }
 
+  /**
+   * Enregistre les ouvrants et remonte le modèle en conséquence.
+   *
+   * Détacher une pièce retire ses triangles de la maille : on ne peut pas
+   * appliquer un changement par-dessus l'état courant, il faut repartir du
+   * modèle d'origine. D'où le rechargement, qui reste local (le fichier est
+   * dans le cache du navigateur).
+   */
+  private async _savePartsDirect(parts: import('./types').OwlnestPart[]) {
+    const sceneId = this._getActiveSceneId();
+    const hass = this._hass;
+    const current = this._scene;
+    const base = current ?? {
+      version: 1, scene_id: sceneId ?? '',
+      model_url: this._config?.model_url ?? '',
+      anchors: [], camera_views: [], cards: [], rules: [],
+    };
+    const updated = { ...base, parts };
+    this._scene = updated;
+
+    if (sceneId && hass) {
+      try {
+        await saveScene(hass, sceneId, updated);
+      } catch (err) {
+        console.error('[Owlnest] Parts save failed:', err);
+      }
+    }
+    this.refreshParts();
+  }
+
+  /**
+   * Attend le prochain clic sur le modèle et renvoie la pièce touchée.
+   *
+   * On ne propose pas de liste : sur 2 600 composantes, désigner du doigt est
+   * la seule interaction praticable.
+   */
+  private _startPartPicking(onPicked: (hit: import('./card/edit-panel').PickedPart) => void) {
+    this._partPickHandler = onPicked;
+    if (this.canvas) this.canvas.style.cursor = 'crosshair';
+  }
+
+  private _handlePartPick(ndc: THREE.Vector2): boolean {
+    const cb = this._partPickHandler;
+    if (!cb || !this.camera || !this._modelRoot) return false;
+
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, this.camera);
+    const hits = ray.intersectObject(this._modelRoot, true);
+    const hit = hits.find((h) => h.faceIndex !== undefined && (h.object as THREE.Mesh).isMesh);
+    if (!hit) return false;
+
+    this._partPickHandler = null;
+    if (this.canvas) this.canvas.style.cursor = '';
+
+    const mesh = hit.object as THREE.Mesh;
+    const index = partIndexOf(mesh);
+    const partId = index.ofTriangle[hit.faceIndex!];
+    const part = partId >= 0 ? index.parts[partId] : null;
+    if (!part) return false;
+
+    // Le modèle peut être en mètres comme en centimètres : on cale l'échelle
+    // sur une hauteur d'étage plausible pour que les cotes affichées parlent.
+    const span = this._modelSpan;
+    const unitToCm = span > 50 ? 1 : 100;
+    const frame = partFrame(part.box);
+    cb({
+      mesh: mesh.name,
+      meshIndex: meshOrder(this._modelRoot).indexOf(mesh),
+      triangle: hit.faceIndex!,
+      // Hauteur, largeur, épaisseur — dans cet ordre, quelle que soit
+      // l'orientation du modèle.
+      size: [
+        frame.size[frame.up] * unitToCm,
+        frame.size[frame.wide] * unitToCm,
+        frame.size[frame.thin] * unitToCm,
+      ],
+      guess: guessPart(part.box, unitToCm),
+      triangles: part.tris.length,
+    });
+    return true;
+  }
+
   // ── Card fly-to ────────────────────────────────────────────────────────────
 
   private _enterCardFocus(cardId: string) {
@@ -1637,6 +1748,9 @@ class Ha3dFloorplan extends HTMLElement {
       }
       this._dirty = true;
     }
+
+    // Ouvrants en mouvement : tant qu'une porte pivote, il faut redessiner.
+    if (this._parts.built && this._parts.update(dt)) this._dirty = true;
 
     const moved = this.controls?.update() ?? false;
     if (moved) this._dirty = true;
@@ -1905,11 +2019,50 @@ class Ha3dFloorplan extends HTMLElement {
     this._requestShadowUpdate();
   }
 
+  // ── Ouvrants ──────────────────────────────────────────────────────────
+
+  /**
+   * Détache les ouvrants décrits par la scène et les place selon l'état courant.
+   *
+   * Appelé après le chargement du modèle, et à chaque modification dans
+   * l'éditeur — détacher une pièce modifie la géométrie de base, donc on repart
+   * toujours d'un modèle propre plutôt que d'essayer de défaire un retrait.
+   */
+  private _buildParts() {
+    const configs = this._scene?.parts ?? [];
+    if (!this._modelRoot) return;
+    this._parts.dispose(this._modelRoot);
+    if (configs.length === 0) return;
+
+    const { missing } = this._parts.build(this._modelRoot, configs);
+    if (missing.length) {
+      console.warn(
+        `[Owlnest] ${missing.length} ouvrant(s) introuvable(s) dans le modèle :`,
+        missing.map((m) => m.label || m.entity).join(', '),
+      );
+    }
+    if (this._hass) this._parts.applyStates(this._hass.states);
+    // Les ouvrants partent de leur position fermée : on les amène d'un coup à
+    // leur état réel, sinon toutes les portes ouvertes s'animeraient au
+    // chargement de la page.
+    this._parts.update(1e6);
+    this._requestRender();
+  }
+
+  /** Reconstruit les ouvrants après une modification dans l'éditeur. */
+  refreshParts() {
+    if (!this._modelRoot) return;
+    // Une pièce déjà détachée a été retirée de sa maille : seul un rechargement
+    // rend le modèle à son état initial.
+    this._loadModel();
+  }
+
   // ── Scene content cleanup (keeps renderer/canvas/HUD intact) ─────────
 
   private _clearSceneContent() {
     // Exit edit mode cleanly
     if (this._editMode) this._exitEditMode();
+    this._parts.dispose(this._modelRoot ?? undefined);
     // Dispose card renderer
     this._cardRenderer?.dispose();
     this._cardRenderer = null;
@@ -2036,6 +2189,8 @@ class Ha3dFloorplan extends HTMLElement {
     if (ec.rendering?.light_occlusion === 'top' && this._env) {
       this._env.addOcclusion(this._modelBox);
     }
+
+    this._buildParts();
 
     this.anchors = detectAnchors(model, this.scene, ec);
     this._createOverlays();

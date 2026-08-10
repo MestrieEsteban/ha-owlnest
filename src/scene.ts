@@ -152,5 +152,6 @@ export function buildSceneFromEditor(
     camera_views: cameraViews ?? (current?.camera_views ?? []),
     cards: current?.cards ?? [],
     rules: current?.rules ?? [],
+    parts: current?.parts ?? [],
   };
 }

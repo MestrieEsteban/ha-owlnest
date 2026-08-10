@@ -304,3 +304,7 @@ specs
 
 # Fixture de test : contient des URL signees donnant acces aux cameras
 dev/cameras.json
+
+# Modele local pour les bancs d essai (non versionne)
+dev/*.local.glb
+.test-build/

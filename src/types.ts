@@ -210,6 +210,52 @@ export interface RenderingConfig {
 }
 
 /** A full Owlnest scene, persisted by the backend integration. */
+// ── Ouvrants ────────────────────────────────────────────────────────────────
+
+/** Battant (porte, fenêtre) ou coulissant (volet, baie, porte de garage). */
+export type PartMotion = 'swing' | 'slide';
+
+/** Sens du coulissement, dans le repère propre à la pièce. */
+export type SlideDirection = 'down' | 'up' | 'start' | 'end';
+
+/**
+ * Une pièce du modèle animée par l'état d'une entité.
+ *
+ * On ne mémorise pas la géométrie, seulement de quoi la retrouver : le nom de
+ * la maille et un triangle lui appartenant. L'analyse en composantes connexes
+ * a lieu dans l'éditeur, jamais sur la tablette.
+ */
+export interface OwlnestPart {
+  id: string;
+  entity: string;
+  /** Nom de la maille contenant la pièce, tel qu'exporté par le modeleur. */
+  mesh: string;
+  /**
+   * Rang de la maille dans le parcours du modèle.
+   *
+   * Rien n'oblige un modeleur à donner des noms uniques : deux mailles
+   * homonymes feraient animer la mauvaise porte. Le rang tranche, le nom reste
+   * pour rester lisible et pour les scènes enregistrées avant ce champ.
+   */
+  meshIndex?: number;
+  /** Triangle d'amorce : suffit à réidentifier la pièce entière. */
+  triangle: number;
+  label?: string;
+  motion: PartMotion;
+  /** Côté des gonds, pour un battant. */
+  hinge?: 'start' | 'end';
+  /** Ouverture d'un battant, en degrés. */
+  angle?: number;
+  /** Sens de retrait d'un coulissant. */
+  slide?: SlideDirection;
+  /** Course d'un coulissant, en fraction de sa propre dimension. */
+  travel?: number;
+  /** Inverse la lecture de l'état : « ouvert » devient « fermé ». */
+  invert?: boolean;
+  /** Durée de l'animation, en secondes. */
+  duration?: number;
+}
+
 export interface OwlnestScene {
   version: number;
   scene_id: string;
@@ -218,6 +264,7 @@ export interface OwlnestScene {
   camera_views: CameraView[];
   cards: import('./cards/types').SceneCard[];
   rules: import('./rules/types').OwlnestRule[];
+  parts?: OwlnestPart[];
   settings?: SceneSettings;
 }
 

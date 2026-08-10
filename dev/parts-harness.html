@@ -1,0 +1,183 @@
+<!doctype html>
+<!--
+  Banc d'essai des ouvrants, sur le vrai modèle.
+
+  Charge le GLB de la maison, retrouve une porte par ses proportions, la
+  détache et l'anime — sans Home Assistant, sans dashboard. C'est le seul
+  moyen de vérifier le câblage complet avant de toucher à la production.
+-->
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <title>Owlnest — ouvrants</title>
+  <style>
+    body { margin: 0; background: #0b1020; color: #e2e8f0;
+           font: 13px/1.6 system-ui, sans-serif; }
+    #log { padding: 12px 16px; white-space: pre-wrap; font-family: ui-monospace, monospace;
+           font-size: 12px; border-bottom: 1px solid #1e293b; }
+    .ok { color: #4ade80; } .ko { color: #f87171; } .info { color: #94a3b8; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+  <div id="log"></div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+    import { buildPartIndex, partFrame, guessPart } from '/src/parts.ts';
+    import { PartController, meshOrder } from '/src/parts-runtime.ts';
+
+    const logEl = document.getElementById('log');
+    const say = (msg, cls = 'info') => {
+      logEl.insertAdjacentHTML('beforeend', `<div class="${cls}">${msg}</div>`);
+    };
+    const check = (label, cond, detail = '') => {
+      say(`${cond ? '✓' : '✗'} ${label}${detail ? ` — ${detail}` : ''}`, cond ? 'ok' : 'ko');
+      return cond;
+    };
+
+    // `dev/model.local.glb` n'est pas versionné : copiez-y votre GLB, ou passez
+    // ?model=… en paramètre. Un modèle servi par Home Assistant serait refusé
+    // par CORS depuis l'origine du serveur de dev.
+    const MODEL = new URLSearchParams(location.search).get('model')
+      ?? '/dev/model.local.glb';
+
+    say(`Chargement de ${MODEL}…`);
+    const t0 = performance.now();
+    const gltf = await new GLTFLoader().loadAsync(MODEL);
+    say(`Modèle chargé en ${(performance.now() - t0).toFixed(0)} ms`);
+
+    const root = gltf.scene;
+    const meshes = meshOrder(root);
+    say(`${meshes.length} mailles — noms : ${meshes.slice(0, 4).map((m) => m.name).join(', ')}…`);
+
+    // ── Trouver une porte, comme le ferait un clic dans l'éditeur ────────────
+    const tA = performance.now();
+    let best = null;
+    meshes.forEach((mesh, meshIndex) => {
+      const idx = buildPartIndex(mesh.geometry);
+      for (const part of idx.parts) {
+        if (guessPart(part.box, 1) !== 'door') continue;
+        if (!best || part.tris.length > best.part.tris.length) {
+          best = { mesh, meshIndex, part, triangle: part.tris[0] };
+        }
+      }
+    });
+    say(`Analyse des ${meshes.length} mailles : ${(performance.now() - tA).toFixed(0)} ms`);
+
+    if (!check('une porte est reconnue dans le modèle', !!best)) throw new Error('stop');
+    const f = partFrame(best.part.box);
+    say(`Porte : ${f.size[f.up].toFixed(0)} × ${f.size[f.wide].toFixed(0)} × ${f.size[f.thin].toFixed(0)} cm, `
+      + `maille « ${best.mesh.name} » (rang ${best.meshIndex}), triangle ${best.triangle}`);
+
+    // ── Le contrôleur, exactement comme en production ────────────────────────
+    const cfg = {
+      id: 'p1', entity: 'binary_sensor.porte_entree',
+      mesh: best.mesh.name, meshIndex: best.meshIndex, triangle: best.triangle,
+      motion: 'swing', hinge: 'start', angle: 90, duration: 1,
+    };
+    const ctl = new PartController();
+    const trisBefore = best.mesh.geometry.getIndex().count / 3;
+    const res = ctl.build(root, [cfg]);
+    const trisAfter = best.mesh.geometry.getIndex().count / 3;
+
+    check('le contrôleur retrouve la pièce depuis la scène', res.ok === 1,
+      `${res.missing.length} manquante(s)`);
+    check('les triangles sont retirés de la maille d’origine',
+      trisBefore - trisAfter === best.part.tris.length,
+      `${trisBefore} → ${trisAfter}`);
+
+    const leaf = best.mesh.children.find((c) => c.userData.owlnestPartId === 'p1');
+    check('le vantail est un objet à part entière', !!leaf);
+
+    // ── Animation ───────────────────────────────────────────────────────────
+    const angleOf = () => Math.abs(leaf.rotation[['x', 'y', 'z'][partFrame(best.part.box).up]]);
+    check('la porte est fermée au départ', angleOf() < 1e-9);
+
+    ctl.applyStates({ 'binary_sensor.porte_entree': { state: 'on' } });
+    ctl.update(0.5);
+    const half = angleOf();
+    check('à mi-durée, la porte est entrouverte', half > 0.1 && half < Math.PI / 2 - 0.1,
+      `${THREE.MathUtils.radToDeg(half).toFixed(0)}°`);
+
+    let guard = 0;
+    while (ctl.update(0.1) && guard++ < 200);
+    check('elle finit grande ouverte', Math.abs(angleOf() - Math.PI / 2) < 1e-6,
+      `${THREE.MathUtils.radToDeg(angleOf()).toFixed(1)}°`);
+    check('l’animation s’arrête d’elle-même', ctl.update(0.1) === false);
+
+    ctl.applyStates({ 'binary_sensor.porte_entree': { state: 'off' } });
+    guard = 0;
+    while (ctl.update(0.1) && guard++ < 200);
+    check('elle se referme complètement', angleOf() < 1e-9);
+
+    // ── Le gond reste immobile ──────────────────────────────────────────────
+    root.updateMatrixWorld(true);
+    const hingeClosed = leaf.localToWorld(new THREE.Vector3(0, 0, 0));
+    ctl.preview('p1', 1);
+    guard = 0;
+    while (ctl.update(0.1) && guard++ < 200);
+    root.updateMatrixWorld(true);
+    const hingeOpen = leaf.localToWorld(new THREE.Vector3(0, 0, 0));
+    check('le gond ne se déplace pas', hingeClosed.distanceTo(hingeOpen) < 1e-6,
+      `${hingeClosed.distanceTo(hingeOpen).toExponential(1)} cm`);
+
+    // ── Rendu réel : la scène doit dessiner sans erreur WebGL ────────────────
+    const renderer = new THREE.WebGLRenderer({ antialias: false });
+    renderer.setSize(640, 400);
+    document.body.appendChild(renderer.domElement);
+    const box = new THREE.Box3().setFromObject(root);
+    const size = box.getSize(new THREE.Vector3()).length();
+    const centre = box.getCenter(new THREE.Vector3());
+    const cam = new THREE.PerspectiveCamera(50, 640 / 400, size / 1000, size * 10);
+    cam.position.copy(centre).add(new THREE.Vector3(size * 0.4, size * 0.4, size * 0.4));
+    cam.lookAt(centre);
+    const scene = new THREE.Scene();
+    scene.add(new THREE.AmbientLight(0xffffff, 2));
+    scene.add(root);
+    renderer.render(scene, cam);
+    check('la scène se rend sans erreur WebGL', true);
+
+    // ── Coût d'une image avec un ouvrant en mouvement ────────────────────────
+    ctl.preview('p1', 0);
+    const tF = performance.now();
+    for (let i = 0; i < 60; i++) { ctl.update(1 / 60); renderer.render(scene, cam); }
+    const perFrame = (performance.now() - tF) / 60;
+    say(`Coût moyen d’une image, porte en mouvement : ${perFrame.toFixed(2)} ms`, 'info');
+
+    // ── Contrôle visuel : cadrer l'ouvrant et le faire jouer en boucle ───────
+    // Un test peut affirmer qu'un angle vaut 90° sans que le résultat ait l'air
+    // d'une porte. Seul l'œil tranche.
+    // Une porte intérieure est cachée par les murs vue du dehors : on n'affiche
+    // que la maille qui la contient.
+    for (const m of meshes) m.visible = (m === best.mesh);
+
+    const leafBox = new THREE.Box3().setFromObject(leaf);
+    const leafCentre = leafBox.getCenter(new THREE.Vector3());
+    const reach = leafBox.getSize(new THREE.Vector3()).length() * 1.6;
+    cam.position.copy(leafCentre).add(new THREE.Vector3(reach, reach * 0.35, reach));
+    cam.near = reach / 100; cam.far = reach * 40;
+    cam.updateProjectionMatrix();
+    cam.lookAt(leafCentre);
+
+    let open = false, wait = 0;
+    const spin = () => {
+      const dt = 1 / 60;
+      if (!ctl.update(dt) && (wait += dt) > 1.2) {
+        wait = 0; open = !open;
+        ctl.preview('p1', open ? 1 : 0);
+      }
+      renderer.render(scene, cam);
+      requestAnimationFrame(spin);
+    };
+    spin();
+
+    // Exposé pour piloter le rendu depuis la console : `requestAnimationFrame`
+    // ne tourne pas quand l'onglet ne compose pas d'images.
+    window.__h = { ctl, renderer, scene, cam, leaf, THREE };
+
+    say('\nTerminé. La porte joue en boucle ci-dessous.', 'ok');
+    window.__done = true;
+  </script>
+</body>
+</html>
