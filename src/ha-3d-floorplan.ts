@@ -6,7 +6,7 @@ import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import type { Hass, CardConfig, AnchorEntry, SavedView, EditableAnchor, OwlnestScene } from './types';
 import { syncLights, stepTransitions } from './lights';
 import { loadGLTF, detectAnchors, buildAnchorsFromEditable, rebuildAnchorLight, lightTargetPos } from './model';
-import { AnchorOverlay, SensorOverlay, ClusterOverlay, LabelOverlay } from './overlay';
+import { AnchorOverlay, SensorOverlay, ClusterOverlay, LabelOverlay, CameraOverlay, pulseOverlay } from './overlay';
 import type { ClusterItem } from './overlay';
 import { AnchorEditor } from './editor';
 import { loadScene, saveScene, listScenes, sceneToEffectiveConfig, buildSceneFromEditor, normalizeViews } from './scene';
@@ -21,10 +21,23 @@ import { EditPanel } from './card/edit-panel';
 import { SceneCardRenderer } from './cards/renderer';
 import { PanelGizmo } from './panels/gizmo';
 import type { SceneCard, SceneCardType } from './cards/types';
-import { evalCondition, triggerFired, conditionsMet } from './rules/engine';
+import { evalCondition, RuleEngine } from './rules/engine';
 import type { OwlnestRule, Action } from './rules/types';
 
-type AnyOverlay = AnchorOverlay | SensorOverlay | LabelOverlay | ClusterOverlay;
+type AnyOverlay = AnchorOverlay | SensorOverlay | LabelOverlay | ClusterOverlay | CameraOverlay;
+
+/**
+ * Largeur de reference d'une vignette, en fraction de la plus grande dimension
+ * du modele. Exprimer une taille en metres ne marche pas : un export en
+ * centimetres donne une maison de 800 unites de large, et la vignette
+ * disparaitrait.
+ *
+ * L'ordre de grandeur se lit ainsi : quand le modele entier tient a l'ecran, la
+ * vignette occupe environ `ratio` fois la hauteur du viewport. A 0.045 elle
+ * faisait 18 px sur une carte de 400 px — toujours sous le plancher, donc de
+ * taille figee.
+ */
+const CAMERA_WIDTH_RATIO = 0.18;
 
 /** Format a sensor state string respecting optional decimal precision. */
 function _formatSensorValue(raw: string, precision?: number): string {
@@ -34,7 +47,16 @@ function _formatSensorValue(raw: string, precision?: number): string {
   return num.toFixed(precision);
 }
 
+/**
+ * Estampille de build, lisible depuis la console du navigateur :
+ * `document.querySelector('ha-3d-floorplan').constructor.OWLNEST_BUILD`
+ * Permet de savoir si la page execute bien le code du disque.
+ */
+const OWLNEST_BUILD = 'rules-engine-v2';
+
 class Ha3dFloorplan extends HTMLElement {
+  static readonly OWLNEST_BUILD = OWLNEST_BUILD;
+
   private _config: CardConfig | null = null;
   private _hass: Hass | null = null;
 
@@ -84,6 +106,10 @@ class Ha3dFloorplan extends HTMLElement {
   private _shadowsDirty = true;
 
   // Rendu suspendu quand la carte est masquée ou hors écran.
+  /** Aperçu de règle en cours : les overlays restent visibles malgré l'édition. */
+  private _previewingRule = false;
+  private _previewTimer: ReturnType<typeof setTimeout> | null = null;
+
   private _paused = false;
   private _io: IntersectionObserver | null = null;
   private _onVisibility: (() => void) | null = null;
@@ -91,6 +117,11 @@ class Ha3dFloorplan extends HTMLElement {
   // Réutilisé chaque frame pour la projection des overlays (évite un clone par
   // ancre et par image).
   private _projScratch = new THREE.Vector3();
+
+  // Rafraichissement des vignettes de camera. Piloté depuis la boucle de
+  // rendu : celle-ci sort immédiatement quand la carte est hors écran, donc
+  // les téléchargements s'arrêtent avec elle.
+  private _camAccum = 0;
 
   // Overlay visibility (tap-to-toggle)
   private _overlaysVisible = true;
@@ -103,8 +134,9 @@ class Ha3dFloorplan extends HTMLElement {
   // Camera animation
   private _camAnimTo: { pos: THREE.Vector3; target: THREE.Vector3 } | null = null;
 
-  // Rules engine — tracks previous states to detect transitions
-  private _prevEntityStates = new Map<string, string>();
+  // Moteur de regles : porte lui-meme ses etats precedents, ses minuteries de
+  // duree et ses anti-rebonds.
+  private _ruleEngine = new RuleEngine();
 
   // Environment lights
   private _hemiLight: THREE.HemisphereLight | null = null;
@@ -112,6 +144,8 @@ class Ha3dFloorplan extends HTMLElement {
   private _sky: Sky | null = null;
 
   private _modelBox = new THREE.Box3();
+  /** Plus grande dimension du modele, dans ses propres unites. */
+  private _modelSpan = 1;
 
 
   // Anchor editor
@@ -952,6 +986,8 @@ class Ha3dFloorplan extends HTMLElement {
         kind: entry.kind,
         actions: entry.actions,
         navViewId: entry.navViewId,
+        size: entry.size,
+        display: entry.display,
       });
     });
 
@@ -1031,6 +1067,8 @@ class Ha3dFloorplan extends HTMLElement {
       },
     );
 
+    this._editPanel.onTestRule = (rule) => this.runRuleNow(rule);
+
     this._editor.onChanged = () => {
       this._requestShadowUpdate();
       this._syncEditorLightsToScene();
@@ -1091,6 +1129,8 @@ class Ha3dFloorplan extends HTMLElement {
   }
 
   private _exitEditMode() {
+    if (this._previewTimer) { clearTimeout(this._previewTimer); this._previewTimer = null; }
+    this._previewingRule = false;
     this._requestShadowUpdate();
     this._editMode = false;
     if (this.editBtn) {
@@ -1617,6 +1657,8 @@ class Ha3dFloorplan extends HTMLElement {
       this._panelGizmo.updateScale(this.camera);
     }
 
+    this._refreshCameras(dt);
+
     this._sim?.step(dt);
     // Animate weather particles + lightning every frame regardless of simulation state
     if (this._env?.needsStep) {
@@ -1644,6 +1686,30 @@ class Ha3dFloorplan extends HTMLElement {
   private _requestShadowUpdate() {
     this._shadowsDirty = true;
     this._dirty = true;
+  }
+
+  /**
+   * Recharge les vignettes de caméra à la cadence du profil qualité.
+   *
+   * Seules les vignettes réellement visibles sont rechargées : une image peut
+   * peser 180 Ko, et rien ne justifie de la télécharger pour un élément masqué
+   * par une condition ou situé derrière la caméra.
+   */
+  private _refreshCameras(dt: number) {
+    const interval = this._quality.cameraRefreshMs;
+    if (!interval) return;
+
+    this._camAccum += dt * 1000;
+    if (this._camAccum < interval) return;
+    this._camAccum = 0;
+
+    this.anchors.forEach((entry, name) => {
+      const ov = this.overlays.get(name);
+      if (!(ov instanceof CameraOverlay)) return;
+      if (ov.el.style.display === 'none' || ov.conditionHidden || entry.hidden) return;
+      const pic = this._hass?.states[entry.entityId]?.attributes?.entity_picture;
+      ov.setPicture(typeof pic === 'string' ? pic : undefined, true);
+    });
   }
 
   // ── Mise en pause hors écran ───────────────────────────────────────────
@@ -1882,9 +1948,7 @@ class Ha3dFloorplan extends HTMLElement {
     // Reset simulation
     this._sim = null;
     this._viewMgr = null;
-    // Reset rule engine state
-    this._prevEntityStates.clear();
-    this._prevStatesInitialized = false;
+    this._ruleEngine.reset();
   }
 
   // ── Model loading ─────────────────────────────────────────────────────
@@ -1936,6 +2000,8 @@ class Ha3dFloorplan extends HTMLElement {
     const centre = box.getCenter(new THREE.Vector3());
     model.position.sub(centre);
     this._modelBox.copy(box).translate(centre.negate());
+    const span = this._modelBox.getSize(new THREE.Vector3());
+    this._modelSpan = Math.max(span.x, span.y, span.z, 1e-3);
     this._fitSunShadow();
     this._requestShadowUpdate();
 
@@ -1988,14 +2054,9 @@ class Ha3dFloorplan extends HTMLElement {
       this._updateOverlayStates();
       this._evaluatePassiveConditions();
       this._env?.updateFromHass(this._hass);
-      // Seed rule engine immediately so the first real state change fires correctly.
-      // Without this, the first hass update after load would be consumed by seeding.
-      if (!this._prevStatesInitialized) {
-        for (const [id, s] of Object.entries(this._hass.states)) {
-          this._prevEntityStates.set(id, s.state);
-        }
-        this._prevStatesInitialized = true;
-      }
+      // Amorce le moteur : sans cela, la premiere mise a jour d'etat apres le
+      // chargement serait consommee par l'instantane initial.
+      this._evaluateRules();
     }
 
     // Instantiate SimulationPanel (embedded in Weather tab — no HUD button/expand needed)
@@ -2043,7 +2104,7 @@ class Ha3dFloorplan extends HTMLElement {
   // ── Overlay positioning + clustering ──────────────────────────────────
 
   private _updateOverlayPositions(w: number, h: number) {
-    if (this._editMode) return;
+    if (this._editMode && !this._previewingRule) return;
     // 1. Compute 2D screen positions
     const pos2d = new Map<string, { x: number; y: number }>();
     const behind = new Set<string>();
@@ -2139,6 +2200,21 @@ class Ha3dFloorplan extends HTMLElement {
 
       if (hide) { ov.el.style.display = 'none'; return; }
       const p = pos2d.get(name)!;
+
+      // Une vignette de caméra est un objet de la scène, pas un badge : sa
+      // taille suit la perspective, sinon elle semble rapetisser quand on
+      // approche — la maison grandit, elle non.
+      if (ov instanceof CameraOverlay) {
+        const entry = this.anchors.get(name)!;
+        // Largeur exprimee dans les unites du modele, quelles qu'elles soient.
+        const units = this._modelSpan * CAMERA_WIDTH_RATIO * (entry.size ?? 1);
+        const dist = this.camera!.position.distanceTo(entry.worldPos);
+        // Projection : hauteur du viewport / hauteur visible a cette distance.
+        const fov = (this.camera!.fov * Math.PI) / 180;
+        const pxPerUnit = h / (2 * Math.max(dist, 1e-4) * Math.tan(fov / 2));
+        ov.setPixelWidth(THREE.MathUtils.clamp(units * pxPerUnit, 28, 640));
+      }
+
       ov.el.style.display = ov instanceof SensorOverlay ? 'block' : 'flex';
       ov.el.style.left = `${p.x}px`;
       ov.el.style.top = `${p.y}px`;
@@ -2211,7 +2287,25 @@ class Ha3dFloorplan extends HTMLElement {
         return;
       }
 
-      if (describeEntity(entry.entityId).overlay === 'badge') {
+      // La surcharge par ancre prime sur le descripteur : une camera peut etre
+      // ramenee a une simple pastille.
+      const wanted = entry.display && entry.display !== 'auto' ? entry.display : null;
+      const overlayKind = wanted ?? describeEntity(entry.entityId).overlay;
+
+      // Caméra : une vignette de l'image, à l'emplacement réel de l'appareil.
+      if (overlayKind === 'thumbnail') {
+        const cam = new CameraOverlay(
+          this.overlayContainer!,
+          entry.label,
+          () => this._openMoreInfo(entry.entityId),
+          t('camOffline'),
+        );
+        cam.setPicture(this._hass?.states[entry.entityId]?.attributes?.entity_picture as string | undefined);
+        this.overlays.set(name, cam);
+        return;
+      }
+
+      if (overlayKind === 'badge') {
         const overlay = new SensorOverlay(
           this.overlayContainer!,
           () => this._openMoreInfo(entry.entityId),
@@ -2387,35 +2481,69 @@ class Ha3dFloorplan extends HTMLElement {
 
   // ── Rules engine ────────────────────────────────────────────────────────
 
-  // True once _prevEntityStates has been seeded with the initial snapshot
-  private _prevStatesInitialized = false;
-
   private _evaluateRules() {
     if (!this._hass || !this._scene) return;
+    const rules = (this._scene.rules ?? []) as OwlnestRule[];
+    if (!rules.length) return;
 
-    // On first call: seed prev states without evaluating rules (avoid false triggers on load)
-    if (!this._prevStatesInitialized) {
-      for (const [id, s] of Object.entries(this._hass.states)) {
-        this._prevEntityStates.set(id, s.state);
+    const actions = this._ruleEngine.evaluate(rules, this._hass);
+    if (actions.length) {
+      // Trace volontaire : sans elle, une regle qui ne part pas et une regle
+      // qui part sans effet visible sont impossibles a distinguer.
+      console.debug('[Owlnest] règle déclenchée →', actions.map((a) => a.type).join(', '));
+    }
+    for (const action of actions) this._executeAction(action);
+  }
+
+  /**
+   * Exécute les actions d'une règle sans attendre son déclencheur.
+   *
+   * Utilisé par le bouton « Essayer » de l'éditeur : vérifier une règle en
+   * ouvrant physiquement une porte n'est pas une méthode de travail.
+   *
+   * Le mode édition masque les overlays. Une mise en évidence y ferait donc
+   * pulser un élément invisible, et le bouton paraîtrait sans effet — on les
+   * révèle le temps de l'aperçu.
+   */
+  runRuleNow(rule: OwlnestRule) {
+    const actions = rule.actions ?? [];
+    const highlights = actions.filter((a) => a.type === 'highlight_anchor');
+    if (highlights.length && this._editMode) {
+      const longest = highlights.reduce(
+        (m, a) => Math.max(m, (a as import('./rules/types').HighlightAnchorAction).duration ?? 6), 6);
+      this._startRulePreview(longest);
+    }
+    for (const action of actions) this._executeAction(action);
+  }
+
+  /** Révèle les overlays pendant un aperçu de règle, puis les remasque. */
+  private _startRulePreview(seconds: number) {
+    this._previewingRule = true;
+    if (this._previewTimer) clearTimeout(this._previewTimer);
+
+    if (this.canvas) {
+      this._updateOverlayPositions(this.canvas.offsetWidth, this.canvas.offsetHeight);
+    }
+    this._requestRender();
+
+    this._previewTimer = setTimeout(() => {
+      this._previewTimer = null;
+      this._previewingRule = false;
+      // Sorti de l'édition entre-temps : les overlays doivent rester visibles.
+      if (this._editMode) this.overlays.forEach((o) => { o.el.style.display = 'none'; });
+    }, (seconds + 0.5) * 1000);
+  }
+
+  /** Ancre visee par une action, par entite puis par libelle. */
+  private _findOverlayFor(target: string): AnyOverlay | null {
+    let found: AnyOverlay | null = null;
+    this.anchors.forEach((entry, key) => {
+      if (found) return;
+      if (entry.entityId === target || entry.label === target) {
+        found = this.overlays.get(key) ?? null;
       }
-      this._prevStatesInitialized = true;
-      return;
-    }
-
-    const rules = this._scene.rules as OwlnestRule[];
-    if (rules.length === 0) return;
-
-    for (const rule of rules) {
-      if (rule.enabled === false) continue;
-      if (!triggerFired(rule, this._prevEntityStates, this._hass)) continue;
-      if (!conditionsMet(rule, this._hass)) continue;
-      console.debug('[Owlnest] Rule fired:', rule.label ?? rule.id, rule.actions);
-      for (const action of rule.actions) this._executeAction(action);
-    }
-    // Update prev states AFTER evaluation so transitions are detected correctly
-    for (const [id, s] of Object.entries(this._hass.states)) {
-      this._prevEntityStates.set(id, s.state);
-    }
+    });
+    return found;
   }
 
   private _executeAction(action: Action) {
@@ -2435,15 +2563,15 @@ class Ha3dFloorplan extends HTMLElement {
         }
         break;
       }
-      case 'show_card':
-      case 'hide_card': {
-        const visible = action.type === 'show_card';
-        const cards = (this._scene?.cards ?? []).map((c) =>
-          c.id === action.card_id ? { ...c, visible } : c,
-        ) as SceneCard[];
-        void this._saveCardsDirect(cards);
+      case 'highlight_anchor': {
+        const ov = this._findOverlayFor(action.anchor);
+        if (ov) pulseOverlay(ov.el, action.color ?? '#ef4444', (action.duration ?? 6) * 1000);
+        else console.warn('[Owlnest] highlight_anchor : ancre introuvable :', action.anchor);
         break;
       }
+      case 'toast':
+        this._showToast(action.message, action.level === 'warn');
+        break;
       case 'call_service':
         this._hass.callService(action.domain, action.service, action.service_data ?? {});
         break;
@@ -2498,6 +2626,14 @@ class Ha3dFloorplan extends HTMLElement {
       }
 
       const stateObj = this._hass?.states[entry.entityId];
+
+      if (overlay instanceof CameraOverlay) {
+        const desc = describeEntity(entry.entityId);
+        overlay.updateState(desc.isOn(stateObj), entry.label);
+        // Le token de l'URL est renouvelé par HA : on suit sans forcer.
+        overlay.setPicture(stateObj?.attributes?.entity_picture as string | undefined);
+        return;
+      }
 
       if (overlay instanceof SensorOverlay) {
         const rawValue = stateObj?.state ?? '\u2014';
@@ -2577,6 +2713,8 @@ class Ha3dFloorplan extends HTMLElement {
     this._hudRight = null;
     this._hudViews = null;
     if (this._controlsHideTimer) clearTimeout(this._controlsHideTimer);
+    if (this._previewTimer) { clearTimeout(this._previewTimer); this._previewTimer = null; }
+    this._previewingRule = false;
     this._io?.disconnect();
     this._io = null;
     if (this._onVisibility) document.removeEventListener('visibilitychange', this._onVisibility);
@@ -2599,3 +2737,4 @@ class Ha3dFloorplan extends HTMLElement {
 if (!customElements.get('ha-3d-floorplan')) {
   customElements.define('ha-3d-floorplan', Ha3dFloorplan);
 }
+

@@ -605,3 +605,196 @@ export class LabelOverlay {
     this.el.remove();
   }
 }
+
+// ── Vignette de caméra ──────────────────────────────────────────────────────
+
+/**
+ * Affiche l'image d'une caméra à son emplacement dans la scène.
+ *
+ * L'URL vient de `attributes.entity_picture`, que HA fournit déjà signée par un
+ * token : une balise <img> suffit, sans en-tête d'authentification. Le token est
+ * renouvelé par HA, donc l'URL change au fil des mises à jour d'état.
+ *
+ * Toutes les caméras ne répondent pas : une caméra à l'arrêt renvoie une erreur
+ * HTTP. On retombe alors sur un cadre discret plutôt qu'une image cassée.
+ */
+export class CameraOverlay {
+  readonly el: HTMLDivElement;
+  conditionHidden = false;
+
+  private _img: HTMLImageElement;
+  private _placeholder: HTMLDivElement;
+  private _label: HTMLDivElement;
+  private _dot: HTMLSpanElement;
+  /** Dernière URL demandée, token exclu — évite de recharger pour rien. */
+  private _lastPath = '';
+  private _failed = false;
+  private _widthPx = 132;
+
+  constructor(
+    container: HTMLElement,
+    labelText: string,
+    onClick: () => void,
+    unavailableText: string,
+  ) {
+    this.el = document.createElement('div');
+    this.el.style.cssText = [
+      'position:absolute',
+      'transform:translate(-50%,-50%)',
+      // La taille est recalculee a chaque image par setPixelWidth().
+      'width:132px', 'height:74px',
+      'border-radius:8px', 'overflow:hidden',
+      'background:rgba(10,14,24,0.85)',
+      'border:1.5px solid rgba(255,255,255,0.14)',
+      'box-shadow:0 3px 12px rgba(0,0,0,0.6)',
+      'cursor:pointer', 'z-index:5',
+      'display:flex', 'align-items:center', 'justify-content:center',
+      'pointer-events:auto',
+      'user-select:none', '-webkit-user-select:none',
+      'transition:transform .15s ease, box-shadow .3s ease',
+    ].join(';');
+
+    this._img = document.createElement('img');
+    this._img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:none;pointer-events:none;';
+    this._img.addEventListener('load', () => {
+      this._failed = false;
+      this._img.style.display = 'block';
+      this._placeholder.style.display = 'none';
+    });
+    this._img.addEventListener('error', () => {
+      this._failed = true;
+      this._img.style.display = 'none';
+      this._placeholder.style.display = 'flex';
+    });
+    this.el.appendChild(this._img);
+
+    this._placeholder = document.createElement('div');
+    this._placeholder.style.cssText = [
+      'display:flex', 'flex-direction:column', 'align-items:center', 'gap:2px',
+      'color:rgba(255,255,255,0.34)', 'font-size:8px',
+      'font-family:var(--primary-font-family,sans-serif)',
+      'pointer-events:none', 'text-align:center', 'padding:0 4px',
+    ].join(';');
+    this._placeholder.innerHTML =
+      renderIconHTML('', 'mdi:cctv') + `<span>${unavailableText}</span>`;
+    this.el.appendChild(this._placeholder);
+
+    // Bandeau bas : nom et point d'état.
+    this._label = document.createElement('div');
+    this._label.style.cssText = [
+      'position:absolute', 'left:0', 'right:0', 'bottom:0',
+      'padding:2px 5px',
+      'background:linear-gradient(transparent,rgba(0,0,0,0.78))',
+      'color:#fff', 'font-size:8px', 'font-weight:600',
+      'font-family:var(--primary-font-family,sans-serif)',
+      'white-space:nowrap', 'overflow:hidden', 'text-overflow:ellipsis',
+      'pointer-events:none',
+      'display:flex', 'align-items:center', 'gap:3px',
+    ].join(';');
+    this._dot = document.createElement('span');
+    this._dot.style.cssText = 'width:5px;height:5px;border-radius:50%;background:#555;flex:0 0 auto;';
+    const name = document.createElement('span');
+    name.textContent = labelText;
+    name.style.cssText = 'overflow:hidden;text-overflow:ellipsis;';
+    this._label.append(this._dot, name);
+    this.el.appendChild(this._label);
+
+    this.el.addEventListener('mouseenter', () => {
+      this.el.style.transform = 'translate(-50%,-50%) scale(1.08)';
+    });
+    this.el.addEventListener('mouseleave', () => {
+      this.el.style.transform = 'translate(-50%,-50%) scale(1)';
+    });
+    // Comme les autres overlays : on empêche OrbitControls de consommer le geste.
+    this.el.addEventListener('pointerdown', (e) => e.stopPropagation());
+    this.el.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+
+    container.appendChild(this.el);
+  }
+
+  /** Rapport hauteur/largeur des vignettes. */
+  static readonly ASPECT = 9 / 16;
+
+  /**
+   * Largeur en pixels, calculee par le composant a partir de la distance : une
+   * camera doit grossir quand on s'en approche, comme un ecran accroche au mur.
+   * Le libelle suit, sinon il devient illisible sur une petite vignette.
+   */
+  setPixelWidth(px: number) {
+    if (Math.abs(px - this._widthPx) < 0.5) return;
+    this._widthPx = px;
+    this.el.style.width = `${Math.round(px)}px`;
+    this.el.style.height = `${Math.round(px * CameraOverlay.ASPECT)}px`;
+    // Sous 90 px le bandeau mange l'image sans etre lisible : on le retire.
+    const compact = px < 90;
+    this._label.style.display = compact ? 'none' : 'flex';
+    this._label.style.fontSize = `${Math.max(8, Math.min(12, px * 0.075))}px`;
+    this.el.style.borderRadius = `${Math.max(5, Math.min(12, px * 0.07))}px`;
+  }
+
+  /** Nom et point d'état (vert quand la caméra diffuse). */
+  updateState(active: boolean, labelText: string) {
+    this._dot.style.background = active ? '#4ade80' : '#555';
+    const name = this._label.lastElementChild;
+    if (name && name.textContent !== labelText) name.textContent = labelText;
+  }
+
+  /**
+   * Demande l'image. `entity_picture` porte un token qui change : on ne recharge
+   * que si le chemin a change, ou si `force` le demande (rafraichissement
+   * periodique).
+   */
+  setPicture(entityPicture: string | undefined, force = false) {
+    if (!entityPicture) {
+      this._img.style.display = 'none';
+      this._placeholder.style.display = 'flex';
+      return;
+    }
+    const path = entityPicture.split('?')[0];
+    if (!force && path === this._lastPath && !this._failed) return;
+    this._lastPath = path;
+    // Le navigateur mettrait l'URL en cache : un marqueur temporel force la
+    // recuperation d'une image fraiche.
+    const sep = entityPicture.includes('?') ? '&' : '?';
+    this._img.src = `${entityPicture}${sep}_owl=${Date.now()}`;
+  }
+
+  destroy() {
+    // Coupe un telechargement en cours avant de detacher l'element.
+    this._img.src = '';
+    this.el.remove();
+  }
+}
+
+// ── Mise en évidence ────────────────────────────────────────────────────────
+
+let _pulseStyleInjected = false;
+
+/**
+ * Fait pulser un overlay pour attirer l'œil.
+ *
+ * Déplacer la caméra dit « regarde par là » ; ceci dit « regarde ça ». Générique
+ * pour s'appliquer à une pastille comme à une vignette de caméra.
+ */
+export function pulseOverlay(el: HTMLElement, color = '#ef4444', durationMs = 6000): void {
+  if (!_pulseStyleInjected) {
+    const style = document.createElement('style');
+    style.textContent = `@keyframes owlnest-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 var(--owl-pulse), 0 2px 8px rgba(0,0,0,0.5); }
+      50%      { box-shadow: 0 0 18px 7px var(--owl-pulse), 0 2px 8px rgba(0,0,0,0.5); }
+    }`;
+    document.head.appendChild(style);
+    _pulseStyleInjected = true;
+  }
+
+  el.style.setProperty('--owl-pulse', color);
+  // Redémarre l'animation même si elle tourne déjà.
+  el.style.animation = 'none';
+  void el.offsetWidth;
+  el.style.animation = 'owlnest-pulse 1.1s ease-in-out infinite';
+
+  window.setTimeout(() => {
+    el.style.animation = '';
+    el.style.removeProperty('--owl-pulse');
+  }, durationMs);
+}

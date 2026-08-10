@@ -93,6 +93,8 @@ export function sceneToEffectiveConfig(scene: OwlnestScene, base: CardConfig): C
       kind: a.kind,
       actions: a.actions,
       navViewId: a.navViewId,
+      size: a.size,
+      display: a.display,
     })),
     camera_views: scene.camera_views?.length
       ? normalizeViews(scene.camera_views)
@@ -137,6 +139,8 @@ export function buildSceneFromEditor(
       kind: a.kind,
       actions: a.actions,
       navViewId: a.navViewId,
+      size: a.size,
+      display: a.display,
     });
   });
 

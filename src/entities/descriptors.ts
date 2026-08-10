@@ -11,7 +11,12 @@
 import type { HassState } from '../types';
 import { t } from '../i18n';
 
-export type OverlayKind = 'icon' | 'badge';
+/**
+ *   icon       pastille ronde avec une icone d'etat
+ *   badge      valeur lisible (capteurs, `input_number`, `select`…)
+ *   thumbnail  vignette d'image rafraichie (cameras)
+ */
+export type OverlayKind = 'icon' | 'badge' | 'thumbnail';
 /** `activate` déclenche le service naturel du domaine (press, turn_on…). */
 export type TapAction = 'toggle' | 'more_info' | 'media_play_pause' | 'activate' | 'none';
 
@@ -363,7 +368,8 @@ const siren: EntityDescriptor = {
 };
 
 const camera: EntityDescriptor = {
-  overlay: 'icon',
+  // Une camera se regarde : la vignette porte l'information, pas une icone.
+  overlay: 'thumbnail',
   tap: 'more_info',
   isOn: (s) => s?.state === 'recording' || s?.state === 'streaming',
   level: (s) => (s?.state === 'recording' || s?.state === 'streaming' ? 1 : 0),
@@ -541,6 +547,64 @@ const BY_DOMAIN: Record<string, EntityDescriptor> = {
   sensor,
   binary_sensor: binarySensor,
 };
+
+
+// ── États plausibles d'un domaine ────────────────────────────────────────────
+
+/**
+ * Valeurs d'état candidates par domaine.
+ *
+ * Sert à proposer une liste dans l'éditeur de règles au lieu d'un champ libre :
+ * savoir qu'une porte vaut `on`/`off` et non `open`/`closed` était la premiere
+ * cause de règles silencieusement cassées.
+ */
+const DOMAIN_STATES: Record<string, string[]> = {
+  light: ['on', 'off'],
+  switch: ['on', 'off'],
+  input_boolean: ['on', 'off'],
+  fan: ['on', 'off'],
+  siren: ['on', 'off'],
+  automation: ['on', 'off'],
+  remote: ['on', 'off'],
+  humidifier: ['on', 'off'],
+  update: ['on', 'off'],
+  binary_sensor: ['on', 'off'],
+  cover: ['open', 'closed', 'opening', 'closing'],
+  valve: ['open', 'closed', 'opening', 'closing'],
+  lock: ['locked', 'unlocked', 'jammed'],
+  media_player: ['playing', 'paused', 'idle', 'standby', 'off'],
+  climate: ['off', 'heat', 'cool', 'auto', 'heat_cool', 'dry', 'fan_only'],
+  vacuum: ['cleaning', 'docked', 'idle', 'paused', 'returning', 'error'],
+  alarm_control_panel: ['disarmed', 'armed_home', 'armed_away', 'armed_night', 'arming', 'pending', 'triggered'],
+  person: ['home', 'not_home'],
+  device_tracker: ['home', 'not_home'],
+  camera: ['idle', 'recording', 'streaming'],
+  sun: ['above_horizon', 'below_horizon'],
+};
+
+/**
+ * États proposables pour une entité. L'état courant est inclus même s'il n'est
+ * pas dans la table : une intégration exotique peut en produire d'autres.
+ */
+export function knownStates(entityId: string, currentState?: string): string[] {
+  const base = DOMAIN_STATES[entityId.split('.')[0]] ?? [];
+  const out = [...base];
+  if (currentState && !out.includes(currentState)) out.push(currentState);
+  return out;
+}
+
+/**
+ * Libellé lisible d'un état donné, via le descripteur du domaine.
+ * Les attributs réels sont nécessaires : c'est `device_class` qui distingue une
+ * porte d'un détecteur de fumée.
+ */
+export function stateLabel(
+  entityId: string,
+  state: string,
+  attributes: Record<string, unknown> = {},
+): string {
+  return describeEntity(entityId).stateText({ state, attributes });
+}
 
 /** Descripteur applicable à une entité. Jamais `undefined` : repli générique. */
 export function describeEntity(entityId: string): EntityDescriptor {

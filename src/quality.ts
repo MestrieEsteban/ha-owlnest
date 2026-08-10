@@ -38,6 +38,12 @@ export interface QualityProfile {
    * passer à 30 divise par deux le travail GPU pendant tout mouvement.
    */
   maxFps: number;
+  /**
+   * Intervalle de rafraichissement des vignettes de camera, en millisecondes.
+   * Une image de camera peut peser 180 Ko : a 2 s d'intervalle, c'est 90 Ko/s
+   * par camera sur une tablette en Wi-Fi.
+   */
+  cameraRefreshMs: number;
 }
 
 export type ResolvedLevel = Exclude<QualityLevel, 'auto'>;
@@ -53,6 +59,7 @@ const PROFILES: Record<ResolvedLevel, QualityProfile> = {
     particleScale: 1,
     cardTextureWidth: 1024,
     maxFps: 60,
+    cameraRefreshMs: 3000,
   },
   // Les ombres d'ancres tombent dès ce niveau : c'est le gain le plus important
   // pour la perte visuelle la plus faible, le soleil continuant d'ombrer.
@@ -66,6 +73,7 @@ const PROFILES: Record<ResolvedLevel, QualityProfile> = {
     particleScale: 0.6,
     cardTextureWidth: 768,
     maxFps: 45,
+    cameraRefreshMs: 6000,
   },
   // PCF plutôt que BasicShadowMap : le gain de performance de Basic est
   // marginal, ses bords crénelés ne le sont pas.
@@ -79,6 +87,7 @@ const PROFILES: Record<ResolvedLevel, QualityProfile> = {
     particleScale: 0.3,
     cardTextureWidth: 512,
     maxFps: 30,
+    cameraRefreshMs: 12000,
   },
 };
 

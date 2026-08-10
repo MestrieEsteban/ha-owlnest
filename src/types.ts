@@ -106,6 +106,22 @@ export interface AnchorConfig {
   actions?: AnchorAction[];
   /** Nature `nav` : identifiant de la vue camera cible. */
   navViewId?: string;
+  /**
+   * Multiplicateur de taille pour les overlays dimensionnes par la perspective
+   * (vignettes de camera). 1 = taille de reference, deduite des dimensions du
+   * modele.
+   *
+   * Volontairement relatif et non exprime en metres : un export Sweet Home 3D
+   * peut etre en centimetres (une maison mesure alors 800 unites de large), et
+   * l'utilisateur n'a pas a connaitre l'unite de son GLB.
+   */
+  size?: number;
+  /**
+   * Force la presentation d'une ancre d'entite. `auto` suit le descripteur —
+   * une camera s'affiche donc en vignette par defaut, mais peut etre ramenee a
+   * une simple pastille.
+   */
+  display?: 'auto' | 'icon' | 'thumbnail';
 }
 
 // ── Owlnest scene (backend-persisted) ─────────────────────────────────────
@@ -134,6 +150,22 @@ export interface OwlnestAnchor {
   actions?: AnchorAction[];
   /** Nature `nav` : identifiant de la vue camera cible. */
   navViewId?: string;
+  /**
+   * Multiplicateur de taille pour les overlays dimensionnes par la perspective
+   * (vignettes de camera). 1 = taille de reference, deduite des dimensions du
+   * modele.
+   *
+   * Volontairement relatif et non exprime en metres : un export Sweet Home 3D
+   * peut etre en centimetres (une maison mesure alors 800 unites de large), et
+   * l'utilisateur n'a pas a connaitre l'unite de son GLB.
+   */
+  size?: number;
+  /**
+   * Force la presentation d'une ancre d'entite. `auto` suit le descripteur —
+   * une camera s'affiche donc en vignette par defaut, mais peut etre ramenee a
+   * une simple pastille.
+   */
+  display?: 'auto' | 'icon' | 'thumbnail';
 }
 
 /** Scene-level settings stored in the backend (configured from edit mode, not YAML). */
@@ -262,6 +294,22 @@ export interface AnchorEntry {
   actions?: AnchorAction[];
   /** Nature `nav` : identifiant de la vue camera cible. */
   navViewId?: string;
+  /**
+   * Multiplicateur de taille pour les overlays dimensionnes par la perspective
+   * (vignettes de camera). 1 = taille de reference, deduite des dimensions du
+   * modele.
+   *
+   * Volontairement relatif et non exprime en metres : un export Sweet Home 3D
+   * peut etre en centimetres (une maison mesure alors 800 unites de large), et
+   * l'utilisateur n'a pas a connaitre l'unite de son GLB.
+   */
+  size?: number;
+  /**
+   * Force la presentation d'une ancre d'entite. `auto` suit le descripteur —
+   * une camera s'affiche donc en vignette par defaut, mais peut etre ramenee a
+   * une simple pastille.
+   */
+  display?: 'auto' | 'icon' | 'thumbnail';
 }
 
 export interface SavedView {
@@ -292,4 +340,20 @@ export interface EditableAnchor {
   actions?: AnchorAction[];
   /** Nature `nav` : identifiant de la vue camera cible. */
   navViewId?: string;
+  /**
+   * Multiplicateur de taille pour les overlays dimensionnes par la perspective
+   * (vignettes de camera). 1 = taille de reference, deduite des dimensions du
+   * modele.
+   *
+   * Volontairement relatif et non exprime en metres : un export Sweet Home 3D
+   * peut etre en centimetres (une maison mesure alors 800 unites de large), et
+   * l'utilisateur n'a pas a connaitre l'unite de son GLB.
+   */
+  size?: number;
+  /**
+   * Force la presentation d'une ancre d'entite. `auto` suit le descripteur —
+   * une camera s'affiche donc en vignette par defaut, mais peut etre ramenee a
+   * une simple pastille.
+   */
+  display?: 'auto' | 'icon' | 'thumbnail';
 }
