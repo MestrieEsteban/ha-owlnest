@@ -2,7 +2,13 @@
   "name": "ha-3d-floorplan",
   "version": "1.0.0",
   "description": "Custom Lovelace card — plan 3D interactif pour Home Assistant",
-  "keywords": ["home-assistant", "lovelace", "card", "3d", "floorplan"],
+  "keywords": [
+    "home-assistant",
+    "lovelace",
+    "card",
+    "3d",
+    "floorplan"
+  ],
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -13,7 +19,8 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "release": "node scripts/release.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node scripts/test.mjs"
   },
   "dependencies": {
     "three": "^0.169.0"

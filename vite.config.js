@@ -25,5 +25,13 @@ export default defineConfig({
     strictPort: true,
     // HA charge le module depuis une autre origine.
     cors: true,
+    watch: {
+      // Sur Windows, l'observation native rate des écritures : le serveur
+      // continue alors de servir une transformation périmée, et on débogue du
+      // code qui n'est plus celui du disque. La scrutation coûte un peu de CPU
+      // et supprime la classe de problème.
+      usePolling: true,
+      interval: 300,
+    },
   },
 });

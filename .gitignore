@@ -301,3 +301,6 @@ $RECYCLE.BIN/
 specs
 # Owlnest — état local de la boucle de dev
 .ha-dev-state.json
+
+# Fixture de test : contient des URL signees donnant acces aux cameras
+dev/cameras.json
