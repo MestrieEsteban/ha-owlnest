@@ -24,6 +24,15 @@ export interface Hass {
   callService(domain: string, service: string, data: Record<string, unknown>): void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   callWS<T = unknown>(msg: Record<string, unknown>): Promise<T>;
+  /**
+   * Registres exposés directement par les versions récentes du frontend HA.
+   * Absents sur les versions plus anciennes : voir entities/registry.ts, qui
+   * bascule alors sur les commandes WebSocket équivalentes.
+   */
+  areas?: Record<string, unknown>;
+  devices?: Record<string, unknown>;
+  entities?: Record<string, unknown>;
+  floors?: Record<string, unknown>;
 }
 
 /** Named camera preset — saved in OwlnestScene.camera_views */
@@ -47,6 +56,10 @@ export interface AnchorConfig {
   visibleIf?: import('./rules/types').EntityCondition;
   precision?: number;   // decimal places for sensor display (e.g. 0 → "18", 1 → "17.6")
   icon?: string;        // override icon, e.g. "mdi:thermometer"
+  /** Couleur d'etat imposee (#rrggbb) — surcharge celle du descripteur. */
+  color?: string;
+  /** Action au tap imposee — 'default' laisse decider le descripteur. */
+  tapAction?: import('./entities/descriptors').TapAction | 'default';
 }
 
 // ── Owlnest scene (backend-persisted) ─────────────────────────────────────
@@ -65,6 +78,10 @@ export interface OwlnestAnchor {
   visibleIf?: import('./rules/types').EntityCondition; // show/hide overlay based on entity state
   precision?: number;
   icon?: string;
+  /** Couleur d'etat imposee (#rrggbb) — surcharge celle du descripteur. */
+  color?: string;
+  /** Action au tap imposee — 'default' laisse decider le descripteur. */
+  tapAction?: import('./entities/descriptors').TapAction | 'default';
 }
 
 /** Scene-level settings stored in the backend (configured from edit mode, not YAML). */
@@ -183,6 +200,10 @@ export interface AnchorEntry {
   visibleIf?: import('./rules/types').EntityCondition;
   precision?: number;
   icon?: string;
+  /** Couleur d'etat imposee (#rrggbb) — surcharge celle du descripteur. */
+  color?: string;
+  /** Action au tap imposee — 'default' laisse decider le descripteur. */
+  tapAction?: import('./entities/descriptors').TapAction | 'default';
 }
 
 export interface SavedView {
@@ -203,4 +224,8 @@ export interface EditableAnchor {
   visibleIf?: import('./rules/types').EntityCondition;
   precision?: number;
   icon?: string;
+  /** Couleur d'etat imposee (#rrggbb) — surcharge celle du descripteur. */
+  color?: string;
+  /** Action au tap imposee — 'default' laisse decider le descripteur. */
+  tapAction?: import('./entities/descriptors').TapAction | 'default';
 }

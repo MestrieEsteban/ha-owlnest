@@ -12,6 +12,7 @@ import { AnchorEditor } from './editor';
 import { loadScene, saveScene, listScenes, sceneToEffectiveConfig, buildSceneFromEditor, normalizeViews } from './scene';
 import { setLang } from './i18n';
 import { qualityFromConfig, qualityKey, profileFor } from './quality';
+import { describeEntity } from './entities/descriptors';
 import './card-editor';
 import { EnvironmentController } from './card/environment';
 import { SimulationPanel } from './card/simulation';
@@ -2059,11 +2060,14 @@ class Ha3dFloorplan extends HTMLElement {
 
       const items: ClusterItem[] = group.map(k => {
         const entry = this.anchors.get(k)!;
+        const desc = describeEntity(entry.entityId);
+        const st = this._hass?.states[entry.entityId];
         return {
           domain: entry.domain,
           label: entry.label,
-          on: entry.targetIntensity > 0,
+          on: desc.isOn(st),
           color: entry.targetColor.clone(),
+          icon: entry.icon ?? desc.icon(st),
           onShortClick: this._getShortClickHandler(entry),
           onLongPress: () => this._openMoreInfo(entry.entityId),
         };
@@ -2124,7 +2128,7 @@ class Ha3dFloorplan extends HTMLElement {
     this.overlays.clear();
 
     this.anchors.forEach((entry, name) => {
-      if (entry.domain === 'sensor') {
+      if (describeEntity(entry.entityId).overlay === 'badge') {
         const overlay = new SensorOverlay(
           this.overlayContainer!,
           () => this._openMoreInfo(entry.entityId),
@@ -2146,15 +2150,30 @@ class Ha3dFloorplan extends HTMLElement {
     });
   }
 
+  /** Service naturel des domaines « à déclencher ». */
+  private static readonly ACTIVATE_SERVICE: Record<string, string> = {
+    button: 'press',
+    scene: 'turn_on',
+    script: 'turn_on',
+  };
+
   private _getShortClickHandler(entry: AnchorEntry): () => void {
-    switch (entry.domain) {
-      case 'light':
-      case 'switch':
-        return () => this._hass?.callService(entry.domain, 'toggle', { entity_id: entry.entityId });
-      case 'cover':
-        return () => this._hass?.callService('cover', 'toggle', { entity_id: entry.entityId });
-      case 'media_player':
-        return () => this._hass?.callService('media_player', 'media_play_pause', { entity_id: entry.entityId });
+    // La surcharge par ancre prime ; 'default' rend la main au descripteur.
+    const override = entry.tapAction;
+    const tap = override && override !== 'default' ? override : describeEntity(entry.entityId).tap;
+    const data = { entity_id: entry.entityId };
+
+    switch (tap) {
+      case 'toggle':
+        return () => this._hass?.callService(entry.domain, 'toggle', data);
+      case 'media_play_pause':
+        return () => this._hass?.callService('media_player', 'media_play_pause', data);
+      case 'activate': {
+        const service = Ha3dFloorplan.ACTIVATE_SERVICE[entry.domain] ?? 'turn_on';
+        return () => this._hass?.callService(entry.domain, service, data);
+      }
+      case 'none':
+        return () => {};
       default:
         return () => this._openMoreInfo(entry.entityId);
     }
@@ -2272,17 +2291,16 @@ class Ha3dFloorplan extends HTMLElement {
       }
 
       if (overlay instanceof AnchorOverlay) {
-        const on = entry.targetIntensity > 0;
-        const stateName = stateObj?.state ?? '\u2014';
-        let label = `${entry.label} \u2022 ${stateName}`;
-        if (entry.domain === 'climate') {
-          const temp = stateObj?.attributes.current_temperature;
-          if (temp != null) label = `${entry.label} \u2022 ${temp}\u00B0`;
-        } else if (entry.domain === 'cover') {
-          const pct = stateObj?.attributes.current_position;
-          if (pct != null) label = `${entry.label} \u2022 ${pct}%`;
-        }
-        overlay.updateState(on, entry.targetColor, label);
+        // Le descripteur porte l'ic\u00F4ne, le texte d'\u00E9tat et la s\u00E9mantique du
+        // \u00AB allum\u00E9 \u00BB \u2014 un capteur d'ouverture affiche donc une porte ouverte,
+        // pas un cercle bleu.
+        const desc = describeEntity(entry.entityId);
+        overlay.setStateIcon(desc.icon(stateObj), entry.domain);
+        overlay.updateState(
+          desc.isOn(stateObj),
+          entry.targetColor,
+          `${entry.label} \u2022 ${desc.stateText(stateObj)}`,
+        );
       }
     });
   }

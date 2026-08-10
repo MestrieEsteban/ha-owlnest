@@ -124,6 +124,8 @@ export function detectAnchors(
         visibleIf: ac.visibleIf,
         precision: ac.precision,
         icon: ac.icon,
+        color: ac.color,
+        tapAction: ac.tapAction,
       });
     });
     return anchors;
@@ -182,6 +184,8 @@ export function buildAnchorsFromEditable(
       visibleIf: ea.visibleIf,
       precision: ea.precision,
       icon: ea.icon,
+      color: ea.color,
+      tapAction: ea.tapAction,
     });
   });
   return anchors;

@@ -88,6 +88,8 @@ export function sceneToEffectiveConfig(scene: OwlnestScene, base: CardConfig): C
       visibleIf: a.visibleIf,
       precision: a.precision,
       icon: a.icon,
+      color: a.color,
+      tapAction: a.tapAction,
     })),
     camera_views: scene.camera_views?.length
       ? normalizeViews(scene.camera_views)
@@ -127,6 +129,8 @@ export function buildSceneFromEditor(
       visibleIf: a.visibleIf,
       precision: a.precision,
       icon: a.icon,
+      color: a.color,
+      tapAction: a.tapAction,
     });
   });
 

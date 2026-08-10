@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { AnchorEntry, CardConfig, Hass } from './types';
+import { describeEntity } from './entities/descriptors';
 
 export function syncLights(
   anchors: Map<string, AnchorEntry>,
@@ -18,59 +19,32 @@ export function syncLights(
     const stateObj = hass.states[entry.entityId];
     if (!stateObj) return;
 
-    const a = stateObj.attributes;
-    const on = stateObj.state === 'on';
-    const intensityMult = entry.lightIntensity ?? 1;
+    const desc = describeEntity(entry.entityId);
 
-    switch (entry.domain) {
-      case 'light': {
-        if (!on) { entry.targetIntensity = 0; break; }
-        const brightness = typeof a.brightness === 'number' ? a.brightness / 255 : 1;
-        entry.targetIntensity = brightness * scale * 3 * intensityMult;
-        if (Array.isArray(a.rgb_color)) {
-          const [r, g, b] = a.rgb_color as number[];
-          entry.targetColor.setRGB(r / 255, g / 255, b / 255);
-        } else if (Array.isArray(a.hs_color)) {
-          const [h, s] = a.hs_color as number[];
-          entry.targetColor.setHSL(h / 360, s / 100, 0.5);
-        } else {
-          entry.targetColor.set(0xffffff);
-        }
-        break;
-      }
-      case 'switch':
-      case 'binary_sensor':
-        entry.targetIntensity = on ? 1 : 0;
-        entry.targetColor.set(on ? 0x44aaff : 0x555555);
-        break;
-      case 'cover': {
-        const pct = typeof a.current_position === 'number'
-          ? a.current_position / 100
-          : (stateObj.state === 'open' ? 1 : 0);
-        entry.targetIntensity = pct;
-        entry.targetColor.set(0x88bbff);
-        break;
-      }
-      case 'climate': {
-        entry.targetIntensity = stateObj.state !== 'off' ? 1 : 0;
-        const action = a.hvac_action as string | undefined;
-        if (action === 'heating') entry.targetColor.set(0xff6600);
-        else if (action === 'cooling') entry.targetColor.set(0x00aaff);
-        else entry.targetColor.set(0xffffff);
-        break;
-      }
-      case 'media_player':
-        entry.targetIntensity = stateObj.state === 'playing' ? 1 : 0;
-        entry.targetColor.set(0x9966ff);
-        break;
-      case 'sensor':
-        entry.targetIntensity = 1;
-        entry.targetColor.set(0x00cc88);
-        break;
-      default:
-        entry.targetIntensity = on ? 1 : 0;
+    // Le domaine `light` est le seul cas particulier : sa couleur vient de
+    // l'entité (rgb/hs) et son intensité alimente une vraie lumière 3D.
+    if (entry.domain === 'light') {
+      const a = stateObj.attributes;
+      const intensityMult = entry.lightIntensity ?? 1;
+      entry.targetIntensity = desc.level(stateObj) * scale * 3 * intensityMult;
+      if (Array.isArray(a.rgb_color)) {
+        const [r, g, b] = a.rgb_color as number[];
+        entry.targetColor.setRGB(r / 255, g / 255, b / 255);
+      } else if (Array.isArray(a.hs_color)) {
+        const [h, s] = a.hs_color as number[];
+        entry.targetColor.setHSL(h / 360, s / 100, 0.5);
+      } else {
         entry.targetColor.set(0xffffff);
+      }
+      return;
     }
+
+    // Pour tout le reste, l'intensité ne pilote que l'éclat de l'overlay.
+    entry.targetIntensity = desc.level(stateObj);
+    // La couleur imposée ne s'applique qu'à l'état actif : à l'arrêt, le gris
+    // du descripteur reste le bon repère visuel.
+    if (entry.color && desc.isOn(stateObj)) entry.targetColor.set(entry.color);
+    else entry.targetColor.set(desc.color(stateObj));
   });
 }
 

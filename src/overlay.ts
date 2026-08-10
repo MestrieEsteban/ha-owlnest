@@ -6,6 +6,8 @@ export interface ClusterItem {
   label: string;
   on: boolean;
   color: THREE.Color;
+  /** Icône MDI refletant l'état, issue du descripteur d'entité. */
+  icon?: string;
   onShortClick: () => void;
   onLongPress: () => void;
 }
@@ -38,6 +40,11 @@ export class AnchorOverlay {
   readonly el: HTMLDivElement;
   conditionHidden = false;
   private _label: HTMLDivElement;
+  /** Conteneur de l'icône, séparé du libellé pour pouvoir la remplacer seule. */
+  private _iconEl: HTMLSpanElement;
+  private _iconKey = '';
+  /** Icône imposée par l'utilisateur — prioritaire sur celle de l'état. */
+  private _iconOverride?: string;
   private _pressTimer: ReturnType<typeof setTimeout> | null = null;
   private _pressing = false;
 
@@ -72,7 +79,12 @@ export class AnchorOverlay {
       'pointer-events:auto',
     ].join(';');
 
-    this.el.innerHTML = renderIconHTML(domain, icon);
+    this._iconOverride = icon;
+    this._iconEl = document.createElement('span');
+    this._iconEl.style.cssText = 'display:flex;align-items:center;justify-content:center;pointer-events:none;';
+    this._iconKey = icon ?? `domain:${domain}`;
+    this._iconEl.innerHTML = renderIconHTML(domain, icon);
+    this.el.appendChild(this._iconEl);
 
     // Tooltip label
     this._label = document.createElement('div');
@@ -193,9 +205,21 @@ export class AnchorOverlay {
     this.el.style.top = `${((-p.y + 1) / 2) * h}px`;
   }
 
+  /**
+   * Remplace l'icône si l'état l'exige (porte ouverte ↔ fermée).
+   * Une icône choisie explicitement par l'utilisateur reste prioritaire.
+   */
+  setStateIcon(mdi: string | undefined, domain: EntityDomain) {
+    if (this._iconOverride) return;
+    const key = mdi ?? `domain:${domain}`;
+    if (key === this._iconKey) return; // évite de reconstruire le DOM à chaque frame
+    this._iconKey = key;
+    this._iconEl.innerHTML = renderIconHTML(domain, mdi);
+  }
+
   updateState(on: boolean, color: THREE.Color, labelText: string) {
-    const haIcon = this.el.querySelector('ha-icon') as HTMLElement | null;
-    const path = !haIcon ? (this.el.querySelector('path,circle,rect') as SVGElement | null) : null;
+    const haIcon = this._iconEl.querySelector('ha-icon') as HTMLElement | null;
+    const path = !haIcon ? (this._iconEl.querySelector('path,circle,rect') as SVGElement | null) : null;
     if (on) {
       const hex = `#${color.getHexString()}`;
       if (haIcon) haIcon.style.color = hex;
@@ -442,8 +466,10 @@ export class ClusterOverlay {
       'user-select:none', '-webkit-user-select:none',
     ].join(';');
 
-    el.innerHTML = getIcon(item.domain);
-    const path = el.querySelector('path,circle,rect') as SVGElement | null;
+    el.innerHTML = renderIconHTML(item.domain, item.icon);
+    const haIcon = el.querySelector('ha-icon') as HTMLElement | null;
+    if (haIcon) haIcon.style.color = color;
+    const path = !haIcon ? (el.querySelector('path,circle,rect') as SVGElement | null) : null;
     if (path) path.style.fill = color;
 
     const label = document.createElement('div');
