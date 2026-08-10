@@ -1,0 +1,103 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Owlnest — banc de test de la carte</title>
+<style>
+  html, body { margin: 0; background: #0d1117; font-family: system-ui, sans-serif; }
+  pre { color: #7dd3fc; font: 11px monospace; padding: 8px 14px; white-space: pre-wrap; }
+</style>
+<div id="host"></div>
+<pre id="out">montage…</pre>
+<script type="module">
+  import '/src/ha-3d-floorplan.ts';
+
+  // `ha-icon` et `hui-more-info` viennent du frontend HA : stubs minimaux.
+  customElements.define('ha-icon', class extends HTMLElement {
+    connectedCallback() {
+      this.dataset.icon = this.getAttribute('icon') ?? '';
+      this.style.cssText = 'display:inline-flex;width:16px;height:16px;font-size:9px';
+      this.textContent = '◆';
+    }
+  });
+
+  // ── Modèle minimal : un triangle, en glTF JSON via data URI ───────────────
+  const verts = new Float32Array([0, 0, 0, 4, 0, 0, 0, 3, 0]);
+  const bytes = new Uint8Array(verts.buffer);
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  const gltf = {
+    asset: { version: '2.0' },
+    scene: 0,
+    scenes: [{ nodes: [0] }],
+    nodes: [{ mesh: 0, name: 'MaisonTest' }],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
+    buffers: [{ byteLength: bytes.length, uri: 'data:application/octet-stream;base64,' + btoa(bin) }],
+    bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: bytes.length }],
+    accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: 'VEC3', min: [0, 0, 0], max: [4, 3, 0] }],
+  };
+  const modelUrl = 'data:model/gltf+json;base64,' + btoa(unescape(encodeURIComponent(JSON.stringify(gltf))));
+
+  // ── Scène fixture : un cas par présentation ──────────────────────────────
+  const SCENE = {
+    version: 1,
+    scene_id: 'harness',
+    model_url: modelUrl,
+    camera_views: [],
+    cards: [],
+    rules: [],
+    anchors: [
+      { id: 'a0', entity: 'camera.ezviz', label: 'Caméra icône', position: [0, 1, 0], display: 'icon' },
+      { id: 'a1', entity: 'camera.mercusys', label: 'Caméra vignette', position: [1, 1, 0] },
+      { id: 'a2', entity: 'camera.autre', label: 'Caméra auto explicite', position: [2, 1, 0], display: 'auto' },
+      { id: 'a3', entity: 'light.salon', label: 'Lampe', position: [3, 1, 0] },
+      { id: 'a4', entity: 'sensor.temp', label: 'Température', position: [0, 2, 0] },
+      { id: 'a5', entity: '', label: 'Étiquette', position: [1, 2, 0], kind: 'label' },
+    ],
+  };
+
+  const states = {
+    'camera.ezviz':     { state: 'recording', attributes: { friendly_name: 'Ezviz', entity_picture: '' } },
+    'camera.mercusys':  { state: 'recording', attributes: { friendly_name: 'Mercusys', entity_picture: '' } },
+    'camera.autre':     { state: 'idle', attributes: { friendly_name: 'Autre' } },
+    'light.salon':      { state: 'on', attributes: { friendly_name: 'Salon', brightness: 200 } },
+    'sensor.temp':      { state: '21.4', attributes: { friendly_name: 'Temp', unit_of_measurement: '°C' } },
+  };
+
+  const hass = {
+    states,
+    callService() {},
+    callWS: async (msg) => {
+      if (msg.type === 'owlnest/load_scene') return SCENE;
+      if (msg.type === 'owlnest/list_scenes') return { scenes: ['harness'] };
+      if (String(msg.type).startsWith('config/')) return [];
+      throw new Error('inconnu: ' + msg.type);
+    },
+  };
+
+  localStorage.setItem('owlnest_scene_id', 'harness');
+
+  const card = document.createElement('ha-3d-floorplan');
+  card.style.cssText = 'display:block;width:640px;height:360px;';
+  document.getElementById('host').appendChild(card);
+  card.setConfig({ scene_id: 'harness', height: 360 });
+  card.hass = hass;
+
+  window.__card = card;
+
+  // Laisse le chargement du modèle et la création des overlays se faire.
+  await new Promise((r) => setTimeout(r, 1800));
+
+  const rows = [];
+  card.anchors?.forEach((entry, key) => {
+    const ov = card.overlays?.get(key);
+    rows.push(
+      String(entry.label).padEnd(24) +
+      String(entry.entityId || '(sans entité)').padEnd(20) +
+      ('display=' + (entry.display ?? '—')).padEnd(16) +
+      'overlay=' + (ov ? ov.constructor.name : 'AUCUN'),
+    );
+  });
+  document.getElementById('out').textContent =
+    'modèle chargé : ' + !!card.modelLoaded + String.fromCharCode(10) +
+    'ancres : ' + (card.anchors?.size ?? 0) + String.fromCharCode(10, 10) +
+    rows.join(String.fromCharCode(10));
+</script>

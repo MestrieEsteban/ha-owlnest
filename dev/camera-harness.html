@@ -1,0 +1,53 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Owlnest — banc de test des vignettes caméra</title>
+<style>
+  html, body { margin: 0; background: #10141c; font-family: system-ui, sans-serif; }
+  #stage { position: relative; height: 340px; }
+  pre { color: #7dd3fc; font: 11px monospace; padding: 8px 14px; white-space: pre-wrap; }
+</style>
+<div id="stage"></div>
+<pre id="out">chargement…</pre>
+<script type="module">
+  import { CameraOverlay } from '/src/overlay.ts';
+  import { setLang, t } from '/src/i18n.ts';
+
+  setLang('fr');
+  customElements.define('ha-icon', class extends HTMLElement {
+    connectedCallback() {
+      this.style.cssText = 'display:inline-flex;width:14px;height:14px;font-size:9px';
+      this.textContent = '◆';
+    }
+  });
+
+  // Fixture régénérée par scratchpad/gencams.mjs — les tokens d'URL expirent.
+  const CAMS = await fetch('/dev/cameras.json').then((r) => r.json());
+
+  const stage = document.getElementById('stage');
+  const clicks = [];
+
+  const overlays = CAMS.map((c, i) => {
+    const ov = new CameraOverlay(stage, c.name, () => clicks.push(c.entity_id), t('camOffline'));
+    ov.el.style.left = 70 + (i % 3) * 130 + 'px';
+    ov.el.style.top = 60 + Math.floor(i / 3) * 90 + 'px';
+    ov.updateState(c.state === 'recording' || c.state === 'streaming', c.name);
+    ov.setPicture(c.picture ?? undefined);
+    return { c, ov };
+  });
+
+  window.__cams = { overlays, clicks };
+
+  const pad = (v, n) => String(v).padEnd(n);
+  const report = () => overlays.map(({ c, ov }) => {
+    const img = ov.el.querySelector('img');
+    const loaded = img.naturalWidth > 0;
+    return pad(c.entity_id, 44) + pad('état=' + c.state, 18) +
+      (loaded ? 'IMAGE ' + img.naturalWidth + '×' + img.naturalHeight
+              : 'repli « ' + t('camOffline') + ' »  (img ' + img.style.display + ')');
+  }).join(String.fromCharCode(10));
+
+  // Laisse les images aboutir ou échouer.
+  await new Promise((r) => setTimeout(r, 3500));
+  document.getElementById('out').textContent = report();
+  window.__cams.report = report;
+</script>
