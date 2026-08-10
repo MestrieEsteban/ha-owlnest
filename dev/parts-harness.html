@@ -172,6 +172,44 @@
     };
     spin();
 
+    // ── Réglages en direct, sans reconstruction ─────────────────────────────
+    // `leaf` est le nœud pivot ; la géométrie du vantail vit un cran plus bas.
+    const node = leaf;
+    const panel = leaf.children[0];
+    const geomBefore = panel.geometry;
+    const trisBase = best.mesh.geometry.getIndex().count;
+    const settle = () => { let g = 0; while (ctl.update(0.1) && g++ < 300); };
+
+    ctl.configure({ ...cfg, angle: 30 });
+    ctl.preview('p1', 1); settle();
+    const deg = Math.abs(node.rotation[['x','y','z'][partFrame(best.part.box).up]]) * 180 / Math.PI;
+    check('un changement d’angle prend effet sans enregistrer',
+      Math.abs(deg - 30) < 0.01, `${deg.toFixed(1)}°`);
+    check('la géométrie n’a pas été redécoupée',
+      panel.geometry === geomBefore && best.mesh.geometry.getIndex().count === trisBase);
+
+    ctl.configure({ ...cfg, motion: 'slide', slide: 'up', travel: 1 });
+    ctl.preview('p1', 1); settle();
+    check('passer en coulissant change le mouvement en direct',
+      node.rotation.x === 0 && node.rotation.y === 0 && node.rotation.z === 0);
+
+    ctl.configure({ ...cfg });
+    ctl.preview('p1', 0); settle();
+
+    // ── Lecture d'état ──────────────────────────────────────────────────────
+    const { openFraction, hasOpenSemantics } = await import('/src/parts-runtime.ts');
+    check('un capteur numérique ne laisse pas la porte béante',
+      openFraction('sensor.temperature', '21.4', { unit_of_measurement: '°C' }) === 0);
+    check('un capteur d’ouverture est compris tout seul',
+      openFraction('binary_sensor.porte', 'on', { device_class: 'door' }) === 1);
+    check('un volet à 40 % s’affiche à 40 %',
+      openFraction('cover.volet', 'open', { current_position: 40 }) === 0.4);
+    check('les états choisis à la main priment',
+      openFraction('sensor.contact', 'Ouvert', {}, ['Ouvert']) === 1
+      && openFraction('sensor.contact', 'Fermé', {}, ['Ouvert']) === 0);
+    check('l’éditeur sait quand réclamer un choix explicite',
+      hasOpenSemantics('cover.x') && !hasOpenSemantics('sensor.x'));
+
     // Exposé pour piloter le rendu depuis la console : `requestAnimationFrame`
     // ne tourne pas quand l'onglet ne compose pas d'images.
     window.__h = { ctl, renderer, scene, cam, leaf, THREE };

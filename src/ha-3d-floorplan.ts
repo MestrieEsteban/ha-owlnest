@@ -1094,6 +1094,11 @@ class Ha3dFloorplan extends HTMLElement {
       async (parts) => this._savePartsDirect(parts),
       (onPicked) => this._startPartPicking(onPicked),
       (id, fraction) => { this._parts.preview(id, fraction); this._requestRender(); },
+      (cfg) => {
+        const applied = this._parts.configure(cfg);
+        if (applied) this._requestRender();
+        return applied;
+      },
     );
 
     this._editPanel.onTestRule = (rule) => this.runRuleNow(rule);
@@ -1455,6 +1460,7 @@ class Ha3dFloorplan extends HTMLElement {
     const sceneId = this._getActiveSceneId();
     const hass = this._hass;
     const current = this._scene;
+    const before = current?.parts ?? [];
     const base = current ?? {
       version: 1, scene_id: sceneId ?? '',
       model_url: this._config?.model_url ?? '',
@@ -1470,7 +1476,13 @@ class Ha3dFloorplan extends HTMLElement {
         console.error('[Owlnest] Parts save failed:', err);
       }
     }
-    this.refreshParts();
+    // Un ajout ou une suppression change la géométrie détachée : il faut
+    // repartir du modèle d'origine. Un simple réglage passe par `configure`
+    // et n'arrive jamais ici.
+    const ids = new Set(parts.map((p) => p.id));
+    const known = new Set(before.map((p) => p.id));
+    const structural = ids.size !== known.size || [...ids].some((id) => !known.has(id));
+    if (structural) this.refreshParts();
   }
 
   /**

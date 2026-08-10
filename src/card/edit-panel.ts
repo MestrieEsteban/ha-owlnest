@@ -7,6 +7,7 @@ import { normalizeRule } from '../rules/types';
 import { t, setLang } from '../i18n';
 import { openEntityPicker } from '../entities/picker';
 import { describeEntity, knownStates, stateLabel } from '../entities/descriptors';
+import { openFraction, hasOpenSemantics } from '../parts-runtime';
 import { detectionLabel, resolveLevel } from '../quality';
 import type { TapAction } from '../entities/descriptors';
 import type { QualityLevel } from '../quality';
@@ -276,6 +277,12 @@ export class EditPanel {
     private onStartPartPicking?: (onPicked: (hit: PickedPart) => void) => void,
     /** Entrouvre un ouvrant pour vérifier son sens sans toucher à la maison. */
     private onPreviewPart?: (id: string, fraction: number) => void,
+    /**
+     * Applique un réglage immédiatement. Retourne `false` si l'ouvrant n'est
+     * pas encore monté dans la scène, auquel cas il faut passer par un
+     * enregistrement.
+     */
+    private onConfigurePart?: (cfg: OwlnestPart) => boolean,
   ) {}
 
   // ── Card undo/redo ────────────────────────────────────────────────────────
@@ -3134,6 +3141,24 @@ export class EditPanel {
     const inputStyle = 'width:100%;box-sizing:border-box;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#e2e8f0;padding:5px 8px;font-size:11px;outline:none;font-family:inherit;';
     const lblStyle = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;display:block;';
 
+    /**
+     * Chaque réglage prend effet tout de suite.
+     *
+     * Aucun de ces champs ne modifie la géométrie détachée : la carte peut donc
+     * recalculer l'animation sans recharger le modèle. Si l'ouvrant n'est pas
+     * encore monté (première ouverture du formulaire), on l'enregistre pour
+     * qu'il le soit.
+     */
+    let saveTimer: ReturnType<typeof setTimeout> | null = null;
+    const apply = () => {
+      if (!this.onConfigurePart?.({ ...draft })) {
+        void this._commitPart(draft, false);
+      }
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => { void this._commitPart(draft, false); }, 600);
+      refreshReadout();
+    };
+
     const dialog = document.createElement('dialog');
     dialog.id = 'owlnest-part-modal';
     dialog.style.cssText = [
@@ -3156,7 +3181,7 @@ export class EditPanel {
     if (hit) {
       const dims = document.createElement('div');
       dims.style.cssText = 'font-size:9px;color:#64748b;font-variant-numeric:tabular-nums;';
-      dims.textContent = `${hit.size.map((v) => v.toFixed(0)).join(' × ')} cm · ${hit.triangles} tri`;
+      dims.textContent = `${hit.size.map((v) => v.toFixed(0)).join(' × ')} cm`;
       hdr.appendChild(dims);
     }
     dialog.appendChild(hdr);
@@ -3165,22 +3190,113 @@ export class EditPanel {
     body.style.cssText = 'padding:14px 16px;overflow-y:auto;flex:1;min-height:0;';
     dialog.appendChild(body);
 
-    const field = (label: string, control: HTMLElement) => {
+    const field = (label: string, control: HTMLElement, into: HTMLElement = body) => {
       const wrap = document.createElement('div');
       wrap.style.cssText = 'margin-bottom:12px;';
       const l = document.createElement('label');
       l.style.cssText = lblStyle;
       l.textContent = label;
       wrap.append(l, control);
-      body.appendChild(wrap);
+      into.appendChild(wrap);
       return wrap;
     };
 
     // ── Entité ────────────────────────────────────────────────────────────
     const { wrap: entityWrap } = this._entityField(draft.entity, inputStyle, (id) => {
       draft.entity = id;
+      // L'entité change : les états proposés ne sont plus les mêmes.
+      draft.openWhen = undefined;
+      rebuildStates();
+      apply();
     });
     field(t('partEntity'), entityWrap);
+
+    // ── Ce que la carte lit de cette entité ───────────────────────────────
+    // Sans ça, une entité mal interprétée ressemble à une panne : on montre
+    // l'état courant et la conclusion qu'en tire la carte.
+    const readout = document.createElement('div');
+    readout.style.cssText = 'background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:7px;padding:7px 9px;margin-bottom:12px;font-size:10px;line-height:1.6;';
+    body.appendChild(readout);
+
+    const statesBox = document.createElement('div');
+    body.appendChild(statesBox);
+
+    const currentFraction = (): { state: string | undefined; frac: number } => {
+      const st = this.getHass()?.states[draft.entity];
+      if (!draft.entity || !st) return { state: undefined, frac: 0 };
+      let f = openFraction(draft.entity, st.state, st.attributes, draft.openWhen);
+      if (draft.invert) f = 1 - f;
+      return { state: st.state, frac: f };
+    };
+
+    const refreshReadout = () => {
+      const { state, frac } = currentFraction();
+      if (!draft.entity) {
+        readout.innerHTML = `<span style="color:#fbbf24;">⚠ ${t('partNoEntity')}</span>`;
+        return;
+      }
+      if (state === undefined) {
+        readout.innerHTML = `<span style="color:#fbbf24;">⚠ ${t('partEntityUnknown')}</span>`;
+        return;
+      }
+      const label = stateLabel(draft.entity, state, this.getHass()?.states[draft.entity]?.attributes ?? {});
+      const verdict = frac > 0.99 ? t('partReadOpen') : frac < 0.01 ? t('partReadClosed') : `${Math.round(frac * 100)} %`;
+      const colour = frac > 0.5 ? '#4ade80' : '#94a3b8';
+      // Un domaine sans notion d'ouverture doit être signalé, pas subi : sinon
+      // l'ouvrant reste immobile et rien n'explique pourquoi.
+      const mute = !hasOpenSemantics(draft.entity) && !draft.openWhen?.length;
+      readout.innerHTML =
+        `<div style="color:#64748b;">${t('partReadNow')}</div>` +
+        `<div><span style="color:#e2e8f0;">${label}</span>` +
+        `<span style="color:#64748b;"> → </span>` +
+        `<span style="color:${colour};font-weight:700;">${verdict}</span></div>` +
+        (mute ? `<div style="color:#fbbf24;margin-top:4px;">⚠ ${t('partNeedsStates')}</div>` : '');
+    };
+
+    // ── Quels états valent « ouvert » ─────────────────────────────────────
+    const rebuildStates = () => {
+      statesBox.innerHTML = '';
+      if (!draft.entity) return;
+      const st = this.getHass()?.states[draft.entity];
+      const options = knownStates(draft.entity, st?.state);
+      if (options.length < 2) return;
+
+      const chips = document.createElement('div');
+      chips.style.cssText = 'display:flex;flex-wrap:wrap;gap:5px;';
+      // Aucune sélection = lecture automatique par le descripteur. Le premier
+      // clic bascule en choix explicite.
+      for (const value of options) {
+        const chip = document.createElement('button');
+        const on = () => !!draft.openWhen?.includes(value);
+        const paint = () => {
+          chip.style.cssText = [
+            'padding:3px 8px', 'border-radius:99px', 'font-size:10px',
+            'cursor:pointer', 'font-family:inherit',
+            on() ? 'background:rgba(74,222,128,0.18)' : 'background:rgba(255,255,255,0.05)',
+            on() ? 'color:#4ade80' : 'color:#94a3b8',
+            on() ? 'border:1px solid rgba(74,222,128,0.45)' : 'border:1px solid rgba(255,255,255,0.1)',
+          ].join(';');
+        };
+        chip.textContent = stateLabel(draft.entity, value, st?.attributes ?? {});
+        paint();
+        chip.addEventListener('click', (e) => {
+          e.preventDefault();
+          const set = new Set(draft.openWhen ?? []);
+          if (set.has(value)) set.delete(value); else set.add(value);
+          draft.openWhen = set.size ? [...set] : undefined;
+          chips.querySelectorAll('button').forEach(() => undefined);
+          rebuildStates();
+          apply();
+        });
+        chips.appendChild(chip);
+      }
+      const hint = document.createElement('div');
+      hint.style.cssText = 'font-size:9px;color:#64748b;line-height:1.5;margin-top:4px;';
+      hint.textContent = draft.openWhen?.length ? t('partOpenWhenSet') : t('partOpenWhenAuto');
+      const wrap = document.createElement('div');
+      wrap.append(chips, hint);
+      field(t('partOpenWhen'), wrap, statesBox);
+    };
 
     // ── Mouvement ─────────────────────────────────────────────────────────
     const motionSel = document.createElement('select');
@@ -3193,22 +3309,35 @@ export class EditPanel {
     motionSel.value = draft.motion;
     field(t('partMotion'), motionSel);
 
-    // ── Réglages propres au mouvement ─────────────────────────────────────
     const specific = document.createElement('div');
     body.appendChild(specific);
 
+    const slider = (
+      into: HTMLElement, label: string,
+      min: number, max: number, step: number, value: number,
+      format: (v: number) => string, onInput: (v: number) => void,
+    ) => {
+      const range = document.createElement('input');
+      range.type = 'range';
+      range.min = String(min); range.max = String(max); range.step = String(step);
+      range.value = String(value);
+      range.style.cssText = 'flex:1;';
+      const out = document.createElement('span');
+      out.style.cssText = 'font-size:10px;color:#94a3b8;margin-left:8px;min-width:38px;text-align:right;font-variant-numeric:tabular-nums;';
+      out.textContent = format(value);
+      range.addEventListener('input', () => {
+        out.textContent = format(range.valueAsNumber);
+        onInput(range.valueAsNumber);
+        apply();
+      });
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;';
+      row.append(range, out);
+      field(label, row, into);
+    };
+
     const rebuildSpecific = () => {
       specific.innerHTML = '';
-      const sub = (label: string, control: HTMLElement) => {
-        const wrap = document.createElement('div');
-        wrap.style.cssText = 'margin-bottom:12px;';
-        const l = document.createElement('label');
-        l.style.cssText = lblStyle;
-        l.textContent = label;
-        wrap.append(l, control);
-        specific.appendChild(wrap);
-      };
-
       if (draft.motion === 'swing') {
         const hinge = document.createElement('select');
         hinge.style.cssText = inputStyle + SELECT_STYLE;
@@ -3220,27 +3349,11 @@ export class EditPanel {
         hinge.value = draft.hinge ?? 'start';
         hinge.addEventListener('change', () => {
           draft.hinge = hinge.value as 'start' | 'end';
-          // Le côté des gonds change la géométrie détachée : il faut
-          // reconstruire avant de pouvoir en montrer l'effet.
-          void this._commitPart(draft, false).then(() => preview(previewRange.valueAsNumber / 100));
+          apply();
         });
-        sub(t('partHinge'), hinge);
-
-        const angle = document.createElement('input');
-        angle.type = 'range'; angle.min = '15'; angle.max = '170'; angle.step = '5';
-        angle.value = String(draft.angle ?? 90);
-        angle.style.cssText = 'width:100%;';
-        const angleVal = document.createElement('span');
-        angleVal.style.cssText = 'font-size:10px;color:#94a3b8;margin-left:6px;';
-        angleVal.textContent = `${draft.angle ?? 90}°`;
-        angle.addEventListener('input', () => {
-          draft.angle = angle.valueAsNumber;
-          angleVal.textContent = `${draft.angle}°`;
-        });
-        const angleRow = document.createElement('div');
-        angleRow.style.cssText = 'display:flex;align-items:center;';
-        angleRow.append(angle, angleVal);
-        sub(t('partAngle'), angleRow);
+        field(t('partHinge'), hinge, specific);
+        slider(specific, t('partAngle'), 15, 170, 5, draft.angle ?? 90,
+          (v) => `${v}°`, (v) => { draft.angle = v; });
       } else {
         const dir = document.createElement('select');
         dir.style.cssText = inputStyle + SELECT_STYLE;
@@ -3253,40 +3366,21 @@ export class EditPanel {
           dir.appendChild(styleOption(o));
         }
         dir.value = draft.slide ?? 'down';
-        dir.addEventListener('change', () => { draft.slide = dir.value as OwlnestPart['slide']; });
-        sub(t('partSlideDir'), dir);
-
-        const travel = document.createElement('input');
-        travel.type = 'range'; travel.min = '20'; travel.max = '120'; travel.step = '5';
-        travel.value = String(Math.round((draft.travel ?? 1) * 100));
-        travel.style.cssText = 'width:100%;';
-        travel.addEventListener('input', () => { draft.travel = travel.valueAsNumber / 100; });
-        sub(t('partTravel'), travel);
+        dir.addEventListener('change', () => {
+          draft.slide = dir.value as OwlnestPart['slide'];
+          apply();
+        });
+        field(t('partSlideDir'), dir, specific);
+        slider(specific, t('partTravel'), 20, 120, 5, Math.round((draft.travel ?? 1) * 100),
+          (v) => `${v} %`, (v) => { draft.travel = v / 100; });
       }
     };
 
     motionSel.addEventListener('change', () => {
       draft.motion = motionSel.value as OwlnestPart['motion'];
       rebuildSpecific();
-      void this._commitPart(draft, false);
+      apply();
     });
-    rebuildSpecific();
-
-    // ── Durée et inversion ────────────────────────────────────────────────
-    const dur = document.createElement('input');
-    dur.type = 'number'; dur.min = '0.1'; dur.max = '10'; dur.step = '0.1';
-    dur.value = String(draft.duration ?? 1.2);
-    dur.style.cssText = inputStyle;
-    dur.addEventListener('change', () => { draft.duration = Math.max(0.1, dur.valueAsNumber || 1.2); });
-    field(t('partDuration'), dur);
-
-    const invWrap = document.createElement('label');
-    invWrap.style.cssText = 'display:flex;align-items:center;gap:7px;font-size:11px;color:#cbd5e1;cursor:pointer;margin-bottom:12px;';
-    const inv = document.createElement('input');
-    inv.type = 'checkbox'; inv.checked = !!draft.invert;
-    inv.addEventListener('change', () => { draft.invert = inv.checked || undefined; });
-    invWrap.append(inv, document.createTextNode(t('partInvert')));
-    body.appendChild(invWrap);
 
     // ── Aperçu ────────────────────────────────────────────────────────────
     const previewRange = document.createElement('input');
@@ -3300,12 +3394,37 @@ export class EditPanel {
     previewNote.textContent = t('partPreviewNote');
     const previewBox = document.createElement('div');
     previewBox.append(previewRange, previewNote);
+
+    // ── Durée et inversion ────────────────────────────────────────────────
+    const dur = document.createElement('input');
+    dur.type = 'number'; dur.min = '0.1'; dur.max = '10'; dur.step = '0.1';
+    dur.value = String(draft.duration ?? 1.2);
+    dur.style.cssText = inputStyle;
+    dur.addEventListener('change', () => {
+      draft.duration = Math.max(0.1, dur.valueAsNumber || 1.2);
+      apply();
+    });
+
+    const invWrap = document.createElement('label');
+    invWrap.style.cssText = 'display:flex;align-items:center;gap:7px;font-size:11px;color:#cbd5e1;cursor:pointer;margin-bottom:12px;';
+    const inv = document.createElement('input');
+    inv.type = 'checkbox'; inv.checked = !!draft.invert;
+    inv.addEventListener('change', () => {
+      draft.invert = inv.checked || undefined;
+      apply();
+    });
+    invWrap.append(inv, document.createTextNode(t('partInvert')));
+
+    // Ordre d'affichage : réglages du mouvement, puis durée, inversion, aperçu.
+    rebuildSpecific();
+    field(t('partDuration'), dur);
+    body.appendChild(invWrap);
     field(t('partPreview'), previewBox);
 
     // ── Pied ──────────────────────────────────────────────────────────────
     const foot = document.createElement('div');
     foot.style.cssText = 'display:flex;gap:8px;padding:12px 16px;border-top:1px solid rgba(255,255,255,0.08);flex-shrink:0;';
-    const btn = (label: string, primary: boolean) => {
+    const mkBtn = (label: string, primary: boolean) => {
       const b = document.createElement('button');
       b.textContent = label;
       b.style.cssText = [
@@ -3317,23 +3436,29 @@ export class EditPanel {
       ].join(';');
       return b;
     };
-    const cancel = btn(t('ruleModalCancel'), false);
-    const ok = btn(t('ruleModalSave'), true);
-    cancel.addEventListener('click', () => { preview(0); dialog.close(); dialog.remove(); });
+    const close = () => {
+      if (saveTimer) clearTimeout(saveTimer);
+      preview(0);
+      dialog.close();
+      dialog.remove();
+    };
+    const ok = mkBtn(t('ruleModalSave'), true);
     ok.addEventListener('click', async () => {
       await this._commitPart(draft, true);
-      dialog.close(); dialog.remove();
+      close();
     });
-    foot.append(cancel, ok);
+    foot.appendChild(ok);
     dialog.appendChild(foot);
 
     document.body.appendChild(dialog);
     dialog.showModal();
-    dialog.addEventListener('cancel', (e) => { e.preventDefault(); preview(0); dialog.close(); dialog.remove(); });
+    dialog.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
 
-    // La pièce n'existe pas encore côté carte tant qu'elle n'est pas
-    // enregistrée : on la crée immédiatement pour que l'aperçu fonctionne.
+    // La pièce doit exister côté carte pour que l'aperçu et les réglages en
+    // direct aient une cible.
     void this._commitPart(draft, false);
+    rebuildStates();
+    refreshReadout();
   }
 
   /** Enregistre le brouillon. `refreshList` évite de redessiner à chaque réglage. */

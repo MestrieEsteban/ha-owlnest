@@ -10,49 +10,91 @@
  */
 import * as THREE from 'three';
 import type { OwlnestPart } from './types';
-import { partIndexOf, extractPart, partFrame, axisName, type PartFrame } from './parts';
+import { partIndexOf, extractPart, partFrame, hingePivot, axisName, type PartFrame } from './parts';
+import { describeEntity } from './entities/descriptors';
 
-// ── Lecture de l'état ───────────────────────────────────────────────────────
+// ── Lecture de l'état ─────────────────────────────────────────────
+
+/**
+ * Domaines dont l'état porte une notion d'ouverture.
+ *
+ * La liste est volontairement fermée. Le descripteur d'un `sensor` répond
+ * `isOn: () => true` — ce qui est correct pour afficher un badge, un capteur
+ * étant toujours « actif », mais catastrophique ici : la porte resterait
+ * ouverte en permanence sans jamais réagir. Hors de cette liste, il faut donc
+ * désigner les états à la main.
+ */
+const OPENABLE_DOMAINS = new Set([
+  'cover', 'valve', 'lock', 'binary_sensor',
+  'switch', 'light', 'input_boolean', 'fan', 'group',
+]);
+
+/**
+ * Cette entité se lit-elle spontanément comme ouverte ou fermée ?
+ *
+ * Sert à l'éditeur pour réclamer un choix explicite plutôt que de laisser
+ * l'utilisateur devant un ouvrant immobile sans explication.
+ */
+export function hasOpenSemantics(entityId: string): boolean {
+  return OPENABLE_DOMAINS.has(entityId.split('.')[0]);
+}
 
 /**
  * Fraction d'ouverture d'une entité, de 0 (fermé) à 1 (grand ouvert).
  *
- * Les stores et volets rapportent souvent une position continue : la suivre
- * donne un volet à mi-course plutôt qu'un tout-ou-rien.
+ * La sémantique vient des descripteurs, seule source de vérité du projet sur
+ * « cette entité est-elle active ». Réécrire ici une table d'états revenait à
+ * ignorer les 24 `device_class` de `binary_sensor` : un capteur d'ouverture y
+ * répond `on`, mais un détecteur de fumée aussi, et seul le descripteur sait
+ * lequel signifie « ouvert ».
+ *
+ * @param openWhen États choisis explicitement par l'utilisateur. Ils priment :
+ *   aucune heuristique ne devinera le vocabulaire d'un capteur maison.
  */
 export function openFraction(
+  entityId: string,
   state: string | undefined,
   attributes?: Record<string, unknown>,
+  openWhen?: string[],
 ): number {
   if (state === undefined || state === 'unavailable' || state === 'unknown') return 0;
 
+  if (openWhen && openWhen.length) return openWhen.includes(state) ? 1 : 0;
+
+  // Une position continue l'emporte sur le tout-ou-rien : un volet à 40 %
+  // s'affiche à 40 %.
   const pos = attributes?.current_position;
   if (typeof pos === 'number' && Number.isFinite(pos)) {
     return Math.min(1, Math.max(0, pos / 100));
   }
 
-  switch (state) {
-    case 'open':
-    case 'opening':
-    case 'on':
-    case 'unlocked':
-      return 1;
-    case 'closed':
-    case 'closing':
-    case 'off':
-    case 'locked':
-      return 0;
-    default:
-      return 0;
-  }
+  // Sans notion d'ouverture et sans choix explicite, l'ouvrant reste fermé.
+  // Un immobilisme visible vaut mieux qu'une porte bloquée grande ouverte.
+  if (!hasOpenSemantics(entityId)) return 0;
+
+  return describeEntity(entityId).isOn({ state, attributes: attributes ?? {} }) ? 1 : 0;
 }
 
 // ── Animation ───────────────────────────────────────────────────────────────
 
+/**
+ * Un ouvrant vivant.
+ *
+ * La géométrie est figée par rapport à une arête de référence, mais le pivot
+ * réel est porté par un nœud parent. Changer de côté de gonds ne demande donc
+ * pas de redécouper le modèle : il suffit de déplacer ce nœud, ce qui rend
+ * tous les réglages modifiables en direct.
+ */
 interface LiveMesh {
   cfg: OwlnestPart;
+  /** Nœud animé : c'est lui qui tourne ou coulisse. */
+  pivotNode: THREE.Group;
+  /** Vantail, décalé dans le pivot pour compenser le côté choisi. */
   object: THREE.Mesh;
   frame: PartFrame;
+  box: THREE.Box3;
+  /** Position d'extraction de la géométrie, dans l'espace de la maille. */
+  origin: THREE.Vector3;
   /** Amplitude maximale : radians pour un battant, unités pour un coulissant. */
   span: number;
   /** Axe animé et son signe. */
@@ -128,9 +170,7 @@ export class PartController {
       const part = partId >= 0 ? index.parts[partId] : undefined;
       if (!part) { missing.push(cfg); continue; }
 
-      const item = this._attach(mesh, part, cfg);
-      if (item) this.items.push(item);
-      else missing.push(cfg);
+      this.items.push(this._attach(mesh, part, cfg));
     }
 
     this._built = true;
@@ -141,35 +181,69 @@ export class PartController {
     mesh: THREE.Mesh,
     part: { tris: Uint32Array; box: THREE.Box3; id: number },
     cfg: OwlnestPart,
-  ): LiveMesh | null {
-    const hinge = cfg.hinge ?? 'start';
-    const { mesh: object, frame } = extractPart(mesh, part, hinge);
+  ): LiveMesh {
+    // Toujours extrait du même côté : le côté des gonds se règle ensuite par
+    // le nœud pivot, sans retoucher la géométrie.
+    const { mesh: object, frame, pivot } = extractPart(mesh, part, 'start');
     object.userData.owlnestPartId = cfg.id;
 
+    const pivotNode = new THREE.Group();
+    pivotNode.userData.owlnestPartId = cfg.id;
+    mesh.add(pivotNode);
+    pivotNode.add(object);
+
+    const item: LiveMesh = {
+      cfg, pivotNode, object, frame, box: part.box, origin: pivot,
+      span: 0, axis: 'x', sign: 1, rest: 0, current: 0, target: 0,
+    };
+    this._configure(item, cfg);
+    return item;
+  }
+
+  /**
+   * Recalcule les paramètres d'animation d'un ouvrant déjà détaché.
+   *
+   * Aucun de ces réglages ne touche à la géométrie : angle, sens, course, durée
+   * et côté des gonds découlent tous du repère de la pièce, qu'on connaît déjà.
+   * D'où la mise à jour immédiate dans l'éditeur.
+   */
+  private _configure(item: LiveMesh, cfg: OwlnestPart) {
+    item.cfg = cfg;
+    const frame = item.frame;
+    const hinge = cfg.hinge ?? 'start';
+
+    // Le nœud se place sur l'arête choisie ; le vantail se décale d'autant en
+    // sens inverse pour ne pas bouger à l'écran.
+    const seat = hingePivot(item.box, frame, hinge);
+    item.pivotNode.position.copy(seat);
+    item.object.position.copy(item.origin).sub(seat);
+    item.pivotNode.rotation.set(0, 0, 0);
+
     if (cfg.motion === 'slide') {
-      // Un coulissant se retire le long d'un de ses propres axes. Par défaut il
-      // descend, ce qui correspond à un volet roulant.
       const dir = cfg.slide ?? 'down';
       const along = dir === 'down' || dir === 'up' ? frame.up : frame.wide;
-      const travel = cfg.travel ?? 1;
-      return {
-        cfg, object, frame,
-        span: frame.size[along] * travel,
-        axis: axisName(along),
-        sign: dir === 'up' || dir === 'end' ? 1 : -1,
-        rest: object.position[axisName(along)],
-        current: 0, target: 0,
-      };
+      item.span = frame.size[along] * (cfg.travel ?? 1);
+      item.axis = axisName(along);
+      item.sign = dir === 'up' || dir === 'end' ? 1 : -1;
+      item.rest = seat.getComponent(along);
+    } else {
+      item.span = THREE.MathUtils.degToRad(cfg.angle ?? 90);
+      item.axis = axisName(frame.up);
+      item.sign = hinge === 'start' ? -1 : 1;
+      item.rest = 0;
     }
+    this._place(item);
+  }
 
-    return {
-      cfg, object, frame,
-      span: THREE.MathUtils.degToRad(cfg.angle ?? 90),
-      axis: axisName(frame.up),
-      sign: hinge === 'start' ? -1 : 1,
-      rest: 0,
-      current: 0, target: 0,
-    };
+  /**
+   * Applique un réglage venu de l'éditeur, sans rien reconstruire.
+   * Retourne `false` si l'ouvrant n'est pas (ou plus) monté.
+   */
+  configure(cfg: OwlnestPart): boolean {
+    const item = this.items.find((i) => i.cfg.id === cfg.id);
+    if (!item) return false;
+    this._configure(item, cfg);
+    return true;
   }
 
   /** Applique les états courants. Retourne `true` si une cible a changé. */
@@ -177,7 +251,7 @@ export class PartController {
     let changed = false;
     for (const item of this.items) {
       const e = states[item.cfg.entity];
-      let f = openFraction(e?.state, e?.attributes);
+      let f = openFraction(item.cfg.entity, e?.state, e?.attributes, item.cfg.openWhen);
       if (item.cfg.invert) f = 1 - f;
       if (Math.abs(f - item.target) > 1e-4) {
         item.target = f;
@@ -210,8 +284,8 @@ export class PartController {
 
   private _place(item: LiveMesh) {
     const value = item.current * item.span * item.sign;
-    if (item.cfg.motion === 'slide') item.object.position[item.axis] = item.rest + value;
-    else item.object.rotation[item.axis] = value;
+    if (item.cfg.motion === 'slide') item.pivotNode.position[item.axis] = item.rest + value;
+    else item.pivotNode.rotation[item.axis] = value;
   }
 
   /** Position d'un ouvrant, pour l'aperçu de l'éditeur. */
@@ -223,7 +297,7 @@ export class PartController {
   boxOf(id: string): THREE.Box3 | null {
     const item = this.items.find((i) => i.cfg.id === id);
     if (!item) return null;
-    return new THREE.Box3().setFromObject(item.object);
+    return new THREE.Box3().setFromObject(item.pivotNode);
   }
 
   /**
@@ -235,7 +309,7 @@ export class PartController {
    */
   dispose(root?: THREE.Object3D) {
     for (const item of this.items) {
-      item.object.parent?.remove(item.object);
+      item.pivotNode.parent?.remove(item.pivotNode);
       item.object.geometry.dispose();
     }
     this.items = [];

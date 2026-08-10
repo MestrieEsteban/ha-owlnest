@@ -1,34 +1,65 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { openFraction, PartController, meshOrder, resolveMesh } from './parts-runtime.mjs';
+import { openFraction, hasOpenSemantics, PartController, meshOrder, resolveMesh } from './parts-runtime.mjs';
 
 // ── Lecture de l'état ───────────────────────────────────────────────────────
 
-test('openFraction lit les états discrets', () => {
-  assert.equal(openFraction('open'), 1);
-  assert.equal(openFraction('closed'), 0);
-  assert.equal(openFraction('on'), 1);
-  assert.equal(openFraction('off'), 0);
+const COVER = 'cover.volet';
+const DOOR_SENSOR = 'binary_sensor.porte';
+
+test('openFraction lit les états discrets via le descripteur du domaine', () => {
+  assert.equal(openFraction(COVER, 'open'), 1);
+  assert.equal(openFraction(COVER, 'closed'), 0);
+  assert.equal(openFraction(DOOR_SENSOR, 'on'), 1);
+  assert.equal(openFraction(DOOR_SENSOR, 'off'), 0);
 });
 
 test('openFraction suit une position continue quand elle existe', () => {
-  assert.equal(openFraction('open', { current_position: 100 }), 1);
-  assert.equal(openFraction('open', { current_position: 40 }), 0.4);
-  assert.equal(openFraction('closed', { current_position: 0 }), 0);
+  assert.equal(openFraction(COVER, 'open', { current_position: 100 }), 1);
+  assert.equal(openFraction(COVER, 'open', { current_position: 40 }), 0.4);
+  assert.equal(openFraction(COVER, 'closed', { current_position: 0 }), 0);
 });
 
 test('openFraction borne une position aberrante', () => {
-  assert.equal(openFraction('open', { current_position: 140 }), 1);
-  assert.equal(openFraction('open', { current_position: -20 }), 0);
+  assert.equal(openFraction(COVER, 'open', { current_position: 140 }), 1);
+  assert.equal(openFraction(COVER, 'open', { current_position: -20 }), 0);
 });
 
 test('openFraction traite une entité indisponible comme fermée', () => {
-  assert.equal(openFraction('unavailable'), 0);
-  assert.equal(openFraction('unknown'), 0);
-  assert.equal(openFraction(undefined), 0);
+  assert.equal(openFraction(COVER, 'unavailable'), 0);
+  assert.equal(openFraction(COVER, 'unknown'), 0);
+  assert.equal(openFraction(COVER, undefined), 0);
   // Une position résiduelle ne doit pas rouvrir un ouvrant devenu injoignable.
-  assert.equal(openFraction('unavailable', { current_position: 80 }), 0);
+  assert.equal(openFraction(COVER, 'unavailable', { current_position: 80 }), 0);
+});
+
+test('openWhen prime sur toute heuristique', () => {
+  // Un capteur au vocabulaire maison : aucune table ne peut le deviner.
+  assert.equal(openFraction('sensor.contact', 'detected', {}, ['detected']), 1);
+  assert.equal(openFraction('sensor.contact', 'clear', {}, ['detected']), 0);
+  // Et il l'emporte même sur une position continue.
+  assert.equal(openFraction(COVER, 'closed', { current_position: 90 }, ['open']), 0);
+});
+
+test('un capteur numérique ne bloque pas la porte grande ouverte', () => {
+  // Régression : le descripteur de `sensor` répond `isOn: () => true`, ce qui
+  // est juste pour un badge mais laissait l'ouvrant béant et insensible.
+  assert.equal(openFraction('sensor.temperature', '21.4', { unit_of_measurement: '°C' }), 0);
+  assert.equal(openFraction('sensor.temperature', '30', {}), 0);
+});
+
+test('hasOpenSemantics distingue ce qui s’ouvre de ce qui se mesure', () => {
+  assert.equal(hasOpenSemantics('cover.volet'), true);
+  assert.equal(hasOpenSemantics('binary_sensor.porte'), true);
+  assert.equal(hasOpenSemantics('lock.entree'), true);
+  assert.equal(hasOpenSemantics('sensor.temperature'), false);
+  assert.equal(hasOpenSemantics('weather.maison'), false);
+});
+
+test('un capteur muet redevient exploitable si on désigne ses états', () => {
+  assert.equal(openFraction('sensor.contact', 'Ouvert', {}, ['Ouvert']), 1);
+  assert.equal(openFraction('sensor.contact', 'Fermé', {}, ['Ouvert']), 0);
 });
 
 // ── Contrôleur ──────────────────────────────────────────────────────────────
@@ -60,6 +91,14 @@ function model() {
   const root = new THREE.Group();
   root.add(mesh);
   return root;
+}
+
+/**
+ * Nœud animé d'un ouvrant : le pivot, ajouté comme enfant de la maille.
+ * La géométrie vit un cran plus bas, décalée pour compenser le côté des gonds.
+ */
+function animated(root) {
+  return root.children[0].children[0];
 }
 
 const DOOR = {
@@ -137,10 +176,8 @@ test('la porte pivote quand l’entité passe à ouvert', () => {
   // Une seconde d'animation pour une durée d'une seconde : ouverture complète.
   let guard = 0;
   while (c.update(0.1) && guard++ < 100);
-  const door = root.getObjectByName(/#/.test('') ? '' : root.children[0].children[0].name);
-  const angle = Math.abs(root.children[0].children[0].rotation.z);
+  const angle = Math.abs(animated(root).rotation.z);
   assert.ok(Math.abs(angle - Math.PI / 2) < 1e-6, `attendu 90°, obtenu ${THREE.MathUtils.radToDeg(angle)}°`);
-  assert.ok(door);
 });
 
 test('l’animation est progressive, pas instantanée', () => {
@@ -150,7 +187,7 @@ test('l’animation est progressive, pas instantanée', () => {
   c.applyStates({ 'binary_sensor.porte': { state: 'on' } });
 
   c.update(0.25);
-  const quarter = Math.abs(root.children[0].children[0].rotation.z);
+  const quarter = Math.abs(animated(root).rotation.z);
   assert.ok(quarter > 0.01 && quarter < Math.PI / 2 - 0.01,
     'à un quart de la durée, la porte est entrouverte');
 });
@@ -163,7 +200,7 @@ test('invert échange ouvert et fermé', () => {
     'fermée côté HA, donc ouverte à l’écran');
   let guard = 0;
   while (c.update(0.1) && guard++ < 100);
-  assert.ok(Math.abs(Math.abs(root.children[0].children[0].rotation.z) - Math.PI / 2) < 1e-6);
+  assert.ok(Math.abs(Math.abs(animated(root).rotation.z) - Math.PI / 2) < 1e-6);
 });
 
 test('le côté des gonds change le sens de rotation', () => {
@@ -174,7 +211,7 @@ test('le côté des gonds change le sens de rotation', () => {
     c.applyStates({ 'binary_sensor.porte': { state: 'on' } });
     let guard = 0;
     while (c.update(0.1) && guard++ < 100);
-    return root.children[0].children[0].rotation.z;
+    return animated(root).rotation.z;
   };
   assert.ok(mk('start') * mk('end') < 0, 'les deux côtés ouvrent en sens opposés');
 });
@@ -187,7 +224,7 @@ test('un volet coulisse au lieu de pivoter', () => {
     motion: 'slide', slide: 'down', travel: 1, duration: 1,
   };
   c.build(root, [cover]);
-  const part = root.children[0].children[0];
+  const part = animated(root);
   const start = part.position.z;
 
   c.applyStates({ 'cover.volet': { state: 'open', attributes: { current_position: 100 } } });
@@ -203,7 +240,7 @@ test('une position intermédiaire de volet est respectée', () => {
   const root = model();
   const c = new PartController();
   c.build(root, [{ id: 'v1', entity: 'cover.volet', mesh: 'MaisonHA', triangle: 0, motion: 'slide', duration: 1 }]);
-  const part = root.children[0].children[0];
+  const part = animated(root);
   const start = part.position.z;
 
   c.applyStates({ 'cover.volet': { state: 'open', attributes: { current_position: 30 } } });
@@ -221,6 +258,82 @@ test('update rend la main une fois l’animation terminée', () => {
   while (c.update(0.1) && guard++ < 200);
   assert.ok(guard < 200, 'la boucle de rendu doit pouvoir se rendormir');
   assert.equal(c.update(0.1), false);
+});
+
+test('configure applique un réglage sans redécouper le modèle', () => {
+  const root = model();
+  const c = new PartController();
+  c.build(root, [DOOR]);
+  const leaf = animated(root).children[0];
+  const geometryBefore = leaf.geometry;
+  const trisBefore = root.children[0].geometry.getIndex().count;
+
+  assert.equal(c.configure({ ...DOOR, angle: 30 }), true);
+  c.applyStates({ 'binary_sensor.porte': { state: 'on' } });
+  let guard = 0;
+  while (c.update(0.1) && guard++ < 100);
+
+  assert.ok(Math.abs(Math.abs(animated(root).rotation.z) - Math.PI / 6) < 1e-6,
+    'le nouvel angle prend effet tout de suite');
+  assert.equal(leaf.geometry, geometryBefore, 'la géométrie n’est pas retouchée');
+  assert.equal(root.children[0].geometry.getIndex().count, trisBefore,
+    'la maille d’origine n’est pas re-découpée');
+});
+
+test('changer de côté de gonds ne demande plus de reconstruction', () => {
+  const root = model();
+  const c = new PartController();
+  c.build(root, [DOOR]);
+  const open = () => {
+    c.applyStates({ 'binary_sensor.porte': { state: 'on' } });
+    let guard = 0;
+    while (c.update(0.1) && guard++ < 100);
+    return animated(root).rotation.z;
+  };
+  const a = open();
+
+  c.configure({ ...DOOR, hinge: 'end' });
+  const b = open();
+  assert.ok(a * b < 0, 'les deux côtés ouvrent en sens opposés');
+});
+
+test('le gond reste immobile après un changement de côté', () => {
+  const root = model();
+  const c = new PartController();
+  c.build(root, [{ ...DOOR, hinge: 'end' }]);
+  root.updateMatrixWorld(true);
+
+  const node = animated(root);
+  const closed = node.localToWorld(new THREE.Vector3(0, 0, 0));
+  c.preview('p1', 1);
+  let guard = 0;
+  while (c.update(0.1) && guard++ < 100);
+  root.updateMatrixWorld(true);
+  const opened = node.localToWorld(new THREE.Vector3(0, 0, 0));
+
+  assert.ok(closed.distanceTo(opened) < 1e-6, 'le pivot ne se déplace jamais');
+});
+
+test('configure sur un ouvrant absent ne fait rien et le signale', () => {
+  const c = new PartController();
+  c.build(model(), [DOOR]);
+  assert.equal(c.configure({ ...DOOR, id: 'inconnu' }), false);
+});
+
+test('passer de battant à coulissant change la nature du mouvement', () => {
+  const root = model();
+  const c = new PartController();
+  c.build(root, [DOOR]);
+  const node = animated(root);
+  const rest = node.position.z;
+
+  c.configure({ ...DOOR, motion: 'slide', slide: 'down', travel: 1 });
+  c.applyStates({ 'binary_sensor.porte': { state: 'on' } });
+  let guard = 0;
+  while (c.update(0.1) && guard++ < 100);
+
+  assert.equal(node.rotation.z, 0, 'un coulissant ne tourne pas');
+  assert.ok(Math.abs((rest - node.position.z) - 200) < 1e-6, 'il descend de sa hauteur');
 });
 
 test('dispose retire les pièces détachées', () => {

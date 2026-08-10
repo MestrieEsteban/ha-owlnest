@@ -250,6 +250,14 @@ export interface OwlnestPart {
   slide?: SlideDirection;
   /** Course d'un coulissant, en fraction de sa propre dimension. */
   travel?: number;
+  /**
+   * États qui signifient « ouvert ».
+   *
+   * Vide, la lecture passe par le descripteur du domaine. Renseigné, il prime :
+   * un capteur maison peut rapporter n'importe quel vocabulaire, et aucune
+   * heuristique ne devinera qu'il faut lire « detected » comme une ouverture.
+   */
+  openWhen?: string[];
   /** Inverse la lecture de l'état : « ouvert » devient « fermé ». */
   invert?: boolean;
   /** Durée de l'animation, en secondes. */
