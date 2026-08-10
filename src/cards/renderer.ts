@@ -12,7 +12,7 @@
 import * as THREE from 'three';
 import type { Hass } from '../types';
 import type { SceneCard, RoomCard, EntityCard, InfoCard } from './types';
-import { CARD_SCALE, CARD_ASPECT, CARD_DEFAULT_ACCENT } from './types';
+import { CARD_SCALE, CARD_ASPECT, CARD_DEFAULT_ACCENT, CARDS_ENABLED } from './types';
 
 const CANVAS_W = 1024;
 
@@ -108,6 +108,7 @@ export class SceneCardRenderer {
 
   /** Add new cards, update changed, remove deleted. Call whenever cards change. */
   syncCards(cards: SceneCard[], hass: Hass | null) {
+    if (!CARDS_ENABLED) return;
     if (hass) this._hass = hass;
     const ids = new Set(cards.map((c) => c.id));
 

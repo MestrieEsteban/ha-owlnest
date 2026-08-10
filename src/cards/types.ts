@@ -6,6 +6,18 @@
  */
 import { t } from '../i18n';
 
+/**
+ * Les cartes 3D sont retirees de l'interface le 2026-08-10 : elles refont ce que
+ * font les ancres (etat d'une entite, regroupement par piece) sans rien apporter
+ * qu'elles ne fassent deja, et leur nature de texture canvas les empeche de
+ * devenir de vraies surfaces de commande.
+ *
+ * Le code est conserve intact : basculer cette constante a `true` les reactive,
+ * onglet et rendu compris. Les cartes deja presentes dans une scene sont
+ * preservees a l'enregistrement, elles ne sont simplement plus dessinees.
+ */
+export const CARDS_ENABLED = false;
+
 export type SceneCardType = 'room' | 'entity' | 'info';
 
 export type SceneCardSize = 'small' | 'medium' | 'large';
