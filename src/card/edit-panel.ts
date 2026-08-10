@@ -2,9 +2,11 @@ import type { Hass, CardConfig, EditableAnchor, CameraView, SceneSettings } from
 import type { SceneCard, SceneCardType } from '../cards/types';
 import { CARD_DEFAULT_ACCENT, CARD_TYPE_LABELS, CARDS_ENABLED } from '../cards/types';
 import type { AnchorEditor, EditorTool } from '../editor';
-import type { OwlnestRule, Action } from '../rules/types';
+import type { OwlnestRule } from '../rules/types';
+import { normalizeRule } from '../rules/types';
 import { t, setLang } from '../i18n';
 import { openEntityPicker } from '../entities/picker';
+import { describeEntity, knownStates, stateLabel } from '../entities/descriptors';
 import { detectionLabel, resolveLevel } from '../quality';
 import type { TapAction } from '../entities/descriptors';
 import type { QualityLevel } from '../quality';
@@ -45,6 +47,74 @@ const KIND_LABEL: Record<AnchorKind, () => string> = {
   menu:   () => t('anchorKindMenu'),
   nav:    () => t('anchorKindNav'),
 };
+
+/**
+ * Résumé d'une règle en une ligne, pour que la liste soit lisible sans ouvrir
+ * chaque entrée. Les libellés d'états passent par les descripteurs, donc on lit
+ * « Ouverte » et non « on ».
+ */
+function ruleSummary(
+  rule: OwlnestRule,
+  hass: Hass | null,
+  views: CameraView[],
+): string {
+  const r = normalizeRule(rule);
+
+  const nameOf = (id: string) => {
+    const fn = hass?.states[id]?.attributes?.friendly_name;
+    return (typeof fn === 'string' && fn) ? fn : (id.split('.')[1] ?? id);
+  };
+  const stOf = (id: string, v?: string) =>
+    v ? stateLabel(id, v, hass?.states[id]?.attributes ?? {}) : null;
+
+  const triggers = (r.triggers ?? []).map((tr) => {
+    if (tr.type === 'time') return `⏰ ${tr.at}`;
+    if (tr.type === 'numeric_state') {
+      const parts: string[] = [];
+      if (tr.above !== undefined) return `${nameOf(tr.entity_id)} > ${tr.above}`;
+      if (tr.below !== undefined) return `${nameOf(tr.entity_id)} < ${tr.below}`;
+      return parts.join(' ') || nameOf(tr.entity_id);
+    }
+    const to = stOf(tr.entity_id, tr.to);
+    const held = tr.for ? ` ${Math.round(tr.for / 60) || 1}′` : '';
+    return `${nameOf(tr.entity_id)}${to ? ` → ${to}` : ''}${held}`;
+  });
+
+  const actions = (r.actions ?? []).map((a) => {
+    if (a.type === 'go_to_view') {
+      return `▶ ${views.find((v) => v.id === a.view_id)?.label ?? '?'}`;
+    }
+    if (a.type === 'highlight_anchor') return `✦ ${nameOf(a.anchor)}`;
+    if (a.type === 'toast') return `💬 ${a.message || '…'}`;
+    return `${a.domain}.${a.service}`;
+  });
+
+  const left = triggers.length ? triggers.join(' | ') : t('ruleSummaryNoTrigger');
+  const right = actions.length ? actions.join(' · ') : t('ruleSummaryNoAction');
+  return `${left}  →  ${right}`;
+}
+
+/**
+ * La regle est-elle assez complete pour que son resume soit lisible ?
+ *
+ * Un resume a trous (« → on → ▶ ? ») est pire qu'aucune suggestion : il donne
+ * l'impression d'un bug alors que la regle est simplement en cours d'ecriture.
+ */
+function ruleIsComplete(rule: OwlnestRule): boolean {
+  const r = normalizeRule(rule);
+  if (!(r.triggers ?? []).length || !(r.actions ?? []).length) return false;
+  for (const tr of r.triggers ?? []) {
+    if (tr.type === 'time') { if (!tr.at) return false; continue; }
+    if (!tr.entity_id) return false;
+  }
+  for (const a of r.actions ?? []) {
+    if (a.type === 'go_to_view' && !a.view_id) return false;
+    if (a.type === 'highlight_anchor' && !a.anchor) return false;
+    if (a.type === 'toast' && !a.message.trim()) return false;
+    if (a.type === 'call_service' && (!a.domain || !a.service)) return false;
+  }
+  return true;
+}
 
 /** Create a "?" tooltip badge with a fixed-position popup that escapes overflow containers. */
 function createHelpBadge(text: string): HTMLElement {
@@ -139,6 +209,12 @@ export class EditPanel {
   // ── Card / Rule undo-redo stacks ──────────────────────────────────────────
   private _cardUndoStack: SceneCard[][] = [];
   private _cardRedoStack: SceneCard[][] = [];
+  /**
+   * Exécute une règle immédiatement, pour le bouton « Tester ». Fourni par la
+   * carte, qui seule sait appliquer les actions sur la scène.
+   */
+  onTestRule?: (rule: OwlnestRule) => void;
+
   private _ruleUndoStack: OwlnestRule[][] = [];
   private _ruleRedoStack: OwlnestRule[][] = [];
 
@@ -1899,6 +1975,47 @@ export class EditPanel {
       }
     }
 
+    // ── Section: Vignette (caméras) ───────────────────────────────────
+    // Proposée dès que le descripteur prévoit une vignette, même si l'ancre a
+    // été ramenée à une pastille : sinon on ne pourrait plus revenir en arrière.
+    if (isEntityKind && describeEntity(anchor.entity).overlay === 'thumbnail') {
+      secDiv(t('anchorSectionThumb'));
+
+      const display = anchor.display ?? 'auto';
+      const dispSel = document.createElement('select');
+      dispSel.style.cssText = inputStyle + SELECT_STYLE;
+      const dispOpts: [string, string][] = [
+        ['auto', t('anchorDisplayThumb')],
+        ['icon', t('anchorDisplayIcon')],
+      ];
+      for (const [v, l] of dispOpts) {
+        const o = styleOption(document.createElement('option'));
+        o.value = v; o.textContent = l;
+        if ((display === 'thumbnail' ? 'auto' : display) === v) o.selected = true;
+        dispSel.appendChild(o);
+      }
+      dispSel.addEventListener('change', () => {
+        const v = dispSel.value as 'auto' | 'icon';
+        this.getEditor()?.updateAnchor(key, { display: v === 'auto' ? undefined : v });
+        this.scheduleAutoSave();
+        // La présence du curseur dépend du choix : on reconstruit la section.
+        const fresh = this.getEditor()?.anchors.get(key);
+        if (fresh) this._buildPropsSection(container, key, fresh, goBack);
+      });
+      field(t('anchorFieldDisplay'), dispSel);
+
+      if (display !== 'icon') {
+        sliderField(t('anchorThumbSize'), 0.3, 4, 0.1, anchor.size ?? 1, '#7dd3fc',
+          (v) => '\u00d7' + v.toFixed(1),
+          (v) => { this.getEditor()?.updateAnchor(key, { size: v }); this.scheduleAutoSave(); });
+
+        const hint = document.createElement('div');
+        hint.style.cssText = 'font-size:9px;color:#475569;margin-top:-5px;margin-bottom:8px;line-height:1.5;';
+        hint.textContent = t('anchorThumbHint');
+        container.appendChild(hint);
+      }
+    }
+
     // ── Section: Sensor precision ─────────────────────────────────────
     if (isSensor) {
       secDiv('Capteur');
@@ -2816,10 +2933,8 @@ export class EditPanel {
 
       const triggerSummary = document.createElement('div');
       triggerSummary.style.cssText = 'font-size:9px;color:rgba(255,255,255,0.35);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px;';
-      const trig = rule.trigger;
-      triggerSummary.textContent = trig.type === 'entity_state'
-        ? `${trig.entity_id}${trig.to ? ` → ${trig.to}` : ''}`
-        : trig.type;
+      triggerSummary.textContent = ruleSummary(rule, this.getHass(), this.getViews?.() ?? []);
+      triggerSummary.title = triggerSummary.textContent;
 
       info.appendChild(labelEl);
       info.appendChild(triggerSummary);
@@ -2886,22 +3001,25 @@ export class EditPanel {
     const cards = this.getCards?.() ?? [];
 
     // Working copy
-    let draft: OwlnestRule = existing
-      ? JSON.parse(JSON.stringify(existing)) as OwlnestRule
+    const draft: OwlnestRule = existing
+      ? normalizeRule(JSON.parse(JSON.stringify(existing)) as OwlnestRule)
       : {
           id: `rule_${Date.now()}`,
           label: '',
           enabled: true,
-          trigger: { type: 'entity_state', entity_id: '', to: '' },
+          triggers: [{ type: 'entity_state', entity_id: '' }],
           conditions: [],
+          logic: 'and',
           actions: [],
         };
+    draft.triggers ??= [];
+    draft.conditions ??= [];
 
     const dialog = document.createElement('dialog');
     dialog.id = 'owlnest-rule-modal';
     dialog.style.cssText = [
       'position:fixed', 'top:50%', 'left:50%', 'transform:translate(-50%,-50%)',
-      'width:min(520px,92vw)', 'max-height:85vh',
+      'width:min(560px,94vw)', 'max-height:86vh',
       'background:rgba(6,10,22,0.97)', 'backdrop-filter:blur(20px)',
       'border:1px solid rgba(255,255,255,0.1)', 'border-radius:14px',
       'box-shadow:0 20px 60px rgba(0,0,0,0.8)', 'padding:0',
@@ -2949,147 +3067,575 @@ export class EditPanel {
       d.textContent = text; return d;
     };
 
-    // ── Label ────────────────────────────────────────────────────────────────
-    bodyEl.appendChild(secHdr(t('ruleModalGeneral')));
-    const labelWrap = mk('div') as HTMLDivElement; labelWrap.style.cssText = fieldStyle;
-    labelWrap.appendChild(mkLbl(t('ruleModalName')));
-    const labelInp = mkInp(draft.label ?? '', t('ruleNameExPh'));
-    labelInp.addEventListener('input', () => { draft.label = labelInp.value; });
-    labelWrap.appendChild(labelInp);
-    bodyEl.appendChild(labelWrap);
+    // ── Vocabulaire visuel ───────────────────────────────────────────────────
+    // Une règle se lit comme une phrase : « Porte d'entrée passe à Ouverte ».
+    // Les champs sont donc des mots dans la phrase, pas des cases d'un
+    // formulaire empilé.
 
-    // ── Trigger ──────────────────────────────────────────────────────────────
-    bodyEl.appendChild(secHdr(t('ruleModalTrigger')));
+    const PILL = 'background:#111a2e;border:1px solid rgba(255,255,255,0.14);border-radius:7px;color:#e2e8f0;padding:5px 9px;font-size:12px;font-family:inherit;cursor:pointer;outline:none;color-scheme:dark;';
+    const WORD = 'font-size:12px;color:#94a3b8;';
+    const LINK = 'background:none;border:none;color:#64748b;font-size:11px;font-family:inherit;cursor:pointer;padding:0;text-align:left;';
 
-    const trig = draft.trigger.type === 'entity_state' ? draft.trigger : { type: 'entity_state' as const, entity_id: '', to: '' };
+    const nameOf = (id: string) => {
+      if (!id) return '';
+      const fn = hass?.states[id]?.attributes?.friendly_name;
+      return (typeof fn === 'string' && fn) ? fn : (id.split('.')[1] ?? id);
+    };
 
-    const trigEntityWrap = mk('div') as HTMLDivElement; trigEntityWrap.style.cssText = fieldStyle;
-    trigEntityWrap.appendChild(mkLbl(t('ruleModalEntity')));
-    const { wrap: tew, input: trigEntityInp } = mkEntityInput(trig.entity_id, 'trig-entity');
-    trigEntityInp.addEventListener('input', () => { (draft.trigger as typeof trig).entity_id = trigEntityInp.value.trim(); });
-    trigEntityWrap.appendChild(tew);
-    bodyEl.appendChild(trigEntityWrap);
+    const word = (text: string) => {
+      const s = mk('span') as HTMLSpanElement;
+      s.style.cssText = WORD; s.textContent = text; return s;
+    };
 
-    const trigRow = mk('div') as HTMLDivElement;
-    trigRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;';
+    /** Ligne-phrase : les éléments s'enchaînent et passent à la ligne au besoin. */
+    const sentence = (...els: HTMLElement[]) => {
+      const r = mk('div') as HTMLDivElement;
+      r.style.cssText = 'display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:7px;';
+      els.forEach((e) => r.appendChild(e));
+      return r;
+    };
 
-    const trigFromWrap = mk('div') as HTMLDivElement;
-    trigFromWrap.appendChild(mkLbl(t('ruleModalFrom')));
-    const trigFromInp = mkInp(trig.from ?? '', 'ex: off');
-    trigFromInp.addEventListener('input', () => {
-      const v = trigFromInp.value.trim();
-      (draft.trigger as typeof trig).from = v || undefined;
-    });
-    trigFromWrap.appendChild(trigFromInp);
+    /** Liste déroulante compacte, dimensionnée par son contenu. */
+    const pillSel = (options: [string, string][], value: string, onChange: (v: string) => void) => {
+      const sel = mk('select') as HTMLSelectElement;
+      sel.style.cssText = PILL + 'width:auto;';
+      for (const [v, l] of options) {
+        const o = mk('option') as HTMLOptionElement;
+        o.value = v; o.textContent = l;
+        o.style.backgroundColor = '#1a1f2e'; o.style.color = '#e2e8f0';
+        sel.appendChild(o);
+      }
+      sel.value = value;
+      sel.addEventListener('change', () => onChange(sel.value));
+      return sel;
+    };
 
-    const trigToWrap = mk('div') as HTMLDivElement;
-    trigToWrap.appendChild(mkLbl(t('ruleModalTo')));
-    const trigToInp = mkInp(trig.to ?? '', 'ex: on');
-    trigToInp.addEventListener('input', () => {
-      const v = trigToInp.value.trim();
-      (draft.trigger as typeof trig).to = v || undefined;
-    });
-    trigToWrap.appendChild(trigToInp);
+    /**
+     * Bouton portant le nom lisible d'une entité, qui ouvre le sélecteur.
+     * Bien plus lisible qu'un `entity_id` brut au milieu d'une phrase.
+     */
+    const entityPill = (value: string, onPick: (id: string) => void) => {
+      const b = mk('button') as HTMLButtonElement;
+      b.style.cssText = PILL;
+      const paint = (v: string) => {
+        b.textContent = v ? nameOf(v) : t('ruleChoose');
+        b.style.color = v ? '#e2e8f0' : '#64748b';
+      };
+      paint(value);
+      b.addEventListener('click', () => {
+        if (!hass) return;
+        openEntityPicker({
+          container: this.overlayContainer,
+          hass,
+          onPick: (id) => { paint(id); onPick(id); },
+        });
+      });
+      return b;
+    };
 
-    trigRow.appendChild(trigFromWrap);
-    trigRow.appendChild(trigToWrap);
-    bodyEl.appendChild(trigRow);
+    /**
+     * Ancres réellement présentes dans la scène.
+     *
+     * Une action « mettre en évidence » ne peut viser qu'une ancre existante :
+     * proposer le catalogue d'entités de HA laisserait choisir des cibles qui
+     * n'apparaissent nulle part, donc des actions muettes.
+     *
+     * La valeur retenue est l'`entity_id` quand il y en a un, sinon le libellé —
+     * c'est ainsi que la carte résout la cible à l'exécution.
+     */
+    const anchorOptions = (current: string): [string, string][] => {
+      const out: [string, string][] = [['', t('ruleChoose')]];
+      const seen = new Set<string>();
+      this.getEditor()?.anchors.forEach((a) => {
+        const value = a.entity || a.label;
+        if (!value || seen.has(value)) return;
+        seen.add(value);
+        const kind = a.kind ?? 'entity';
+        const name = a.label || nameOf(a.entity) || value;
+        out.push([value, kind === 'entity' ? name : `${name} · ${KIND_LABEL[kind]()}`]);
+      });
+      // Une cible enregistrée dont l'ancre a été supprimée reste visible, sinon
+      // ouvrir la règle l'effacerait en silence.
+      if (current && !seen.has(current)) out.push([current, `${current} ⚠`]);
+      return out;
+    };
 
-    // ── Actions ──────────────────────────────────────────────────────────────
-    bodyEl.appendChild(secHdr(t('ruleModalActions')));
+    const stateOptions = (entityId: string, value: string | undefined): [string, string][] => {
+      const st = entityId ? hass?.states[entityId] : undefined;
+      const opts: [string, string][] = [['', t('ruleAnyState')]];
+      for (const s of knownStates(entityId, st?.state)) {
+        opts.push([s, stateLabel(entityId, s, st?.attributes ?? {})]);
+      }
+      if (value && !opts.some(([v]) => v === value)) opts.push([value, value]);
+      return opts;
+    };
 
-    const actionsWrap = mk('div') as HTMLDivElement;
-    bodyEl.appendChild(actionsWrap);
+    const numInput = (value: number | undefined, ph: string, onChange: (n: number | undefined) => void) => {
+      const i = mk('input') as HTMLInputElement;
+      i.type = 'number'; i.placeholder = ph;
+      i.value = value !== undefined ? String(value) : '';
+      i.style.cssText = PILL + 'width:74px;';
+      i.addEventListener('input', () => {
+        const n = parseFloat(i.value);
+        onChange(Number.isFinite(n) ? n : undefined);
+      });
+      return i;
+    };
+
+    const linkBtn = (label: string, onClick: () => void) => {
+      const b = mk('button') as HTMLButtonElement;
+      b.textContent = label; b.style.cssText = LINK;
+      b.addEventListener('mouseenter', () => { b.style.color = '#94a3b8'; });
+      b.addEventListener('mouseleave', () => { b.style.color = '#64748b'; });
+      b.addEventListener('click', onClick);
+      return b;
+    };
+
+    const removeBtn = (onClick: () => void) => {
+      const b = mk('button') as HTMLButtonElement;
+      b.textContent = '×'; b.title = t('ruleRemove');
+      b.style.cssText = 'background:none;border:none;color:rgba(248,113,113,0.55);cursor:pointer;font-size:15px;line-height:1;padding:0 2px;margin-left:auto;';
+      b.addEventListener('click', onClick);
+      return b;
+    };
+
+    /** Bloc coloré d'une phase de la règle. */
+    const phase = (accent: string, tint: string, icon: string, title: string) => {
+      const box = mk('div') as HTMLDivElement;
+      box.style.cssText = `background:${tint};border-left:3px solid ${accent};padding:11px 13px;margin-bottom:9px;`;
+      const hdr = mk('div') as HTMLDivElement;
+      hdr.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:9px;';
+      const ic = mk('span') as HTMLSpanElement;
+      ic.textContent = icon;
+      ic.style.cssText = `font-size:13px;color:${accent};`;
+      const tt = mk('span') as HTMLSpanElement;
+      tt.textContent = title;
+      tt.style.cssText = 'font-size:12px;font-weight:600;color:#cbd5e1;';
+      hdr.append(ic, tt);
+      box.appendChild(hdr);
+      const body = mk('div') as HTMLDivElement;
+      box.appendChild(body);
+      return { box, body };
+    };
+
+    // Le resume automatique sert de suggestion pour le nom. Il est recalcule a
+    // chaque modification : fige, il affichait « aucune action » sur une regle
+    // qui en avait.
+    let syncNamePlaceholder = () => {};
+
+    // ── Exemples de départ ───────────────────────────────────────────────────
+    if (!existing) {
+      const tplTitle = mk('div') as HTMLDivElement;
+      tplTitle.style.cssText = 'font-size:11px;color:#64748b;margin-bottom:6px;';
+      tplTitle.textContent = t('ruleTplTitle');
+      bodyEl.appendChild(tplTitle);
+
+      const tplRow = mk('div') as HTMLDivElement;
+      tplRow.style.cssText = 'display:flex;gap:5px;flex-wrap:wrap;margin-bottom:14px;';
+
+      const templates: Array<[string, () => void]> = [
+        [t('ruleTplDoor'), () => {
+          draft.triggers = [{ type: 'entity_state', entity_id: '', to: 'on' }];
+          draft.actions = [{ type: 'go_to_view', view_id: '' }, { type: 'highlight_anchor', anchor: '' }];
+        }],
+        [t('ruleTplLeak'), () => {
+          draft.triggers = [{ type: 'entity_state', entity_id: '', to: 'on' }];
+          draft.actions = [
+            { type: 'toast', message: t('ruleTplLeakMsg'), level: 'warn' },
+            { type: 'highlight_anchor', anchor: '' },
+          ];
+        }],
+        [t('ruleTplTime'), () => {
+          draft.triggers = [{ type: 'time', at: '22:00' }];
+          draft.actions = [{ type: 'go_to_view', view_id: '' }];
+        }],
+        [t('ruleTplEmpty'), () => {
+          draft.triggers = [{ type: 'entity_state', entity_id: '' }];
+          draft.actions = [];
+        }],
+      ];
+
+      templates.forEach(([label, apply], i) => {
+        const c = mk('button') as HTMLButtonElement;
+        c.textContent = label;
+        const last = i === templates.length - 1;
+        c.style.cssText = last
+          ? 'font-size:11px;color:#64748b;background:none;border:1px solid rgba(255,255,255,0.12);border-radius:999px;padding:5px 11px;cursor:pointer;font-family:inherit;'
+          : 'font-size:11px;color:#7dd3fc;background:rgba(125,209,252,0.12);border:1px solid rgba(125,209,252,0.32);border-radius:999px;padding:5px 11px;cursor:pointer;font-family:inherit;';
+        c.addEventListener('click', () => {
+          apply();
+          renderTriggers(); renderConditions(); renderActions();
+        });
+        tplRow.appendChild(c);
+      });
+      bodyEl.appendChild(tplRow);
+    }
+
+    // ── Quand ────────────────────────────────────────────────────────────────
+    const whenPhase = phase('#378ADD', 'rgba(56,138,221,0.09)', '⚡', t('ruleWhen'));
+    bodyEl.appendChild(whenPhase.box);
+
+    const renderTriggers = () => {
+      whenPhase.body.innerHTML = '';
+      (draft.triggers ?? []).forEach((trg, idx) => {
+        const block = mk('div') as HTMLDivElement;
+        block.style.cssText = idx > 0 ? 'margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.07);' : '';
+
+        const kindSel = pillSel([
+          ['entity_state', t('ruleTrigState')],
+          ['numeric_state', t('ruleTrigNumeric')],
+          ['time', t('ruleTrigTime')],
+        ], trg.type, (v) => {
+          draft.triggers![idx] = v === 'time'
+            ? { type: 'time', at: '22:00' }
+            : v === 'numeric_state'
+              ? { type: 'numeric_state', entity_id: '', above: 20 }
+              : { type: 'entity_state', entity_id: '' };
+          renderTriggers();
+        });
+
+        const head = sentence(kindSel);
+        if ((draft.triggers ?? []).length > 1) {
+          head.appendChild(removeBtn(() => { draft.triggers!.splice(idx, 1); renderTriggers(); }));
+        }
+        block.appendChild(head);
+
+        if (trg.type === 'time') {
+          const inp = mk('input') as HTMLInputElement;
+          inp.type = 'time'; inp.value = trg.at;
+          inp.style.cssText = PILL + 'width:auto;';
+          inp.addEventListener('input', () => { (draft.triggers![idx] as typeof trg).at = inp.value; });
+          block.appendChild(sentence(word(t('ruleAtWord')), inp));
+        } else if (trg.type === 'entity_state') {
+          block.appendChild(sentence(
+            entityPill(trg.entity_id, (id) => {
+              (draft.triggers![idx] as typeof trg).entity_id = id;
+              renderTriggers();
+            }),
+            word(t('rulePassesTo')),
+            pillSel(stateOptions(trg.entity_id, trg.to), trg.to ?? '',
+              (v) => { (draft.triggers![idx] as typeof trg).to = v || undefined; }),
+          ));
+        } else {
+          block.appendChild(sentence(
+            entityPill(trg.entity_id, (id) => {
+              (draft.triggers![idx] as typeof trg).entity_id = id;
+              renderTriggers();
+            }),
+            pillSel([['above', t('ruleGoesAbove')], ['below', t('ruleGoesBelow')]],
+              trg.below !== undefined && trg.above === undefined ? 'below' : 'above',
+              (v) => {
+                const cur = draft.triggers![idx] as typeof trg;
+                const n = cur.above ?? cur.below ?? 0;
+                draft.triggers![idx] = v === 'above'
+                  ? { ...cur, above: n, below: undefined }
+                  : { ...cur, below: n, above: undefined };
+                renderTriggers();
+              }),
+            numInput(trg.above ?? trg.below, '20', (n) => {
+              const cur = draft.triggers![idx] as typeof trg;
+              if (cur.below !== undefined && cur.above === undefined) cur.below = n;
+              else cur.above = n;
+            }),
+          ));
+          const attrLine = mk('div') as HTMLDivElement;
+          const attrInp = mk('input') as HTMLInputElement;
+          attrInp.placeholder = t('ruleAttributePh');
+          attrInp.value = trg.attribute ?? '';
+          attrInp.style.cssText = PILL + 'width:150px;';
+          attrInp.addEventListener('input', () => {
+            (draft.triggers![idx] as typeof trg).attribute = attrInp.value.trim() || undefined;
+          });
+          attrLine.appendChild(sentence(word(t('ruleOnAttribute')), attrInp));
+          block.appendChild(attrLine);
+        }
+
+        // Durée : repliée derrière un lien, parce qu'elle est rarement utile.
+        if (trg.type !== 'time') {
+          const holdWrap = mk('div') as HTMLDivElement;
+          const showHold = trg.for !== undefined;
+          if (showHold) {
+            holdWrap.appendChild(sentence(
+              word(t('ruleAndStaysFor')),
+              numInput(Math.round((trg.for ?? 0) / 60) || 1, '5', (n) => {
+                (draft.triggers![idx] as { for?: number }).for = n ? Math.round(n * 60) : undefined;
+              }),
+              word(t('ruleMinutes')),
+              removeBtn(() => { (draft.triggers![idx] as { for?: number }).for = undefined; renderTriggers(); }),
+            ));
+          } else {
+            holdWrap.appendChild(linkBtn(t('ruleAndStays'), () => {
+              (draft.triggers![idx] as { for?: number }).for = 300;
+              renderTriggers();
+            }));
+          }
+          block.appendChild(holdWrap);
+        }
+
+        whenPhase.body.appendChild(block);
+      });
+
+      const more = mk('div') as HTMLDivElement;
+      more.style.cssText = 'margin-top:9px;';
+      more.appendChild(linkBtn(t('ruleOrSomethingElse'), () => {
+        draft.triggers = [...(draft.triggers ?? []), { type: 'entity_state', entity_id: '' }];
+        renderTriggers();
+      }));
+      whenPhase.body.appendChild(more);
+      syncNamePlaceholder();
+    };
+
+    // ── Si (optionnel) ───────────────────────────────────────────────────────
+    const ifHost = mk('div') as HTMLDivElement;
+    bodyEl.appendChild(ifHost);
+
+    const OPS: [string, string][] = [
+      ['eq', t('ruleOpIs')], ['neq', t('ruleOpIsNot')],
+      ['gt', '>'], ['lt', '<'], ['gte', '≥'], ['lte', '≤'],
+      ['contains', t('ruleOpContains')],
+    ];
+
+    const renderConditions = () => {
+      ifHost.innerHTML = '';
+      const conds = draft.conditions ?? [];
+
+      // Vide : une seule ligne discrète, pas une section entière.
+      if (!conds.length) {
+        const idle = mk('div') as HTMLDivElement;
+        idle.style.cssText = 'padding:9px 13px;margin-bottom:9px;border-left:3px solid rgba(255,255,255,0.1);display:flex;gap:6px;align-items:center;';
+        idle.appendChild(word(t('ruleOnlyIf')));
+        idle.appendChild(linkBtn(t('ruleAddConditionLink'), () => {
+          draft.conditions = [{ entity_id: '', operator: 'eq', value: '' }];
+          renderConditions();
+        }));
+        ifHost.appendChild(idle);
+        syncNamePlaceholder();
+        return;
+      }
+
+      const p = phase('#888780', 'rgba(136,135,128,0.09)', '⊘', t('ruleIf'));
+      ifHost.appendChild(p.box);
+
+      // Le ET/OU n'a de sens qu'à partir de deux conditions.
+      if (conds.length > 1) {
+        p.body.appendChild(sentence(
+          word(t('ruleNeed')),
+          pillSel([['and', t('ruleLogicAnd')], ['or', t('ruleLogicOr')]], draft.logic ?? 'and',
+            (v) => { draft.logic = v as 'and' | 'or'; }),
+        ));
+      }
+
+      conds.forEach((cond, idx) => {
+        const block = mk('div') as HTMLDivElement;
+        block.style.cssText = idx > 0 ? 'margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.07);' : '';
+
+        if (cond.type === 'time') {
+          const after = mk('input') as HTMLInputElement;
+          after.type = 'time'; after.value = cond.after ?? '';
+          after.style.cssText = PILL + 'width:auto;';
+          after.addEventListener('input', () => { (draft.conditions![idx] as typeof cond).after = after.value || undefined; });
+          const before = mk('input') as HTMLInputElement;
+          before.type = 'time'; before.value = cond.before ?? '';
+          before.style.cssText = PILL + 'width:auto;';
+          before.addEventListener('input', () => { (draft.conditions![idx] as typeof cond).before = before.value || undefined; });
+          const row = sentence(word(t('ruleBetween')), after, word(t('ruleAndWord')), before);
+          row.appendChild(removeBtn(() => { draft.conditions!.splice(idx, 1); renderConditions(); }));
+          block.appendChild(row);
+        } else {
+          const row = sentence(
+            entityPill(cond.entity_id, (id) => {
+              (draft.conditions![idx] as { entity_id: string }).entity_id = id;
+              renderConditions();
+            }),
+            pillSel(OPS, cond.operator, (v) => {
+              (draft.conditions![idx] as typeof cond).operator = v as typeof cond.operator;
+            }),
+            pillSel(stateOptions(cond.entity_id, String(cond.value ?? '')), String(cond.value ?? ''),
+              (v) => { (draft.conditions![idx] as typeof cond).value = v; }),
+          );
+          row.appendChild(removeBtn(() => { draft.conditions!.splice(idx, 1); renderConditions(); }));
+          block.appendChild(row);
+        }
+        p.body.appendChild(block);
+      });
+
+      const add = mk('div') as HTMLDivElement;
+      add.style.cssText = 'margin-top:8px;display:flex;gap:12px;';
+      add.appendChild(linkBtn(t('ruleAddConditionLink'), () => {
+        draft.conditions = [...conds, { entity_id: '', operator: 'eq', value: '' }];
+        renderConditions();
+      }));
+      add.appendChild(linkBtn(t('ruleAddTimeWindow'), () => {
+        draft.conditions = [...conds, { type: 'time', after: '22:00' }];
+        renderConditions();
+      }));
+      p.body.appendChild(add);
+      syncNamePlaceholder();
+    };
+
+    // ── Alors ────────────────────────────────────────────────────────────────
+    const thenPhase = phase('#639922', 'rgba(99,153,34,0.09)', '▶', t('ruleThen'));
+    bodyEl.appendChild(thenPhase.box);
 
     const renderActions = () => {
-      actionsWrap.innerHTML = '';
+      thenPhase.body.innerHTML = '';
+
       draft.actions.forEach((action, idx) => {
-        const aRow = mk('div') as HTMLDivElement;
-        aRow.style.cssText = 'background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:8px;padding:8px 10px;margin-bottom:6px;';
+        const block = mk('div') as HTMLDivElement;
+        block.style.cssText = idx > 0 ? 'margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.07);' : '';
 
-        const aHdr = mk('div') as HTMLDivElement;
-        aHdr.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:6px;';
-
-        const typeSel = mk('select') as HTMLSelectElement;
-        typeSel.style.cssText = inputStyle + 'flex:1;';
-        [
-          ['go_to_view',   t('ruleActionGoToView')],
-          ['show_card',    t('ruleActionShowCard')],
-          ['hide_card',    t('ruleActionHideCard')],
+        const kindSel = pillSel([
+          ['go_to_view', t('ruleActionGoToView')],
+          ['highlight_anchor', t('ruleActionHighlight')],
+          ['toast', t('ruleActionToast')],
           ['call_service', t('ruleActionCallService')],
-        ].forEach(([v, l]) => {
-          const opt = mk('option') as HTMLOptionElement; opt.value = v; opt.textContent = l; typeSel.appendChild(opt);
-        });
-        typeSel.value = action.type;
-        typeSel.addEventListener('change', () => {
-          const newType = typeSel.value as Action['type'];
-          if (newType === 'go_to_view')   draft.actions[idx] = { type: 'go_to_view', view_id: '' };
-          if (newType === 'show_card')    draft.actions[idx] = { type: 'show_card', card_id: '' };
-          if (newType === 'hide_card')    draft.actions[idx] = { type: 'hide_card', card_id: '' };
-          if (newType === 'call_service') draft.actions[idx] = { type: 'call_service', domain: '', service: '' };
+        ], action.type, (v) => {
+          draft.actions[idx] =
+            v === 'go_to_view' ? { type: 'go_to_view', view_id: '' }
+            : v === 'highlight_anchor' ? { type: 'highlight_anchor', anchor: '' }
+            : v === 'toast' ? { type: 'toast', message: '' }
+            : { type: 'call_service', domain: '', service: '' };
           renderActions();
         });
 
-        const aDelBtn = mk('button') as HTMLButtonElement;
-        aDelBtn.textContent = '×';
-        aDelBtn.style.cssText = 'background:none;border:none;color:rgba(248,113,113,0.6);cursor:pointer;font-size:14px;padding:0 4px;';
-        aDelBtn.addEventListener('click', () => { draft.actions.splice(idx, 1); renderActions(); });
+        const head = sentence(kindSel);
+        head.appendChild(removeBtn(() => { draft.actions.splice(idx, 1); renderActions(); }));
+        block.appendChild(head);
 
-        aHdr.appendChild(typeSel);
-        aHdr.appendChild(aDelBtn);
-        aRow.appendChild(aHdr);
-
-        // Action-specific params
         if (action.type === 'go_to_view') {
-          const sel = mk('select') as HTMLSelectElement;
-          sel.style.cssText = inputStyle;
-          const emptyOpt = mk('option') as HTMLOptionElement; emptyOpt.value = ''; emptyOpt.textContent = t('rulePickView'); sel.appendChild(emptyOpt);
-          views.forEach((v) => {
-            const opt = mk('option') as HTMLOptionElement; opt.value = v.id ?? ''; opt.textContent = v.label; sel.appendChild(opt);
+          const opts: [string, string][] = [['', t('ruleChoose')]];
+          views.forEach((v) => opts.push([v.id ?? '', v.label]));
+          block.appendChild(sentence(
+            word(t('ruleTheView')),
+            pillSel(opts, action.view_id, (v) => { (draft.actions[idx] as typeof action).view_id = v; }),
+          ));
+        } else if (action.type === 'highlight_anchor') {
+          const col = mk('input') as HTMLInputElement;
+          col.type = 'color'; col.value = action.color ?? '#ef4444';
+          col.style.cssText = 'width:26px;height:26px;padding:0;border:1px solid rgba(255,255,255,0.14);border-radius:6px;background:transparent;cursor:pointer;';
+          col.addEventListener('change', () => { (draft.actions[idx] as typeof action).color = col.value; });
+          const opts = anchorOptions(action.anchor);
+          block.appendChild(sentence(
+            pillSel(opts, action.anchor,
+              (v) => { (draft.actions[idx] as typeof action).anchor = v; }),
+            word(t('ruleInColour')),
+            col,
+          ));
+          if (opts.length <= 1) {
+            const warn = mk('div') as HTMLDivElement;
+            warn.style.cssText = 'font-size:11px;color:#fbbf24;line-height:1.4;';
+            warn.textContent = t('ruleNoAnchors');
+            block.appendChild(warn);
+          }
+        } else if (action.type === 'toast') {
+          const msg = mk('input') as HTMLInputElement;
+          msg.placeholder = t('ruleToastPh'); msg.value = action.message;
+          msg.style.cssText = PILL + 'flex:1;min-width:150px;';
+          msg.addEventListener('input', () => { (draft.actions[idx] as typeof action).message = msg.value; });
+          block.appendChild(sentence(
+            msg,
+            pillSel([['info', t('ruleToastInfo')], ['warn', t('ruleToastWarn')]], action.level ?? 'info',
+              (v) => { (draft.actions[idx] as typeof action).level = v as 'info' | 'warn'; }),
+          ));
+        } else {
+          const svc = mk('input') as HTMLInputElement;
+          svc.placeholder = 'light.turn_on';
+          svc.value = action.domain && action.service ? `${action.domain}.${action.service}` : '';
+          svc.style.cssText = PILL + 'width:170px;';
+          svc.addEventListener('input', () => {
+            const parts = svc.value.trim().split('.');
+            const d = parts.shift();
+            const a = draft.actions[idx] as typeof action;
+            a.domain = d ?? ''; a.service = parts.join('.');
           });
-          sel.value = action.view_id;
-          sel.addEventListener('change', () => { (draft.actions[idx] as typeof action).view_id = sel.value; });
-          aRow.appendChild(sel);
-        } else if (action.type === 'show_card' || action.type === 'hide_card') {
-          const sel = mk('select') as HTMLSelectElement;
-          sel.style.cssText = inputStyle;
-          const emptyOpt = mk('option') as HTMLOptionElement; emptyOpt.value = ''; emptyOpt.textContent = t('rulePickCard'); sel.appendChild(emptyOpt);
-          cards.forEach((c) => {
-            const opt = mk('option') as HTMLOptionElement; opt.value = c.id; opt.textContent = c.name || c.id; sel.appendChild(opt);
-          });
-          sel.value = action.card_id;
-          sel.addEventListener('change', () => { (draft.actions[idx] as typeof action).card_id = sel.value; });
-          aRow.appendChild(sel);
-        } else if (action.type === 'call_service') {
-          const svcRow = mk('div') as HTMLDivElement;
-          svcRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:6px;';
-          const domainInp = mkInp(action.domain, 'domain');
-          domainInp.addEventListener('input', () => { (draft.actions[idx] as typeof action).domain = domainInp.value.trim(); });
-          const serviceInp = mkInp(action.service, 'service');
-          serviceInp.addEventListener('input', () => { (draft.actions[idx] as typeof action).service = serviceInp.value.trim(); });
-          svcRow.appendChild(domainInp);
-          svcRow.appendChild(serviceInp);
-          aRow.appendChild(svcRow);
+          block.appendChild(sentence(
+            svc,
+            word(t('ruleOnWord')),
+            entityPill((action.service_data?.entity_id as string) ?? '', (id) => {
+              const a = draft.actions[idx] as typeof action;
+              a.service_data = id ? { ...(a.service_data ?? {}), entity_id: id } : undefined;
+            }),
+          ));
         }
 
-        actionsWrap.appendChild(aRow);
+        thenPhase.body.appendChild(block);
       });
 
-      // Add action button
-      const addABtn = mk('button') as HTMLButtonElement;
-      addABtn.textContent = t('ruleAddAction');
-      addABtn.style.cssText = 'background:rgba(255,255,255,0.04);border:1px dashed rgba(255,255,255,0.15);border-radius:6px;color:#64748b;padding:6px 10px;font-size:10px;font-family:inherit;cursor:pointer;width:100%;margin-top:2px;';
-      addABtn.addEventListener('click', () => {
+      if (!draft.actions.length) {
+        const hint = mk('div') as HTMLDivElement;
+        hint.style.cssText = 'font-size:11px;color:#475569;margin-bottom:8px;line-height:1.5;';
+        hint.textContent = t('ruleScopeHint');
+        thenPhase.body.appendChild(hint);
+      }
+
+      const add = mk('div') as HTMLDivElement;
+      add.style.cssText = 'margin-top:8px;';
+      add.appendChild(linkBtn(draft.actions.length ? t('ruleAndAlso') : t('ruleAddFirstAction'), () => {
         draft.actions.push({ type: 'go_to_view', view_id: '' });
         renderActions();
-      });
-      actionsWrap.appendChild(addABtn);
+      }));
+      thenPhase.body.appendChild(add);
+      syncNamePlaceholder();
     };
+
+    renderTriggers();
+    renderConditions();
     renderActions();
 
-    // ── Footer ───────────────────────────────────────────────────────────────
+    // ── Réglages avancés ─────────────────────────────────────────────────────
+    const advWrap = mk('div') as HTMLDivElement;
+    advWrap.style.cssText = 'margin-top:14px;padding-top:11px;border-top:1px solid rgba(255,255,255,0.08);';
+    const advBody = mk('div') as HTMLDivElement;
+    advBody.style.cssText = 'display:none;padding-top:10px;';
+
+    const advToggle = mk('button') as HTMLButtonElement;
+    advToggle.style.cssText = LINK + 'display:flex;gap:6px;align-items:center;';
+    let advOpen = false;
+    const paintAdv = () => {
+      advToggle.textContent = `${advOpen ? '⌄' : '›'}  ${t('ruleAdvanced')}`;
+      advBody.style.display = advOpen ? 'block' : 'none';
+    };
+    advToggle.addEventListener('click', () => { advOpen = !advOpen; paintAdv(); });
+    paintAdv();
+
+    const labelInp = mk('input') as HTMLInputElement;
+    labelInp.value = draft.label ?? '';
+    labelInp.style.cssText = PILL + 'width:100%;box-sizing:border-box;';
+    labelInp.addEventListener('input', () => { draft.label = labelInp.value; });
+    syncNamePlaceholder = () => {
+      labelInp.placeholder = ruleIsComplete(draft)
+        ? ruleSummary(draft, hass, views).slice(0, 70)
+        : t('ruleNameExPh');
+    };
+    syncNamePlaceholder();
+    advBody.appendChild(sentence(word(t('ruleNameOptional'))));
+    advBody.appendChild(labelInp);
+
+    const cdRow = mk('div') as HTMLDivElement;
+    cdRow.style.cssText = 'margin-top:10px;';
+    cdRow.appendChild(sentence(
+      word(t('rulePauseBetween')),
+      numInput(draft.cooldown, '0', (n) => { draft.cooldown = n && n > 0 ? n : undefined; }),
+      word(t('ruleSeconds')),
+    ));
+    advBody.appendChild(cdRow);
+
+    advWrap.append(advToggle, advBody);
+    bodyEl.appendChild(advWrap);
+
+    // ── Pied ─────────────────────────────────────────────────────────────────
     const footer = mk('div') as HTMLDivElement;
     footer.style.cssText = 'display:flex;gap:8px;padding:12px 16px;border-top:1px solid rgba(255,255,255,0.08);flex-shrink:0;';
+
+    const testBtn = mk('button') as HTMLButtonElement;
+    testBtn.textContent = t('ruleTry');
+    testBtn.title = t('ruleTestHint');
+    testBtn.style.cssText = 'flex:1;background:rgba(125,209,252,0.13);border:1px solid rgba(125,209,252,0.34);border-radius:8px;color:#7dd3fc;padding:8px;font-size:11px;font-family:inherit;cursor:pointer;';
+    testBtn.addEventListener('click', () => {
+      this.onTestRule?.(draft);
+      testBtn.textContent = t('ruleTestDone');
+      window.setTimeout(() => { testBtn.textContent = t('ruleTry'); }, 1500);
+    });
 
     const cancelBtn = mk('button') as HTMLButtonElement;
     cancelBtn.textContent = t('ruleModalCancel');
@@ -3100,16 +3646,14 @@ export class EditPanel {
     saveBtn.textContent = t('ruleModalSave');
     saveBtn.style.cssText = 'flex:2;background:rgba(59,130,246,0.85);border:none;border-radius:8px;color:#fff;padding:8px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;';
     saveBtn.addEventListener('click', async () => {
-      if (!draft.trigger.entity_id?.trim()) {
-        trigEntityInp.style.borderColor = '#f87171';
-        trigEntityInp.focus();
+      const bad = (draft.triggers ?? []).find((x) => x.type !== 'time' && !x.entity_id.trim());
+      if (bad || !(draft.triggers ?? []).length) {
+        saveBtn.textContent = t('ruleNeedsTrigger');
+        window.setTimeout(() => { saveBtn.textContent = t('ruleModalSave'); }, 2000);
         return;
       }
       draft.label = labelInp.value.trim() || undefined;
-      // Normalize empty strings to undefined so triggerFired doesn't reject real states
-      const trig = draft.trigger as import('../rules/types').EntityStateTrigger;
-      if (!trig.to?.trim())   trig.to   = undefined;
-      if (!trig.from?.trim()) trig.from = undefined;
+      draft.trigger = undefined;
       const current = this.getRules?.() ?? [];
       const isNew = !current.find((r) => r.id === draft.id);
       const newRules = isNew ? [...current, draft] : current.map((r) => r.id === draft.id ? draft : r);
@@ -3120,8 +3664,7 @@ export class EditPanel {
       onSaved();
     });
 
-    footer.appendChild(cancelBtn);
-    footer.appendChild(saveBtn);
+    footer.append(testBtn, cancelBtn, saveBtn);
     dialog.appendChild(footer);
 
     document.body.appendChild(dialog);

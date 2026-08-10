@@ -58,15 +58,23 @@ interface Row {
 }
 
 const CSS = {
+  /**
+   * Le sélecteur est un `<dialog>` modal, pas un calque positionné.
+   *
+   * Un `<dialog>` ouvert avec `showModal()` vit dans le *top layer* du
+   * navigateur : il passe au-dessus de tout le DOM normal quel que soit le
+   * `z-index`, et rend le reste de la page inerte. Un simple calque ne pouvait
+   * donc ni s'afficher devant l'éditeur de règles, ni être cliqué. Deux modales
+   * s'empilent en revanche correctement, la dernière ouverte recevant les clics.
+   */
   panel: [
-    'position:absolute', 'top:50%', 'left:50%', 'transform:translate(-50%,-50%)',
-    'width:min(440px,92vw)', 'height:min(560px,86%)',
+    'position:fixed', 'inset:0', 'margin:auto', 'padding:0',
+    'width:min(440px,92vw)', 'height:min(560px,86vh)',
     'display:flex', 'flex-direction:column',
     'background:#151a27', 'border:1px solid rgba(255,255,255,0.13)',
-    'border-radius:12px', 'z-index:100000', 'overflow:hidden',
+    'border-radius:12px', 'overflow:hidden',
     'box-shadow:0 16px 48px rgba(0,0,0,0.75)',
     'font-family:var(--primary-font-family,sans-serif)', 'color:#e2e8f0',
-    'pointer-events:auto',
   ].join(';'),
   input: [
     'width:100%', 'box-sizing:border-box', 'background:rgba(255,255,255,0.05)',
@@ -99,8 +107,11 @@ export function openEntityPicker(opts: PickerOptions): () => void {
   let cursor = -1;
 
   // ── Structure ────────────────────────────────────────────────────────────
-  const panel = document.createElement('div');
+  const panel = document.createElement('dialog');
   panel.style.cssText = CSS.panel;
+  // Les touches ne doivent pas remonter au gestionnaire du mode édition, qui
+  // interpréterait « s » ou « a » comme un changement d'outil.
+  panel.addEventListener('keydown', (e) => e.stopPropagation());
 
   const header = document.createElement('div');
   header.style.cssText = 'padding:12px 14px 10px;border-bottom:1px solid rgba(255,255,255,0.07);display:flex;flex-direction:column;gap:8px;';
@@ -166,7 +177,11 @@ export function openEntityPicker(opts: PickerOptions): () => void {
   footer.append(hint, actions);
 
   panel.append(header, list, footer);
-  container.appendChild(panel);
+  // Détaché de la carte : une modale doit être dans le document pour rejoindre
+  // le top layer. `container` n'est conservé que pour la compatibilité d'appel.
+  void container;
+  document.body.appendChild(panel);
+  panel.showModal();
 
   // ── Fermeture ────────────────────────────────────────────────────────────
   let closed = false;
@@ -174,8 +189,15 @@ export function openEntityPicker(opts: PickerOptions): () => void {
     if (closed) return;
     closed = true;
     document.removeEventListener('keydown', onKey, true);
+    if (panel.open) panel.close();
     panel.remove();
   };
+  // Échap déclenche l'événement natif `cancel` : on nettoie et on prévient.
+  panel.addEventListener('cancel', (e) => {
+    e.preventDefault();
+    close();
+    onCancel?.();
+  });
   cancelBtn.addEventListener('click', () => { close(); onCancel?.(); });
 
   // ── Filtres ──────────────────────────────────────────────────────────────
