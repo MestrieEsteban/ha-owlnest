@@ -686,7 +686,9 @@ export class EnvironmentController {
     const mesh = new THREE.Mesh(geo, mat);
     mesh.rotation.x = -Math.PI / 2;
     // Place just above the model top
-    mesh.position.y = size.y / 2 + 0.05;
+    // Écart relatif : un plafond exporté à la hauteur exacte du modèle
+    // scintillerait contre ce plan.
+    mesh.position.y = size.y / 2 + Math.max(size.x, size.y, size.z) * 2e-3;
     mesh.castShadow = true;
     mesh.receiveShadow = false;
     // Ensure the shadow map uses a proper depth material
@@ -722,7 +724,24 @@ export class EnvironmentController {
   addGround(originalBox: THREE.Box3, config: CardConfig) {
     this.removeGround();
     const size = originalBox.getSize(new THREE.Vector3());
-    const groundY = -size.y / 2 - 0.01;
+
+    /**
+     * Écart entre le sol du décor et le plancher du modèle.
+     *
+     * Il était fixé à 0,01 unité — un dixième de millimètre sur un export en
+     * centimètres, bien en dessous de ce que la carte de profondeur distingue.
+     * Les deux plans scintillaient dès qu'on activait un sol.
+     *
+     * Deux millièmes de l'envergure : invisible à l'œil, largement au-dessus du
+     * seuil de résolution. Même constante que la séparation des dalles
+     * coplanaires, pour la même raison.
+     */
+    const span = Math.max(size.x, size.y, size.z, 1e-6);
+    const gap = span * 2e-3;
+    // Deux écarts sous le plancher : il faut laisser la place au disque du
+    // podium, qui vient se glisser entre les deux. Un seul écart le ramènerait
+    // exactement au niveau du plancher, donc au scintillement de départ.
+    const groundY = -size.y / 2 - gap * 2;
     const groundHex = config?.rendering?.ground_color
       ? parseInt(config.rendering.ground_color.replace('#', ''), 16)
       : 0x4a6741;
@@ -740,7 +759,9 @@ export class EnvironmentController {
       const radius = maxDim * 0.9 * scale;
       const baseHeight = maxDim * 0.07;
       const rimThickness = baseHeight * 0.18;
-      const rimInset = 0.015; // slight inset so rim sits snugly on base
+      // Un dixième de l'épaisseur du bord — la proportion d'origine, mais
+      // exprimée relativement au lieu d'une valeur en unités.
+      const rimInset = rimThickness * 0.1;
 
       // ─ Black base body (slightly tapered cylinder)
       const baseGeo = new THREE.CylinderGeometry(radius * 0.97, radius * 1.03, baseHeight, 64);
@@ -779,14 +800,14 @@ export class EnvironmentController {
       lip.receiveShadow = true;
 
       // ─ Presentation disc (user-colored top surface)
-      const discGeo = new THREE.CylinderGeometry(radius * 0.94, radius * 0.94, 0.005, 64);
+      const discGeo = new THREE.CylinderGeometry(radius * 0.94, radius * 0.94, gap, 64);
       const discMat = new THREE.MeshStandardMaterial({
         color: groundHex,
         roughness: 0.6,
         metalness: 0.08,
       });
       const disc = new THREE.Mesh(discGeo, discMat);
-      disc.position.y = groundY + 0.003;
+      disc.position.y = groundY + gap;
       disc.receiveShadow = true;
 
       group.add(base);

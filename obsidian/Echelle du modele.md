@@ -36,6 +36,11 @@ un export Y-up comme Z-up.
 | plan de coupe éloigné | `8 × span` |
 | densité du brouillard | `réglage × 10 / span` |
 | séparation des dalles coplanaires | `2e-3 × span` |
+| écart du sol du décor sous le modèle | `2 × 2e-3 × span` |
+| écart du plan d'occlusion au-dessus | `2e-3 × span` |
+| cotes du gizmo d'ancre | multiples du rayon de marqueur |
+| seuil d'arrivée d'un vol caméra | `5e-4 × span` |
+| plan proche et biais des ombres | fraction de la portée |
 | **portée des lumières** | `8 × span / 12` |
 | **intensité des lumières** | `3 × (span / 12)²` |
 
@@ -77,6 +82,17 @@ coûteux à diagnostiquer.
 - **« Tout est bleu, le modèle ne charge pas »** — brouillard saturé dès 3 m.
 - **Scintillement des sols** — plan de coupe proche collé à zéro, précision de
   profondeur ruinée. Voir [[Pieges]].
+- **« Le gizmo d'ancre est invisible »** — flèches de 6 mm, zone cliquable de 1 mm.
+- **« Ça scintille dès que j'active un sol »** — décor posé un dixième de
+  millimètre sous le plancher.
+- **Rayures sombres sur les murs éclairés** — acné d'ombre, plan proche du
+  frustum d'ombre non proportionné.
+
+> [!warning] Un piège en corrigeant ces écarts
+> Descendre le sol du décor d'un écart ramenait le disque du podium — placé à
+> `sol + écart` — exactement sur le plancher du modèle. Après toute modification
+> d'un empilement, vérifier **toutes** les altitudes, pas seulement celle qu'on
+> vient de bouger.
 
 > [!tip] Réflexe
 > Devant un symptôme visuel inexplicable sur un nouveau modèle, vérifier
