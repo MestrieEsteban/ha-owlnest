@@ -24,6 +24,7 @@ import type { SceneCard, SceneCardType } from './cards/types';
 import { PartController, meshOrder } from './parts-runtime';
 import { partIndexOf, partFrame, guessPart, verticalAxis } from './parts';
 import { separateCoplanarSlabs } from './coplanar';
+import { applyCutaway, clearCutaway, bandFor } from './cutaway';
 import { evalCondition, RuleEngine } from './rules/engine';
 import type { OwlnestRule, Action } from './rules/types';
 
@@ -2100,25 +2101,26 @@ class Ha3dFloorplan extends HTMLElement {
    * le choix de laisser les pastilles traverser les murs.
    */
   private _applyCutaway() {
-    if (!this.renderer) return;
+    if (!this._modelRoot) return;
     const fraction = this._effectiveConfig.rendering?.cutaway ?? 1;
 
-    if (!(fraction < 1) || !this._modelRoot) {
-      this.renderer.clippingPlanes = [];
+    if (!(fraction < 1)) {
+      clearCutaway(this._modelRoot);
       this._requestRender();
       return;
     }
 
     // La verticale se déduit du modèle : un export peut être Y-up comme Z-up.
     const axis = verticalAxis(this._modelBox);
-    const min = this._modelBox.min.getComponent(axis);
-    const max = this._modelBox.max.getComponent(axis);
-    const height = min + (max - min) * Math.max(0, fraction);
+    const up = new THREE.Vector3();
+    up.setComponent(axis, 1);
 
-    // Normale dirigée vers le bas : on conserve ce qui est sous le trait.
-    const normal = new THREE.Vector3();
-    normal.setComponent(axis, -1);
-    this.renderer.clippingPlanes = [new THREE.Plane(normal, height)];
+    const { top, bottom } = bandFor(
+      this._modelBox.min.getComponent(axis),
+      this._modelBox.max.getComponent(axis),
+      Math.max(0, fraction),
+    );
+    applyCutaway(this._modelRoot, { up, top, bottom });
     this._requestRender();
   }
 
