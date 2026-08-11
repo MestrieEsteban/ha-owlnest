@@ -283,6 +283,8 @@ export class EditPanel {
      * enregistrement.
      */
     private onConfigurePart?: (cfg: OwlnestPart) => boolean,
+    /** Envergure du modèle : les distances d'orbite s'y expriment. */
+    private getModelSpan?: () => number,
   ) {}
 
   // ── Card undo/redo ────────────────────────────────────────────────────────
@@ -969,17 +971,137 @@ export class EditPanel {
       'transition:border-color .15s',
     ].join(';');
 
-    const root = document.createElement('div');
-    root.style.cssText = 'padding:10px 12px 14px;display:flex;flex-direction:column;gap:0;';
-    container.appendChild(root);
+    const panelRoot = document.createElement('div');
+    panelRoot.style.cssText = 'padding:10px 12px 14px;display:flex;flex-direction:column;gap:0;';
+    container.appendChild(panelRoot);
 
-    // Section divider helper
+    /**
+     * Champ de recherche.
+     *
+     * Vingt-trois réglages dans une liste qui défile, cela se parcourt à l'œil et
+     * à l'espoir. Filtrer sur le libellé est le raccourci le plus rentable : on
+     * tape « ombre » et il ne reste que ce qui compte.
+     */
+    const search = document.createElement('input');
+    search.type = 'search';
+    search.placeholder = t('cfgSearch');
+    search.style.cssText = inputStyle + ';margin-bottom:4px;';
+    panelRoot.appendChild(search);
+
+    const emptyNote = document.createElement('div');
+    emptyNote.style.cssText = 'display:none;padding:14px 2px;font-size:11px;color:#64748b;';
+    emptyNote.textContent = t('cfgSearchEmpty');
+    panelRoot.appendChild(emptyNote);
+
+    /**
+     * Conteneur courant.
+     *
+     * `sec()` le réassigne à la section qu'il vient d'ouvrir. Les aides et les
+     * quelques `root.appendChild` directs de cette méthode déposent donc leurs
+     * contrôles au bon endroit, sans qu'aucun d'eux ait à être modifié.
+     */
+    let root: HTMLElement = panelRoot;
+
+    /** Sections construites, pour le filtrage et le pliage. */
+    const sections: { label: string; box: HTMLDetailsElement; body: HTMLElement }[] = [];
+
+
+
     const sec = (label: string) => {
-      const d = document.createElement('div');
-      d.style.cssText = 'font-size:9px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.07em;margin:14px 0 7px;padding-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.06);';
-      d.textContent = label;
-      root.appendChild(d);
+      const box = document.createElement('details');
+      box.style.cssText = 'border-bottom:1px solid rgba(255,255,255,0.06);';
+      // Repliée par défaut, sauf la première : on ouvre ce qu'on cherche plutôt
+      // que de tout subir.
+      //
+      // Le choix initial est inscrit dans la mémoire de pliage, et non appliqué
+      // seulement à l'objet : le filtre relit cette mémoire quand la recherche
+      // est vide, et refermait donc aussitôt la section qu'on venait d'ouvrir.
+      if (this._openConfigSections.size === 0 && sections.length === 0) {
+        this._openConfigSections.add(label);
+      }
+      box.open = this._openConfigSections.has(label);
+
+      const head = document.createElement('summary');
+      head.style.cssText = [
+        'cursor:pointer', 'list-style:none', 'padding:9px 2px',
+        'font-size:9px', 'font-weight:700', 'color:#94a3b8',
+        'text-transform:uppercase', 'letter-spacing:.07em',
+        'display:flex', 'align-items:center', 'gap:6px',
+      ].join(';');
+
+      const chevron = document.createElement('span');
+      chevron.textContent = '▸';
+      chevron.style.cssText = 'font-size:8px;color:#475569;transition:transform .15s;display:inline-block;';
+      const paint = () => {
+        chevron.style.transform = box.open ? 'rotate(90deg)' : 'none';
+        head.style.color = box.open ? '#cbd5e1' : '#94a3b8';
+      };
+      head.append(chevron, document.createTextNode(label));
+      box.appendChild(head);
+
+      const body = document.createElement('div');
+      body.style.cssText = 'padding:2px 2px 12px;';
+      box.appendChild(body);
+
+      // `toggle` ne sert qu'à l'apparence : il se déclenche aussi quand le
+      // filtre ouvre une section par programme.
+      box.addEventListener('toggle', paint);
+
+      /**
+       * L'intention de l'utilisateur se lit sur le clic, pas sur `toggle`.
+       *
+       * `toggle` est asynchrone et indifférent à son origine : un drapeau posé
+       * pendant le filtrage était déjà retombé quand l'événement arrivait, et la
+       * recherche réécrivait la mémoire de pliage — effacer le champ laissait
+       * alors tout refermé.
+       *
+       * Au moment du clic, l'action par défaut n'a pas encore inversé l'état :
+       * l'intention est donc l'inverse de l'état courant.
+       */
+      head.addEventListener('click', () => {
+        const wanted = !box.open;
+        if (wanted) this._openConfigSections.add(label);
+        else this._openConfigSections.delete(label);
+      });
+      paint();
+
+      panelRoot.appendChild(box);
+      sections.push({ label, box, body });
+      root = body;
     };
+
+    /**
+     * Filtre sur le texte visible.
+     *
+     * On lit le contenu textuel de chaque contrôle plutôt que d'étiqueter les
+     * vingt-trois appels : le libellé y est déjà, et rien ne peut se
+     * désynchroniser.
+     */
+    const applyFilter = () => {
+      const q = search.value.trim().toLowerCase();
+      let shown = 0;
+
+      for (const { label, box, body } of sections) {
+        let matches = 0;
+        for (const child of Array.from(body.children) as HTMLElement[]) {
+          const hit = !q
+            || (child.textContent ?? '').toLowerCase().includes(q)
+            || label.toLowerCase().includes(q);
+          child.style.display = hit ? '' : 'none';
+          if (hit) matches++;
+        }
+        box.style.display = matches ? '' : 'none';
+        // Une recherche ouvre ce qu'elle trouve ; l'effacer rend la main au
+        // pliage choisi par l'utilisateur.
+        if (q) box.open = matches > 0;
+        else box.open = this._openConfigSections.has(label);
+        shown += matches;
+      }
+      emptyNote.style.display = q && shown === 0 ? '' : 'none';
+    };
+    search.addEventListener('input', applyFilter);
+    // Appliqué en fin de construction, une fois toutes les sections présentes.
+    queueMicrotask(applyFilter);
 
     // Text input helper
     const textInput = (value: string, placeholder: string, onChange: (v: string) => void): HTMLInputElement => {
@@ -1273,6 +1395,8 @@ export class EditPanel {
     // ══════════════════════════════════════════════════════════════════════
     // 4) ATMOSPHERE — fog, transparent
     // ══════════════════════════════════════════════════════════════════════
+    sec(t('cfgAtmosphere'));
+
     sliderWithHelp(t('cfgFogDensity'), t('helpFogDensity'), 0, 0.05, 0.001, rendering.fog_density ?? 0.018,
       (v) => v.toFixed(3), (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, fog_density: v } }));
 
@@ -1290,11 +1414,37 @@ export class EditPanel {
     sec(t('cfgOrbit'));
     const orbit = settings.orbit ?? {};
 
-    sliderWithHelp(t('cfgMinDist'), t('helpMinDist'), 0, 20, 0.5, orbit.min_distance ?? 1,
-      (v) => v.toFixed(1), (v) => this.onSceneSettingsChange?.({ orbit: { ...orbit, min_distance: v } }));
+    /**
+     * Distances d'orbite, exprimées en multiples de l'envergure du modèle.
+     *
+     * Les bornes affichées étaient fixes — 0 à 20, puis 1 à 200 — et supposaient
+     * un modèle en mètres. Sur un export en centimètres, où la maison mesure 618
+     * unités, toucher le curseur ramenait la caméra à un mètre du centre : on ne
+     * voyait plus qu'un mur. La carte déduit désormais ces bornes de l'envergure,
+     * et le curseur doit parler la même langue.
+     *
+     * La valeur enregistrée reste une distance absolue : c'est le modèle de
+     * données qui compte, pas l'unité d'affichage.
+     */
+    const span = this.getModelSpan?.() ?? 0;
+    const relative = span > 0;
+    const unit = relative ? span : 1;
 
-    sliderWithHelp(t('cfgMaxDist'), t('helpMaxDist'), 1, 200, 1, orbit.max_distance ?? 100,
-      (v) => String(Math.round(v)), (v) => this.onSceneSettingsChange?.({ orbit: { ...orbit, max_distance: v } }));
+    sliderWithHelp(
+      t('cfgMinDist'), t('helpMinDist'),
+      relative ? 0.01 : 0, relative ? 0.5 : 20, relative ? 0.01 : 0.5,
+      (orbit.min_distance ?? (relative ? span * 0.05 : 1)) / unit,
+      (v) => (relative ? `${(v * span).toFixed(0)}` : v.toFixed(1)),
+      (v) => this.onSceneSettingsChange?.({ orbit: { ...orbit, min_distance: v * unit } }),
+    );
+
+    sliderWithHelp(
+      t('cfgMaxDist'), t('helpMaxDist'),
+      relative ? 0.5 : 1, relative ? 6 : 200, relative ? 0.1 : 1,
+      (orbit.max_distance ?? (relative ? span * 3 : 100)) / unit,
+      (v) => (relative ? `${(v * span).toFixed(0)}` : String(Math.round(v))),
+      (v) => this.onSceneSettingsChange?.({ orbit: { ...orbit, max_distance: v * unit } }),
+    );
 
     sliderWithHelp(t('cfgMaxPolar'), t('helpMaxPolar'), 0, 1, 0.05, orbit.max_polar_angle ?? 0.5,
       (v) => (v).toFixed(2) + '\u00d7\u03c0', (v) => this.onSceneSettingsChange?.({ orbit: { ...orbit, max_polar_angle: v } }));
@@ -3044,6 +3194,15 @@ export class EditPanel {
   // ── Ouvrants ──────────────────────────────────────────────────────────────
 
   private _partsBody: HTMLElement | null = null;
+
+  /**
+   * Sections de réglages ouvertes.
+   *
+   * Le panneau se reconstruit souvent — à chaque enregistrement, à chaque
+   * sélection. Sans cette mémoire, les sections se refermeraient sous les doigts
+   * de l'utilisateur.
+   */
+  private _openConfigSections = new Set<string>();
 
   /** Passe la carte en mode sélection, puis ouvre le formulaire sur la pièce. */
   private _startPartPick() {

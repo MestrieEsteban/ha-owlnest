@@ -1108,6 +1108,7 @@ class Ha3dFloorplan extends HTMLElement {
         if (applied) this._requestRender();
         return applied;
       },
+      () => this._modelSpan,
     );
 
     this._editPanel.onTestRule = (rule) => this.runRuleNow(rule);
