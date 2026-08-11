@@ -1219,25 +1219,27 @@ export class EditPanel {
       const activeId = this.getSceneId();
 
       /**
-       * Pastille de comptage.
+       * Résumé d'une scène en une seule ligne.
        *
-       * Un zéro reste affiché, en gris : « 0 ancre » informe, alors qu'une
-       * absence de pastille laisserait douter que le comptage ait eu lieu.
+       * Une première version affichait quatre pastilles — ancres, ouvrants,
+       * règles, vues. Le panneau ne fait que deux cent trente pixels : elles
+       * s'empilaient les unes sous les autres, six lignes par scène, avec des
+       * « 0 ouvrant, 0 règle, 0 vue » répétés partout.
        *
-       * Les libellés sont donnés au pluriel ; au singulier on retire le « s »
-       * final, ce qui convient au français comme à l'anglais pour ces quatre
-       * mots.
+       * On ne montre donc que ce qui existe. Une scène vide le dit en un mot,
+       * ce qui est plus informatif qu'une rangée de zéros.
        */
-      const tally = (n: number, label: string, accent = false) => {
-        const el = document.createElement('span');
-        el.style.cssText = [
-          'font-size:9px', 'font-variant-numeric:tabular-nums',
-          'padding:1px 5px', 'border-radius:3px',
-          accent ? 'color:#7dd3fc' : 'color:#94a3b8',
-          accent ? 'background:rgba(125,209,252,0.1)' : 'background:rgba(255,255,255,0.05)',
-        ].join(';');
-        el.textContent = `${n} ${n === 1 ? label.replace(/s$/, '') : label}`;
-        return el;
+      const summarize = (s: SceneSummary): string => {
+        if (s.error) return t('cfgSceneUnreadable');
+        const bits: string[] = [];
+        const add = (n: number, label: string) => {
+          if (n > 0) bits.push(`${n} ${n === 1 ? label.replace(/s$/, '') : label}`);
+        };
+        add(s.anchors, t('cfgTallyAnchors'));
+        add(s.parts, t('cfgTallyParts'));
+        add(s.rules, t('cfgTallyRules'));
+        add(s.views, t('cfgTallyViews'));
+        return bits.length ? bits.join(' · ') : t('cfgSceneEmptyOne');
       };
 
       const render = (summaries: SceneSummary[]) => {
@@ -1250,69 +1252,80 @@ export class EditPanel {
           return;
         }
 
-        for (const s of summaries) {
-          const isActive = s.id === activeId;
-          const row = document.createElement('div');
+        for (const sum of summaries) {
+          const isActive = sum.id === activeId;
+
+          /**
+           * La ligne entière charge la scène.
+           *
+           * Un bouton « Charger » par ligne mangeait la largeur disponible et
+           * poussait le résumé à la ligne suivante. Cliquer la scène qu'on veut
+           * ouvrir est de toute façon le geste attendu.
+           */
+          const row = document.createElement(isActive ? 'div' : 'button');
           row.style.cssText = [
-            'display:flex', 'align-items:center', 'gap:8px',
-            'padding:8px 10px',
-            isActive ? 'background:rgba(125,209,252,0.07)' : 'background:#0f1420',
+            'display:flex', 'align-items:center', 'gap:6px', 'width:100%',
+            'text-align:left', 'font-family:inherit',
+            'padding:7px 8px 7px 9px', 'border:none',
+            'border-left:2px solid ' + (isActive ? '#7dd3fc' : 'transparent'),
+            isActive ? 'background:rgba(125,209,252,0.08)' : 'background:#0f1420',
+            isActive ? 'cursor:default' : 'cursor:pointer',
           ].join(';');
 
-          const text = document.createElement('div');
-          text.style.cssText = 'flex:1;min-width:0;';
+          if (!isActive) {
+            row.addEventListener('mouseenter', () => { row.style.background = '#151b2a'; });
+            row.addEventListener('mouseleave', () => { row.style.background = '#0f1420'; });
+            row.addEventListener('click', () => {
+              localStorage.setItem('owlnest_scene_id', sum.id);
+              this.onSceneSettingsChange?.({ scene_id: sum.id } as SceneSettings, true);
+            });
+            (row as HTMLButtonElement).title = t('cfgSceneLoadTitle').replace('{id}', sum.id);
+          }
 
-          const name = document.createElement('div');
-          name.style.cssText = `font-size:11.5px;font-weight:${isActive ? 650 : 500};color:${isActive ? '#7dd3fc' : '#e2e8f0'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
-          name.textContent = s.id + (isActive ? ` · ${t('cfgSceneActive')}` : '');
+          const text = document.createElement('span');
+          text.style.cssText = 'flex:1;min-width:0;display:block;';
+
+          const name = document.createElement('span');
+          name.style.cssText = [
+            'display:block', 'font-size:11.5px',
+            `font-weight:${isActive ? 650 : 500}`,
+            `color:${isActive ? '#7dd3fc' : '#e2e8f0'}`,
+            'white-space:nowrap', 'overflow:hidden', 'text-overflow:ellipsis',
+          ].join(';');
+          name.textContent = sum.id;
           text.appendChild(name);
 
-          const counts = document.createElement('div');
-          counts.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;';
-          if (s.error) {
-            const bad = document.createElement('span');
-            bad.style.cssText = 'font-size:9px;color:#fbbf24;';
-            bad.textContent = `⚠ ${t('cfgSceneUnreadable')}`;
-            counts.appendChild(bad);
-          } else {
-            counts.append(
-              tally(s.anchors, t('cfgTallyAnchors'), s.anchors > 0),
-              tally(s.parts, t('cfgTallyParts'), s.parts > 0),
-              tally(s.rules, t('cfgTallyRules'), s.rules > 0),
-              tally(s.views, t('cfgTallyViews'), s.views > 0),
-            );
-          }
-          text.appendChild(counts);
+          const sub = document.createElement('span');
+          sub.style.cssText = [
+            'display:block', 'margin-top:2px', 'font-size:9.5px',
+            `color:${sum.error ? '#fbbf24' : '#64748b'}`,
+            'white-space:nowrap', 'overflow:hidden', 'text-overflow:ellipsis',
+          ].join(';');
+          sub.textContent = (sum.error ? '⚠ ' : '') + summarize(sum)
+            + (isActive ? ` · ${t('cfgSceneActive')}` : '');
+          text.appendChild(sub);
           row.appendChild(text);
 
-          if (!isActive) {
-            const load = document.createElement('button');
-            load.textContent = t('cfgLoadScene');
-            load.style.cssText = 'flex-shrink:0;background:rgba(125,209,252,0.12);border:1px solid rgba(125,209,252,0.28);border-radius:6px;color:#7dd3fc;padding:5px 9px;font-size:10.5px;font-family:inherit;cursor:pointer;white-space:nowrap;';
-            load.addEventListener('click', () => {
-              localStorage.setItem('owlnest_scene_id', s.id);
-              this.onSceneSettingsChange?.({ scene_id: s.id } as SceneSettings, true);
-            });
-            row.appendChild(load);
-          }
-
-          const del = document.createElement('button');
-          del.style.cssText = 'flex-shrink:0;background:none;border:none;color:rgba(248,113,113,0.55);cursor:pointer;font-size:14px;padding:2px 5px;font-family:inherit;';
+          const del = document.createElement('span');
+          del.setAttribute('role', 'button');
+          del.style.cssText = 'flex-shrink:0;color:rgba(248,113,113,0.5);cursor:pointer;font-size:14px;line-height:1;padding:3px 4px;';
           del.textContent = '×';
           del.title = t('cfgSceneDelete');
           // La scène ouverte n'est pas supprimable : la carte se retrouverait
           // sans rien à afficher, et l'utilisateur sans moyen de revenir.
           if (isActive) {
-            del.disabled = true;
-            del.style.opacity = '0.25';
+            del.style.opacity = '0.2';
             del.style.cursor = 'default';
             del.title = t('cfgSceneDeleteActive');
           } else {
-            del.addEventListener('click', () => {
-              if (!confirm(t('cfgSceneConfirm').replace('{id}', s.id))) return;
+            del.addEventListener('click', (e) => {
+              // Sans cela, le clic remonterait à la ligne et chargerait la
+              // scène qu'on cherche à supprimer.
+              e.stopPropagation();
+              if (!confirm(t('cfgSceneConfirm').replace('{id}', sum.id))) return;
               const hass = this.getHass();
               if (!hass) return;
-              deleteScene(hass, s.id)
+              deleteScene(hass, sum.id)
                 .then(() => refresh())
                 .catch((err) => console.error('[Owlnest] delete_scene failed:', err));
             });
