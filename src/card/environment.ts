@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import type { CardConfig, Hass, SunMode, GroundStyle } from '../types';
 import { qualityFromConfig } from '../quality';
+import { modelScale } from '../scale';
 
 export type WeatherEffect =
   | 'none'
@@ -299,6 +300,23 @@ export class EnvironmentController {
     }
   }
 
+  /**
+   * Facteur d'échelle des particules.
+   *
+   * Toutes les longueurs, vitesses et tailles de la météo étaient écrites pour
+   * un modèle en mètres : des gouttes de quatre millimètres tombant à trois
+   * centimètres par seconde sur un export en centimètres. Rien n'était visible.
+   *
+   * Les vents ne sont pas concernés : dans la boucle de mise à jour ce sont des
+   * multiplicateurs adimensionnés appliqués à une vitesse déjà mise à l'échelle.
+   * Les seules exceptions sont les amplitudes de la neige, multipliées par le
+   * temps seul, donc bien des vitesses.
+   */
+  private get _wScale(): number {
+    const size = this.getModelBox().getSize(new THREE.Vector3());
+    return modelScale(Math.max(size.x, size.y, size.z));
+  }
+
   // ── Rain ──────────────────────────────────────────────────────────────────
 
   private _createRain(
@@ -313,6 +331,7 @@ export class EnvironmentController {
     const { cx, cz, yTop, yBot, spreadX, spreadZ } = meta;
     const spawnXZ = this._makeSpawnXZ(meta);
 
+    const k = this._wScale;
     const pos = new Float32Array(count * 6);
     const speeds  = new Float32Array(count);
     const lengths = new Float32Array(count);
@@ -320,10 +339,10 @@ export class EnvironmentController {
     for (let i = 0; i < count; i++) {
       const [x, z] = spawnXZ();
       const y   = yBot + Math.random() * (yTop - yBot);
-      const len = 0.12 + Math.random() * 0.32;
+      const len = (0.12 + Math.random() * 0.32) * k;
       lengths[i] = len;
-      speeds[i]  = baseSpeed + Math.random() * speedVar;
-      const wx = -0.06;
+      speeds[i]  = (baseSpeed + Math.random() * speedVar) * k;
+      const wx = -0.06 * k;
       pos[i*6+0] = x;       pos[i*6+1] = y;        pos[i*6+2] = z;
       pos[i*6+3] = x + wx;  pos[i*6+4] = y - len;  pos[i*6+5] = z;
     }
@@ -348,6 +367,7 @@ export class EnvironmentController {
     const { cx, cz, yTop, yBot, spreadX, spreadZ } = meta;
     const spawnXZ = this._makeSpawnXZ(meta);
 
+    const k = this._wScale;
     const pos    = new Float32Array(count * 3);
     const phases = new Float32Array(count);
     const speeds = new Float32Array(count);
@@ -358,13 +378,13 @@ export class EnvironmentController {
       pos[i*3+1] = yBot + Math.random() * (yTop - yBot);
       pos[i*3+2] = z;
       phases[i] = Math.random() * Math.PI * 2;
-      speeds[i] = 0.3 + Math.random() * 0.35;
+      speeds[i] = (0.3 + Math.random() * 0.35) * k;
     }
 
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     const mat = new THREE.PointsMaterial({
-      color: colorHex, size, transparent: true, opacity,
+      color: colorHex, size: size * k, transparent: true, opacity,
       depthWrite: false, sizeAttenuation: true,
     });
     const mesh = new THREE.Points(geo, mat);
@@ -424,6 +444,7 @@ export class EnvironmentController {
     const { cx, cz, yTop, yBot, spreadX, spreadZ } = meta;
     const spawnXZ = this._makeSpawnXZ(meta);
 
+    const k = this._wScale;
     const COUNT = this._n(600);
     const pos     = new Float32Array(COUNT * 6);
     const speeds  = new Float32Array(COUNT);
@@ -432,11 +453,11 @@ export class EnvironmentController {
     for (let i = 0; i < COUNT; i++) {
       const [x, z] = spawnXZ();
       const y   = yBot + Math.random() * (yTop - yBot);
-      const len = 0.05 + Math.random() * 0.1;   // short, chunky
+      const len = (0.05 + Math.random() * 0.1) * k;   // short, chunky
       lengths[i] = len;
-      speeds[i]  = 9 + Math.random() * 5;       // fast drop
-      pos[i*6+0] = x;          pos[i*6+1] = y;        pos[i*6+2] = z;
-      pos[i*6+3] = x - 0.02;   pos[i*6+4] = y - len;  pos[i*6+5] = z;
+      speeds[i]  = (9 + Math.random() * 5) * k;      // fast drop
+      pos[i*6+0] = x;              pos[i*6+1] = y;        pos[i*6+2] = z;
+      pos[i*6+3] = x - 0.02 * k;   pos[i*6+4] = y - len;  pos[i*6+5] = z;
     }
 
     const geo = new THREE.BufferGeometry();
@@ -458,6 +479,7 @@ export class EnvironmentController {
     const meta = this._makeBoxMeta(box);
     const { cx, cz, yTop, yBot, spreadX, spreadZ } = meta;
 
+    const k = this._wScale;
     const COUNT   = this._n(140);
     const pos     = new Float32Array(COUNT * 6);  // head + tail per trail
     const speeds  = new Float32Array(COUNT);
@@ -468,9 +490,9 @@ export class EnvironmentController {
       const x = cx + (Math.random() - 0.5) * spreadX;
       const z = cz + (Math.random() - 0.5) * spreadZ;
       const y = yBot + Math.random() * (yTop - yBot) * 0.55;
-      const len = 0.2 + Math.random() * 0.5;
+      const len = (0.2 + Math.random() * 0.5) * k;
       lengths[i] = len;
-      speeds[i]  = 2.0 + Math.random() * 2.5;
+      speeds[i]  = (2.0 + Math.random() * 2.5) * k;
       // head
       pos[i*6+0] = x;         pos[i*6+1] = y; pos[i*6+2] = z;
       // tail (behind the default wind direction +X)
@@ -581,14 +603,19 @@ export class EnvironmentController {
         }
       }
     } else if (particleType === 'snow') {
-      const macroWindX = Math.sin(t * 0.15) * 0.25;
-      const macroWindZ = Math.cos(t * 0.12) * 0.15;
+      // Ces amplitudes sont multipliées par le temps seul : ce sont donc des
+      // vitesses, et elles doivent suivre l'échelle du modèle. Les vents de la
+      // pluie, eux, multiplient une vitesse déjà mise à l'échelle et restent
+      // adimensionnés.
+      const k = this._wScale;
+      const macroWindX = Math.sin(t * 0.15) * 0.25 * k;
+      const macroWindZ = Math.cos(t * 0.12) * 0.15 * k;
       for (let i = 0, pi = 0; i < arr.length; i += 3, pi++) {
         const spd = speeds[pi];
         const ph  = phases![pi];
         arr[i+1] -= spd * dt;
-        arr[i+0] += (macroWindX + Math.sin(t * 0.6 + ph) * 0.12) * dt;
-        arr[i+2] += (macroWindZ + Math.cos(t * 0.4 + ph * 1.3) * 0.08) * dt;
+        arr[i+0] += (macroWindX + Math.sin(t * 0.6 + ph) * 0.12 * k) * dt;
+        arr[i+2] += (macroWindZ + Math.cos(t * 0.4 + ph * 1.3) * 0.08 * k) * dt;
         if (arr[i+1] < yBot) {
           const [x, z] = spawnXZ();
           arr[i+0] = x; arr[i+1] = yTop; arr[i+2] = z;
@@ -611,7 +638,7 @@ export class EnvironmentController {
         arr[i+5] = arr[i+2] - (windZ / windLen) * len;
         // Respawn at upwind edge (left side) when head exits spread
         if (arr[i+0] > cx + spreadX * 0.52 || Math.abs(arr[i+2] - cz) > spreadZ * 0.55) {
-          arr[i+0] = cx - spreadX * 0.5 + (Math.random() - 0.5) * 2;
+          arr[i+0] = cx - spreadX * 0.5 + (Math.random() - 0.5) * 2 * this._wScale;
           arr[i+1] = yBot + Math.random() * (yTop - yBot) * 0.55;
           arr[i+2] = cz + (Math.random() - 0.5) * spreadZ * 0.9;
           arr[i+3] = arr[i+0] - (windX / windLen) * len;

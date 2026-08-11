@@ -1,14 +1,7 @@
 import * as THREE from 'three';
 import type { AnchorEntry, CardConfig, Hass } from './types';
 import { describeEntity } from './entities/descriptors';
-
-/**
- * Envergure supposée par les réglages d'origine, en unités de modèle.
- *
- * Les valeurs par défaut — portée 8, intensité 3 — ont été choisies pour une
- * maison exprimée en mètres, donc une dizaine d'unités de large.
- */
-export const LIGHT_REFERENCE_SPAN = 12;
+import { REFERENCE_SPAN, modelScale } from './scale';
 
 /**
  * Facteur d'échelle des lumières, déduit de l'envergure du modèle.
@@ -16,10 +9,11 @@ export const LIGHT_REFERENCE_SPAN = 12;
  * Un export Sweet Home 3D est en centimètres : une maison y mesure 600 unités
  * au lieu de 6. Une portée de 8 éclaire alors 8 cm, et l'intensité par défaut
  * disparaît — c'est le symptôme « on ne voit même pas la lumière ».
+ *
+ * La référence est partagée avec le reste du projet : voir `scale.ts`.
  */
-export function lightScale(span?: number): number {
-  return span && span > 0 ? span / LIGHT_REFERENCE_SPAN : 1;
-}
+export const LIGHT_REFERENCE_SPAN = REFERENCE_SPAN;
+export const lightScale = modelScale;
 
 /**
  * Multiplicateur d'intensité pour une lumière à décroissance physique.

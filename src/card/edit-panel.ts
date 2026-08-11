@@ -1572,7 +1572,10 @@ export class EditPanel {
       t('cfgMinDist'), t('helpMinDist'),
       relative ? 0.01 : 0, relative ? 0.5 : 20, relative ? 0.01 : 0.5,
       (orbit.min_distance ?? (relative ? span * 0.05 : 1)) / unit,
-      (v) => (relative ? `${(v * span).toFixed(0)}` : v.toFixed(1)),
+      // Affiché en multiples de la taille du logement, non en unités de modèle :
+      // « 9 » ou « 556 » ne veulent rien dire quand une unité vaut trois
+      // centimètres, alors que « 0,05 × » se comprend tout de suite.
+      (v) => (relative ? `${v.toFixed(2)}×` : v.toFixed(1)),
       (v) => this.onSceneSettingsChange?.({ orbit: { ...orbit, min_distance: v * unit } }),
     );
 
@@ -1580,7 +1583,7 @@ export class EditPanel {
       t('cfgMaxDist'), t('helpMaxDist'),
       relative ? 0.5 : 1, relative ? 6 : 200, relative ? 0.1 : 1,
       (orbit.max_distance ?? (relative ? span * 3 : 100)) / unit,
-      (v) => (relative ? `${(v * span).toFixed(0)}` : String(Math.round(v))),
+      (v) => (relative ? `${v.toFixed(1)}×` : String(Math.round(v))),
       (v) => this.onSceneSettingsChange?.({ orbit: { ...orbit, max_distance: v * unit } }),
     );
 

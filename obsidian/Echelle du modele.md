@@ -13,6 +13,16 @@ remettre son plan à l'échelle dans Blender — ou de lancer un script — revi
 lui demander de ne pas utiliser la carte. Voir [[floor3d-card]], dont c'est
 précisément la barrière d'entrée.
 
+## Une seule constante de calibrage
+
+`src/scale.ts` porte la référence — **12 unités**, une maison en mètres — et sa
+conversion. `lights.ts` la réexporte sous ses anciens noms.
+
+> [!warning] Ne pas la dupliquer
+> Elle a déjà dérivé trois fois : lumières, brouillard, météo, chacune avec sa
+> propre valeur écrite en dur. Toute nouvelle grandeur en distance passe par
+> `modelScale()`.
+
 ## La grandeur de référence
 
 `_modelSpan` : la plus grande dimension de la boîte englobante du modèle.
@@ -41,6 +51,9 @@ un export Y-up comme Z-up.
 | cotes du gizmo d'ancre | multiples du rayon de marqueur |
 | seuil d'arrivée d'un vol caméra | `5e-4 × span` |
 | plan proche et biais des ombres | fraction de la portée |
+| **gouttes, flocons, vitesses de chute** | `× span / 12` |
+| **taille des flocons** | `× span / 12` |
+| affichage des limites d'orbite | multiple de la taille du logement |
 | **portée des lumières** | `8 × span / 12` |
 | **intensité des lumières** | `3 × (span / 12)²` |
 
@@ -87,6 +100,13 @@ coûteux à diagnostiquer.
   millimètre sous le plancher.
 - **Rayures sombres sur les murs éclairés** — acné d'ombre, plan proche du
   frustum d'ombre non proportionné.
+- **« La météo ne se voit pas »** — des gouttes de quatre millimètres tombant à
+  trois centimètres par seconde. Relevé sur un modèle de 185 unités : longueur
+  0,12 à 0,44, vitesse 4,5 unités par seconde, soit 2 % de la hauteur du
+  logement chaque seconde.
+- **« Le zoom min et max ne veulent rien dire »** — les curseurs affichaient des
+  unités de modèle brutes (« 9 », « 556 ») là où une unité valait trois
+  centimètres. Les bornes étaient justes, seul l'affichage était illisible.
 
 > [!warning] Un piège en corrigeant ces écarts
 > Descendre le sol du décor d'un écart ramenait le disque du podium — placé à
@@ -96,4 +116,22 @@ coûteux à diagnostiquer.
 
 > [!tip] Réflexe
 > Devant un symptôme visuel inexplicable sur un nouveau modèle, vérifier
-> l'envergure avant toute chose. Quatre bugs distincts sur cinq venaient de là.
+> l'envergure avant toute chose. Six symptômes sur sept venaient de là.
+
+## Ce qui n'est PAS une distance
+
+Toutes les constantes ne se mettent pas à l'échelle, et en convertir une par
+excès casse le rendu aussi sûrement.
+
+- **Les vents de la pluie et du vent** sont des multiplicateurs adimensionnés
+  appliqués à une vitesse déjà mise à l'échelle : `position += vent × vitesse × dt`.
+- **Les amplitudes de la neige**, elles, sont multipliées par le temps seul :
+  `position += amplitude × dt`. Ce sont donc des vitesses, et elles se
+  transposent.
+- **Les fréquences temporelles** (`sin(t × 0.35)`) n'ont rien à voir avec
+  l'espace.
+
+> [!tip] Comment trancher
+> Regarder l'expression qui utilise la constante. Multipliée par `dt` seul, c'est
+> une vitesse — elle se transpose. Multipliée par une vitesse, c'est un rapport —
+> elle ne se transpose pas.
