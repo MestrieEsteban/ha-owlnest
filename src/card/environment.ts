@@ -68,6 +68,73 @@ export class EnvironmentController {
     private requestRender: () => void,
   ) {}
 
+  /**
+   * Teinte d'origine de la lumière d'ambiance.
+   *
+   * Certaines météos la refroidissent. Sans mémoire de la valeur de départ, on
+   * ne saurait pas y revenir — et la scène garderait la teinte du dernier orage.
+   */
+  private _baseHemiColor: THREE.Color | null = null;
+
+  /** Teinte d'origine du brouillard, pour pouvoir y revenir. */
+  private _baseFogColor: THREE.Color | null = null;
+
+  /**
+   * Remet l'éclairage à ce que demande la configuration.
+   *
+   * `_applyAtmosphere` appliquait ses facteurs en **multipliant** l'intensité
+   * courante : passer de la pluie au beau temps puis à la pluie assombrissait la
+   * scène un peu plus à chaque fois, sans jamais revenir. On repart donc toujours
+   * des valeurs de base, relues dans la configuration.
+   */
+  private _resetLights(): { hemi: number; sun: number } {
+    const rl = this.getConfig()?.rendering ?? {};
+    const hemi = rl.ambient_intensity ?? 0.7;
+    const sun = rl.sun_intensity ?? 0.8;
+    if (!this._baseHemiColor) this._baseHemiColor = this.hemiLight.color.clone();
+    else this.hemiLight.color.copy(this._baseHemiColor);
+    this.hemiLight.intensity = hemi;
+    this.sunLight.intensity = sun;
+    return { hemi, sun };
+  }
+
+  /**
+   * Densité de brouillard, mise à l'échelle du modèle.
+   *
+   * Les météos écrivaient `fog.density` directement, en contournant la
+   * transposition. Sur un export en centimètres, `0,018 × 1,5` sature le
+   * brouillard à trois unités : combiné à une teinte presque noire, le modèle
+   * disparaissait complètement.
+   */
+  /**
+   * Remet l'atmosphère à sa ligne de base.
+   *
+   * Cette remise à zéro vivait dans `removeWeatherParticles()`, qui sort
+   * immédiatement quand il n'y a rien à retirer. Or `fog`, `cloudy`,
+   * `exceptional` et `lightning-only` ne créent aucune particule : on ne pouvait
+   * jamais en sortir, et le brouillard gardait leur densité — et leur teinte,
+   * qui n'était de toute façon jamais restaurée.
+   *
+   * Elle appartient donc à l'atmosphère, pas aux particules.
+   */
+  private _resetAtmosphere() {
+    this._resetLights();
+    const fog = this.scene.fog;
+    if (fog instanceof THREE.FogExp2) {
+      if (!this._baseFogColor) this._baseFogColor = fog.color.clone();
+      else fog.color.copy(this._baseFogColor);
+    }
+    this._setFogDensity(this.getConfig()?.rendering?.fog_density ?? 0.018);
+  }
+
+  private _setFogDensity(asked: number) {
+    const fog = this.scene.fog;
+    if (!(fog instanceof THREE.FogExp2)) return;
+    const size = this.getModelBox().getSize(new THREE.Vector3());
+    const span = Math.max(size.x, size.y, size.z);
+    fog.density = asked / modelScale(span);
+  }
+
   get weatherParticles() { return this._weatherParticles; }
   get weatherType() { return this._weatherType; }
   set weatherType(v: WeatherEffect) { this._weatherType = v; }
@@ -196,73 +263,90 @@ export class EnvironmentController {
   private _applyAtmosphere(effect: WeatherEffect) {
     const fog = this.scene.fog as THREE.FogExp2 | null;
     const baseDensity = this.getConfig()?.rendering?.fog_density ?? 0.018;
+    // Toujours repartir d'une base propre : les facteurs ci-dessous sont des
+    // assignations, jamais des multiplications cumulées.
+    this._resetAtmosphere();
+    const rl = this.getConfig()?.rendering ?? {};
+    const hemi = rl.ambient_intensity ?? 0.7;
+    const sun = rl.sun_intensity ?? 0.8;
+    const dim = (h: number, s?: number) => {
+      this.hemiLight.intensity = hemi * h;
+      if (s !== undefined) this.sunLight.intensity = sun * s;
+    };
+    const tint = (hex: number) => this.hemiLight.color.setHex(hex);
 
     switch (effect) {
       case 'none':
         break;
 
       case 'cloudy':
-        this.hemiLight.intensity *= 0.5;
-        this.sunLight.intensity  *= 0.2;
-        if (fog) { fog.color.setHex(0x8899aa); fog.density = baseDensity * 1.4; }
+        dim(0.5, 0.2);
+        if (fog) fog.color.setHex(0x8899aa);
+        this._setFogDensity(baseDensity * 1.4);
         break;
 
       case 'exceptional':
-        this.hemiLight.intensity *= 0.38;
-        this.sunLight.intensity  *= 0.25;
-        if (fog) { fog.color.setHex(0x1a0a00); fog.density = baseDensity * 3; }
+        dim(0.38, 0.25);
+        if (fog) fog.color.setHex(0x1a0a00);
+        this._setFogDensity(baseDensity * 3);
         break;
 
       case 'fog':
-        this.hemiLight.intensity *= 0.52;
-        this.hemiLight.color.setHex(0xb8ccd8);
-        this.sunLight.intensity  *= 0.06;
-        // FogExp2 at ×1.4: ~3% at 2 m (interior, imperceptible), ~16% at 10 m (exterior, subtle)
-        if (fog) { fog.color.setHex(0xa8b8c4); fog.density = baseDensity * 1.4; }
+        dim(0.52, 0.06);
+        tint(0xb8ccd8);
+        if (fog) fog.color.setHex(0xa8b8c4);
+        this._setFogDensity(baseDensity * 1.4);
         break;
 
       case 'wind':
-        this.hemiLight.intensity *= 0.88;
-        if (fog) { fog.density = baseDensity * 1.1; }
+        dim(0.88);
+        this._setFogDensity(baseDensity * 1.1);
         break;
 
       case 'rain':
-        this.hemiLight.intensity *= 0.6;
-        if (fog) { fog.color.setHex(0x0a1020); fog.density = baseDensity * 1.5; }
+        dim(0.6);
+        if (fog) fog.color.setHex(0x0a1020);
+        this._setFogDensity(baseDensity * 1.5);
         break;
 
       case 'rain-heavy':
-        this.hemiLight.intensity *= 0.45;
-        if (fog) { fog.color.setHex(0x060e18); fog.density = baseDensity * 2.0; }
+        dim(0.45);
+        if (fog) fog.color.setHex(0x060e18);
+        this._setFogDensity(baseDensity * 2.0);
         break;
 
       case 'rain-storm':
-        this.hemiLight.intensity *= 0.35;
-        if (fog) { fog.color.setHex(0x070b12); fog.density = baseDensity * 2.5; }
+        dim(0.35);
+        if (fog) fog.color.setHex(0x070b12);
+        this._setFogDensity(baseDensity * 2.5);
         this._lightningTimer = 2 + Math.random() * 4;
         break;
 
       case 'lightning-only':
-        this.hemiLight.intensity *= 0.32;
-        if (fog) { fog.color.setHex(0x09101a); fog.density = baseDensity * 2.2; }
+        dim(0.32);
+        if (fog) fog.color.setHex(0x09101a);
+        this._setFogDensity(baseDensity * 2.2);
         this._lightningTimer = 2 + Math.random() * 5;
         break;
 
       case 'snow':
-        this.hemiLight.intensity *= 0.8;
-        this.hemiLight.color.setHex(0xd0dff0);
-        if (fog) { fog.color.setHex(0x1a2030); fog.density = baseDensity * 1.2; }
+        dim(0.8);
+        tint(0xd0dff0);
+        if (fog) fog.color.setHex(0x1a2030);
+        this._setFogDensity(baseDensity * 1.2);
         break;
 
       case 'snow-rain':
-        this.hemiLight.intensity *= 0.62;
-        this.hemiLight.color.setHex(0xb0c8d8);
-        if (fog) { fog.color.setHex(0x0d1520); fog.density = baseDensity * 1.7; }
+        dim(0.62);
+        tint(0xb0c8d8);
+        if (fog) fog.color.setHex(0x0d1520);
+        this._setFogDensity(baseDensity * 1.7);
         break;
 
       case 'hail':
-        this.hemiLight.intensity *= 0.48;
-        if (fog) { fog.color.setHex(0x0a1020); fog.density = baseDensity * 1.9; }
+        dim(0.48);
+        if (fog) fog.color.setHex(0x0a1020);
+        this._setFogDensity(baseDensity * 1.9);
         break;
     }
   }
@@ -944,12 +1028,10 @@ export class EnvironmentController {
     this._weatherParticles = null;
     this._weatherTime = 0;
 
-    // Reset fog density to baseline
-    const fog = this.scene.fog as THREE.FogExp2 | null;
-    if (fog) fog.density = this.getConfig()?.rendering?.fog_density ?? 0.018;
-
+    // Ni le brouillard ni l'éclairage ne sont touchés ici : c'est le rôle de
+    // `_resetAtmosphere()`, appelée par `_applyAtmosphere`. Les mêler rendait la
+    // remise à zéro dépendante de la présence de particules.
     this.setSkyPos(60, 180);
-    this.hemiLight.intensity = 0.7;
     // NOTE: _weatherType is NOT reset here — that's the caller's responsibility
   }
 

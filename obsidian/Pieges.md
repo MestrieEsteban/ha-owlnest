@@ -60,6 +60,28 @@ Deux causes cumulées : le modèle est en **centimètres** (une largeur « 1,1 m
 
 L'axe, le sens et l'amplitude étaient calculés **au moment du découpage**. Corrigé par le **nœud pivot** : voir [[Ouvrants]].
 
+### La remise à zéro accrochée au mauvais objet
+
+`removeWeatherParticles()` réinitialisait aussi le brouillard et l'éclairage. Or
+elle sort immédiatement quand il n'y a pas de particules — et `fog`, `cloudy`,
+`exceptional` et `lightning-only` n'en créent aucune. **On ne pouvait jamais
+sortir de ces quatre météos** : le brouillard gardait leur densité, et la scène
+restait sombre.
+
+> [!note] Leçon
+> Une remise à zéro appartient à l'état qu'elle restaure, jamais à la fonction
+> qui se trouvait passer par là. `_resetAtmosphere()` vit maintenant avec
+> l'atmosphère.
+
+### Les facteurs qui se cumulent
+
+`hemiLight.intensity *= 0.6` à chaque changement de météo, sans jamais repartir
+de la valeur de base. Passer de la pluie au beau temps puis à la pluie
+assombrissait la scène un peu plus à chaque cycle.
+
+Les facteurs sont désormais des **assignations** depuis la configuration relue.
+Vérifié sur douze changements consécutifs : six retours au repos, tous identiques.
+
 ## Bugs de sémantique
 
 ### Le capteur qui laissait la porte béante

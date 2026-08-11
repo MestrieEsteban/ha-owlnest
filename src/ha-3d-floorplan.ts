@@ -22,6 +22,7 @@ import { SceneCardRenderer } from './cards/renderer';
 import { PanelGizmo } from './panels/gizmo';
 import type { SceneCard, SceneCardType } from './cards/types';
 import { PartController, meshOrder } from './parts-runtime';
+import { modelScale } from './scale';
 import { partIndexOf, partFrame, guessPart, verticalAxis } from './parts';
 import { separateCoplanarSlabs } from './coplanar';
 import { createUniforms, instrumentMaterials, updateXray, createGhost } from './cutaway';
@@ -2095,8 +2096,9 @@ class Ha3dFloorplan extends HTMLElement {
     const fog = this.scene?.fog;
     if (!(fog instanceof THREE.FogExp2)) return;
     const asked = this._effectiveConfig.rendering?.fog_density ?? 0.018;
-    const span = this._modelSpan > 0 ? this._modelSpan : 10;
-    fog.density = asked * (10 / span);
+    // Même référence que le reste du projet : voir scale.ts. Cette ligne
+    // utilisait un 10 écrit en dur, légèrement différent, pour la même intention.
+    fog.density = asked / modelScale(this._modelSpan);
   }
 
   /**
