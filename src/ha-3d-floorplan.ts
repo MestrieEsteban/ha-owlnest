@@ -1930,6 +1930,9 @@ class Ha3dFloorplan extends HTMLElement {
     if (rl.fog_density !== undefined && this.scene.fog instanceof THREE.FogExp2) {
       this._fitFog();
     }
+    // Plan de coupe : relu à chaque changement de réglage, pour que le curseur
+    // agisse en direct.
+    this._applyCutaway();
     // Shadows
     if (rl.shadows !== undefined) {
       this.renderer.shadowMap.enabled = rl.shadows;
@@ -2082,6 +2085,41 @@ class Ha3dFloorplan extends HTMLElement {
     const asked = this._effectiveConfig.rendering?.fog_density ?? 0.018;
     const span = this._modelSpan > 0 ? this._modelSpan : 10;
     fog.density = asked * (10 / span);
+  }
+
+  /**
+   * Applique le plan de coupe horizontal.
+   *
+   * Un plan de découpe global du renderer s'applique à tous les matériaux sans
+   * qu'il faille les toucher un par un, et il agit dans le nuanceur : aucun
+   * triangle n'est analysé, aucun « mur extérieur » n'a besoin d'être
+   * identifié. Cela fonctionne donc sur un export fusionné comme sur un modèle
+   * découpé.
+   *
+   * Les overlays sont du DOM : ils restent visibles, ce qui est cohérent avec
+   * le choix de laisser les pastilles traverser les murs.
+   */
+  private _applyCutaway() {
+    if (!this.renderer) return;
+    const fraction = this._effectiveConfig.rendering?.cutaway ?? 1;
+
+    if (!(fraction < 1) || !this._modelRoot) {
+      this.renderer.clippingPlanes = [];
+      this._requestRender();
+      return;
+    }
+
+    // La verticale se déduit du modèle : un export peut être Y-up comme Z-up.
+    const axis = verticalAxis(this._modelBox);
+    const min = this._modelBox.min.getComponent(axis);
+    const max = this._modelBox.max.getComponent(axis);
+    const height = min + (max - min) * Math.max(0, fraction);
+
+    // Normale dirigée vers le bas : on conserve ce qui est sous le trait.
+    const normal = new THREE.Vector3();
+    normal.setComponent(axis, -1);
+    this.renderer.clippingPlanes = [new THREE.Plane(normal, height)];
+    this._requestRender();
   }
 
   private _fitOrbitLimits() {
@@ -2266,6 +2304,7 @@ class Ha3dFloorplan extends HTMLElement {
     // Avant tout placement de caméra : une borne trop serrée écrêterait la
     // position par défaut, et l'élargir ensuite ne la replacerait pas.
     this._fitOrbitLimits();
+    this._applyCutaway();
 
     const saved = this._loadView();
     if (saved) {
