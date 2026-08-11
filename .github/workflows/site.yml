@@ -1,0 +1,51 @@
+# Publication du site vitrine sur GitHub Pages.
+#
+# Déclenchement **manuel uniquement** : publier est une action visible, elle ne
+# doit pas partir sur un simple push. Pour l'automatiser, ajouter :
+#
+#   push:
+#     branches: [main]
+#     paths: ['site/**', 'src/**', 'Modele3D/flat-archi.glb']
+#
+# Avant le premier lancement : Settings → Pages → Source = GitHub Actions.
+name: Site
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      # Le site embarque la vraie carte : si elle ne compile pas, rien ne part.
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run site:build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist-site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

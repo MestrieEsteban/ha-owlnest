@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Owlnest — votre maison en 3D dans Home Assistant</title>
+<meta name="description" content="Une carte Lovelace qui affiche un plan 3D interactif de votre maison. Portes qui s'ouvrent, lumières qui s'allument, caméras, règles visuelles." />
+<style>
+  :root {
+    --bg: #070b16;
+    --bg-2: #0c1222;
+    --ink: #e8eef7;
+    --dim: #8b9ab0;
+    --line: rgba(255,255,255,.09);
+    --accent: #7dd3fc;
+    --accent-2: #a78bfa;
+    --ok: #4ade80;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Halos d'ambiance : deux dégradés radiaux fixes, sans coût d'animation. */
+  body::before {
+    content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background:
+      radial-gradient(60rem 40rem at 15% -10%, rgba(125,211,252,.13), transparent 60%),
+      radial-gradient(50rem 36rem at 95% 15%, rgba(167,139,250,.11), transparent 60%);
+  }
+
+  .wrap { position: relative; z-index: 1; max-width: 1240px; margin: 0 auto; padding: 0 24px; }
+
+  /* ── En-tête ──────────────────────────────────────────────────────────── */
+  header {
+    position: sticky; top: 0; z-index: 40;
+    backdrop-filter: blur(14px); background: rgba(7,11,22,.72);
+    border-bottom: 1px solid var(--line);
+  }
+  header .wrap { display: flex; align-items: center; gap: 18px; height: 60px; }
+  .logo { display: flex; align-items: center; gap: 9px; font-weight: 750; letter-spacing: -.02em; }
+  .logo b { color: var(--accent); }
+  header nav { margin-left: auto; display: flex; gap: 22px; font-size: 14px; }
+  header nav a { color: var(--dim); text-decoration: none; }
+  header nav a:hover { color: var(--ink); }
+  .ghost {
+    padding: 7px 14px; border: 1px solid var(--line); border-radius: 999px;
+    font-size: 13px; font-weight: 650; color: var(--ink); text-decoration: none;
+  }
+  .ghost:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ── Hero ─────────────────────────────────────────────────────────────── */
+  .hero { padding: 78px 0 34px; text-align: center; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 5px 13px; border: 1px solid var(--line); border-radius: 999px;
+    font-size: 12px; color: var(--dim); margin-bottom: 22px;
+  }
+  .badge i { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+  h1 {
+    margin: 0 0 18px; font-size: clamp(2.1rem, 5.4vw, 4rem);
+    line-height: 1.05; letter-spacing: -.035em; font-weight: 800;
+  }
+  h1 span {
+    background: linear-gradient(100deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .lede { max-width: 62ch; margin: 0 auto; color: var(--dim); font-size: 1.09rem; }
+
+  /* ── Scène collante + récit défilant ──────────────────────────────────── */
+  .scrolly { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; padding: 46px 0 90px; }
+  .sticky { position: sticky; top: 88px; align-self: start; }
+  #stage {
+    aspect-ratio: 4 / 3; border-radius: 18px; overflow: hidden;
+    border: 1px solid var(--line); background: var(--bg-2);
+    box-shadow: 0 30px 80px rgba(0,0,0,.55);
+  }
+  #stage::after {
+    content: 'Chargement du modèle…'; position: absolute; inset: 0;
+    display: grid; place-items: center; font-size: 13px; color: var(--dim);
+  }
+  body.ready #stage::after { display: none; }
+  .stage-note { margin-top: 11px; font-size: 12px; color: var(--dim); text-align: center; }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; justify-content: center; }
+  .controls button {
+    padding: 6px 12px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--line); background: rgba(255,255,255,.04);
+    color: var(--ink); font: 600 12px/1 inherit; font-family: inherit;
+  }
+  .controls button:hover { border-color: var(--accent); color: var(--accent); }
+
+  section[data-step] {
+    min-height: 74vh; display: flex; flex-direction: column; justify-content: center;
+    opacity: .35; transform: translateY(10px);
+    transition: opacity .5s, transform .5s;
+  }
+  section[data-step].seen { opacity: 1; transform: none; }
+  section h2 {
+    margin: 0 0 14px; font-size: clamp(1.4rem, 2.6vw, 2.05rem);
+    letter-spacing: -.025em; line-height: 1.15;
+  }
+  section p { margin: 0 0 14px; color: var(--dim); }
+  section strong { color: var(--ink); font-weight: 650; }
+  .kicker {
+    font-size: 11px; font-weight: 750; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--accent); margin-bottom: 10px;
+  }
+
+  /* ── Chiffres ─────────────────────────────────────────────────────────── */
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin: 18px 0; }
+  .fact { padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.02); }
+  .fact b { display: block; font-size: 1.5rem; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .fact span { font-size: 11.5px; color: var(--dim); }
+
+  /* ── Grille de fonctionnalités ────────────────────────────────────────── */
+  .features { padding: 30px 0 90px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(268px, 1fr)); gap: 16px; }
+  .card {
+    padding: 22px; border: 1px solid var(--line); border-radius: 15px;
+    background: linear-gradient(170deg, rgba(255,255,255,.045), rgba(255,255,255,.012));
+    transition: border-color .25s, transform .25s;
+  }
+  .card:hover { border-color: rgba(125,211,252,.4); transform: translateY(-3px); }
+  .card h3 { margin: 0 0 8px; font-size: 1.02rem; }
+  .card p { margin: 0; font-size: 14px; color: var(--dim); }
+  .card .ico { font-size: 20px; margin-bottom: 12px; display: block; }
+
+  /* ── Installation ─────────────────────────────────────────────────────── */
+  .install { padding: 20px 0 100px; }
+  pre {
+    margin: 0; padding: 16px 18px; overflow-x: auto;
+    background: #05080f; border: 1px solid var(--line); border-radius: 12px;
+    font: 13px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; color: #cbd5e1;
+  }
+  .k { color: var(--accent); }
+  .c { color: #64748b; }
+
+  h2.centered { text-align: center; margin-bottom: 10px; }
+  .sub { text-align: center; color: var(--dim); max-width: 60ch; margin: 0 auto 30px; }
+
+  footer { border-top: 1px solid var(--line); padding: 30px 0 48px; color: var(--dim); font-size: 13px; }
+  footer a { color: var(--accent); text-decoration: none; }
+
+  @media (max-width: 940px) {
+    .scrolly { grid-template-columns: 1fr; gap: 0; }
+    .sticky { position: sticky; top: 60px; z-index: 20; padding: 12px 0; background: var(--bg); }
+    #stage { aspect-ratio: 16 / 11; }
+    section[data-step] { min-height: 62vh; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    section[data-step] { opacity: 1; transform: none; transition: none; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="logo">🦉 Owl<b>nest</b></div>
+    <nav>
+      <a href="#demo">Démo</a>
+      <a href="#features">Fonctions</a>
+      <a href="#install">Installation</a>
+    </nav>
+    <a class="ghost" href="https://github.com/MestrieEsteban/ha-owlnest">GitHub</a>
+  </div>
+</header>
+
+<div class="wrap hero">
+  <div class="badge"><i></i> Carte Lovelace pour Home Assistant</div>
+  <h1>Votre maison,<br /><span>en trois dimensions</span></h1>
+  <p class="lede">
+    Un plan 3D où les lumières s'allument, les portes s'ouvrent et les volets
+    descendent — parce que votre installation le dit. Aucun YAML à écrire.
+  </p>
+</div>
+
+<div class="wrap scrolly" id="demo">
+  <!-- La scène reste visible pendant que le récit défile à côté. -->
+  <div class="sticky">
+    <div id="stage" style="position:relative"></div>
+    <div class="controls">
+      <button data-do="toggle:light.sejour">Séjour</button>
+      <button data-do="toggle:light.cuisine">Cuisine</button>
+      <button data-do="toggle:light.chambre">Chambre</button>
+      <button data-do="toggle:binary_sensor.porte">Porte</button>
+      <button data-do="toggle:cover.volet">Volet</button>
+      <button data-do="view:v_all">Vue d'ensemble</button>
+    </div>
+    <p class="stage-note">
+      Ce n'est pas une vidéo : c'est la carte elle-même, avec une installation simulée.
+      Tournez, zoomez, cliquez les pastilles.
+    </p>
+  </div>
+
+  <div>
+    <section data-step="intro">
+      <div class="kicker">Le principe</div>
+      <h2>Un modèle 3D, des entités, et c'est tout</h2>
+      <p>
+        Owlnest lit votre plan — un fichier <strong>GLB</strong> ou <strong>OBJ</strong>
+        exporté de Sweet Home 3D, Blender ou n'importe quel modeleur — et vous laissez
+        tomber des <strong>ancres</strong> dessus à la souris.
+      </p>
+      <p>
+        Chaque ancre porte une entité Home Assistant. Elle en prend l'icône, la couleur
+        et le comportement au toucher : une lampe se bascule, un capteur ouvre sa fiche.
+        <strong>32 domaines</strong> et <strong>24 classes de capteurs binaires</strong>
+        sont reconnus d'origine.
+      </p>
+      <div class="facts">
+        <div class="fact"><b data-fact="meshes">—</b><span>objets dans ce modèle</span></div>
+        <div class="fact"><b data-fact="triangles">—</b><span>triangles</span></div>
+        <div class="fact"><b data-fact="size">—</b><span>surface au sol</span></div>
+      </div>
+    </section>
+
+    <section data-step="lumieres">
+      <div class="kicker">Lumières</div>
+      <h2>De vraies sources, pas des pastilles colorées</h2>
+      <p>
+        Une ancre de lampe crée une <strong>lumière dans la scène</strong> : elle éclaire
+        les murs, projette des ombres, suit la teinte et l'intensité rapportées par
+        Home Assistant.
+      </p>
+      <p>
+        Trois styles au choix — ponctuelle, spot, faisceau — avec direction réglable.
+        Les transitions sont interpolées : une lampe qui se tamise se voit se tamiser.
+      </p>
+    </section>
+
+    <section data-step="ouvrants">
+      <div class="kicker">Ouvrants</div>
+      <h2>Les portes s'ouvrent vraiment</h2>
+      <p>
+        Vous cliquez une porte sur le modèle, vous choisissez son entité :
+        elle <strong>pivote sur ses gonds</strong> quand le capteur passe à ouvert.
+        Les volets coulissent, et suivent une position continue — un volet à 40 %
+        s'affiche à 40 %.
+      </p>
+      <p>
+        Rien à préparer dans un logiciel de 3D. Owlnest retrouve les pièces d'un modèle
+        fusionné en analysant sa géométrie, puis détache le vantail et lui rend
+        son axe de rotation.
+      </p>
+      <div class="facts">
+        <div class="fact"><b data-fact="doors">—</b><span>portes détectées ici</span></div>
+        <div class="fact"><b data-fact="panes">—</b><span>ouvrants de fenêtre</span></div>
+        <div class="fact"><b>~70 ms</b><span>analyse, une seule fois</span></div>
+      </div>
+    </section>
+
+    <section data-step="capteurs">
+      <div class="kicker">Capteurs</div>
+      <h2>La valeur là où elle a un sens</h2>
+      <p>
+        Une température s'affiche <strong>dans la pièce qu'elle mesure</strong>, avec son
+        unité et la précision que vous choisissez. Une caméra montre son flux en vignette,
+        orientée dans l'espace comme son champ de vision.
+      </p>
+      <p>
+        Les ancres peuvent aussi être une <strong>étiquette</strong>, une
+        <strong>roue d'actions</strong> regroupant plusieurs commandes, ou un
+        <strong>raccourci</strong> vers un point de vue.
+      </p>
+    </section>
+
+    <section data-step="regles">
+      <div class="kicker">Règles</div>
+      <h2>Des automatisations pour la vue</h2>
+      <p>
+        Une règle Owlnest fait voler la caméra vers l'entrée, met une ancre en évidence,
+        affiche un message. Elle <strong>ne remplace pas vos automatisations</strong> —
+        Home Assistant les gère déjà mieux.
+      </p>
+      <p>
+        Elles s'écrivent en phrases, pas en formulaire : « quand la porte passe à ouverte,
+        mettre le séjour en évidence ». Déclencheurs multiples, conditions, seuils
+        numériques, plages horaires.
+      </p>
+    </section>
+
+    <section data-step="vues">
+      <div class="kicker">Points de vue</div>
+      <h2>Une caméra par usage</h2>
+      <p>
+        Cadrez ce que vous voulez, enregistrez la vue, donnez-lui un nom.
+        Un appui — ou une règle — y ramène en vol continu.
+      </p>
+      <p>
+        Utile sur une tablette murale : la vue d'ensemble au repos, un zoom sur la cuisine
+        quand le four chauffe.
+      </p>
+    </section>
+  </div>
+</div>
+
+<div class="wrap features" id="features">
+  <h2 class="centered">Ce qu'il y a dans la boîte</h2>
+  <p class="sub">Tout se règle depuis un éditeur visuel, dans la carte. Le YAML est optionnel.</p>
+  <div class="grid">
+    <div class="card">
+      <span class="ico">🎯</span>
+      <h3>Sélecteur d'entités</h3>
+      <p>Groupé par étage, pièce et appareil, construit sur les registres de Home Assistant.
+         Recherche, états en direct, marquage de ce qui est déjà placé.</p>
+    </div>
+    <div class="card">
+      <span class="ico">🚪</span>
+      <h3>Portes, fenêtres, volets</h3>
+      <p>Désignés d'un clic sur le modèle. Gonds, angle, sens et durée réglables,
+         avec un aperçu qui n'agit que sur l'écran.</p>
+    </div>
+    <div class="card">
+      <span class="ico">💡</span>
+      <h3>Éclairage physique</h3>
+      <p>Lumières ponctuelles, spots et faisceaux, ombres portées, couleur et intensité
+         suivies en direct.</p>
+    </div>
+    <div class="card">
+      <span class="ico">📷</span>
+      <h3>Caméras dans l'espace</h3>
+      <p>Le flux en vignette, posé et orienté à l'endroit de la caméra.
+         Rafraîchissement adapté à la puissance de l'appareil.</p>
+    </div>
+    <div class="card">
+      <span class="ico">⚡</span>
+      <h3>Règles visuelles</h3>
+      <p>Déclencheurs d'état, seuils numériques, horaires, conditions.
+         Actions sur la vue, jamais sur la maison.</p>
+    </div>
+    <div class="card">
+      <span class="ico">🌤️</span>
+      <h3>Soleil et météo</h3>
+      <p>Position du soleil réelle selon l'orientation de la maison, ciel,
+         pluie et neige d'après votre entité météo.</p>
+    </div>
+    <div class="card">
+      <span class="ico">📱</span>
+      <h3>Pensé pour une tablette bon marché</h3>
+      <p>Profils de qualité automatiques, plafond d'images par seconde, rendu à la demande,
+         pause hors écran. On met rarement une bonne tablette sur un mur.</p>
+    </div>
+    <div class="card">
+      <span class="ico">💾</span>
+      <h3>Scènes persistées</h3>
+      <p>Vos ancres, vues et règles sont stockées côté Home Assistant, pas dans
+         le navigateur. Plusieurs scènes par installation.</p>
+    </div>
+  </div>
+</div>
+
+<div class="wrap install" id="install">
+  <h2 class="centered">Installation</h2>
+  <p class="sub">Une intégration pour la persistance, une ressource Lovelace pour la carte.</p>
+  <pre><span class="c"># 1. Copier l'intégration dans votre configuration</span>
+custom_components/owlnest/
+
+<span class="c"># 2. Déclarer la ressource Lovelace</span>
+<span class="k">url</span>: /hacsfiles/ha-owlnest/ha-3d-floorplan.js
+<span class="k">type</span>: module
+
+<span class="c"># 3. Déposer votre modèle dans www/, puis ajouter la carte</span>
+<span class="k">type</span>: custom:ha-3d-floorplan
+<span class="k">scene_id</span>: main
+<span class="k">model_url</span>: /local/maison.glb</pre>
+  <p class="sub" style="margin-top:26px">
+    Le reste — ancres, ouvrants, règles, vues — se fait dans l'éditeur intégré.
+  </p>
+</div>
+
+<footer>
+  <div class="wrap">
+    Owlnest est un projet personnel, en développement actif.
+    Code et suivi sur <a href="https://github.com/MestrieEsteban/ha-owlnest">GitHub</a>.
+    <br />
+    Le modèle de démonstration est un appartement d'exemple, pas une vraie habitation.
+  </div>
+</footer>
+
+<script type="module" src="./main.ts"></script>
+</body>
+</html>
