@@ -23,6 +23,7 @@ import { PanelGizmo } from './panels/gizmo';
 import type { SceneCard, SceneCardType } from './cards/types';
 import { PartController, meshOrder } from './parts-runtime';
 import { partIndexOf, partFrame, guessPart, verticalAxis } from './parts';
+import { separateCoplanarSlabs } from './coplanar';
 import { evalCondition, RuleEngine } from './rules/engine';
 import type { OwlnestRule, Action } from './rules/types';
 
@@ -2073,11 +2074,21 @@ class Ha3dFloorplan extends HTMLElement {
     if (settings.min_distance === undefined) this.controls.minDistance = span * 0.05;
     if (settings.max_distance === undefined) this.controls.maxDistance = span * 3;
 
-    // Le plan de coupe éloigné doit suivre, sinon le modèle disparaît en
-    // reculant.
+    /**
+     * Plans de coupe.
+     *
+     * Le plan proche gouverne toute la précision de la profondeur : elle se
+     * dégrade comme le carré de la distance divisé par lui. Le coller à zéro
+     * — ce que faisait un `span * 1e-4` — réduisait la discrimination à
+     * plusieurs millimètres à l'autre bout de la maison, et faisait scintiller
+     * les surfaces proches.
+     *
+     * On le cale donc sur la distance minimale d'orbite : la caméra ne peut
+     * jamais s'en approcher davantage, rien ne sera coupé.
+     */
     if (this.camera) {
-      this.camera.near = Math.max(span * 1e-4, 0.01);
-      this.camera.far = Math.max(this.camera.far, span * 8);
+      this.camera.near = Math.max(this.controls.minDistance * 0.1, span * 1e-3);
+      this.camera.far = Math.max(span * 8, this.camera.near * 1e4);
       this.camera.updateProjectionMatrix();
     }
     this.controls.update();
@@ -2223,6 +2234,16 @@ class Ha3dFloorplan extends HTMLElement {
     this._modelSpan = Math.max(span.x, span.y, span.z, 1e-3);
     this._fitSunShadow();
     this._requestShadowUpdate();
+
+    // Un export Sweet Home 3D empile son terrain, le sol de chaque pièce et le
+    // dessous des tapis à la même altitude. Strictement coplanaires, ces plans
+    // scintillent quelle que soit la précision du tampon de profondeur : on les
+    // écarte d'une fraction imperceptible plutôt que d'en supprimer un, car le
+    // terrain déborde du sol et son retrait laisserait un trou.
+    const lifted = separateCoplanarSlabs(model, this._modelSpan, verticalAxis(this._modelBox));
+    if (lifted) {
+      console.debug(`[Owlnest] ${lifted} surface(s) coplanaire(s) écartée(s)`);
+    }
     // Avant tout placement de caméra : une borne trop serrée écrêterait la
     // position par défaut, et l'élargir ensuite ne la replacerait pas.
     this._fitOrbitLimits();

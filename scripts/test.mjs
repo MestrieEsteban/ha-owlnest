@@ -24,6 +24,7 @@ const ENTRIES = [
   'src/types.ts',
   'src/parts.ts',
   'src/parts-runtime.ts',
+  'src/coplanar.ts',
 ];
 
 /**
