@@ -16,11 +16,12 @@ Ce dossier est un **second cerveau**, pas une documentation d'API. On y consigne
 - [[Regles]] — automatisations de la *vue*, jamais de la maison.
 - [[Descripteurs]] — la sémantique par domaine d'entité, source de vérité unique.
 - [[Performance]] — profils de qualité, cible matérielle.
+- [[Echelle du modele]] — pourquoi rien n'est exprimé en mètres. **À lire avant tout réglage de distance.**
 
 ## L'atelier
 
 - [[Boucle de dev]] — pousser vers Home Assistant automatiquement.
-- [[Tests]] — 64 tests, sans framework ni dépendance ajoutée.
+- [[Tests]] — 86 tests, sans framework ni dépendance ajoutée.
 - [[Bancs de test]] — vérifier soi-même au lieu de demander à l'utilisateur de regarder.
 
 ## Mémoire des erreurs

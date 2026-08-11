@@ -11,7 +11,7 @@ tags: [backlog]
 
 **Les overlays traversent les murs.** Pas d'occlusion : un badge d'une pièce du fond s'affiche par-dessus une cloison. Voir [[Ancres]].
 
-**L'échelle en centimètres n'est pas absorbée partout.** `lights.distance: 8` vaut 8 cm ; les limites d'orbite et la densité du brouillard sont fausses d'un facteur ~100. Les vignettes de caméra ont été corrigées (tailles relatives à l'envergure), le reste non. Voir [[Modele 3D]].
+~~**L'échelle en centimètres n'est pas absorbée partout.**~~ **Refermé en août 2026.** Tout ce qui dépendait de l'unité se déduit maintenant de l'envergure du modèle : vignettes de caméra, limites d'orbite, densité de brouillard, plans de coupe, portée et intensité des lumières. Voir [[Echelle du modele]].
 
 **Les étiquettes sont invisibles au toucher.** L'infobulle est au survol, et une tablette murale n'a pas de survol. **Approche non tranchée** — la question a été posée plusieurs fois sans réponse.
 
