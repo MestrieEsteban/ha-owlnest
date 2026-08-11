@@ -57,9 +57,12 @@ C'est une **modale `<dialog>`**, pour pouvoir s'ouvrir par-dessus la fenêtre de
 
 Le **glisser-déposer** dans le sélecteur. La pose se fait déjà au clic dans la scène ; le gain était nul pour une complexité réelle.
 
+## Tranché : pas d'occlusion
+
+Les pastilles s'affichent **à travers les murs**, volontairement. Un tableau de bord se lit d'un coup d'œil ; masquer une ancre derrière une cloison perd l'information. Voir [[Chantiers ouverts]].
+
 ## Ouvert
 
-- Les badges **traversent les murs** (pas d'occlusion des overlays).
 - Les étiquettes sont **invisibles au toucher** — l'infobulle est au survol, et une tablette murale n'a pas de survol. Approche non tranchée.
 - Mise à l'échelle selon la distance.
 - Regroupement par pièce, qui permettrait de retirer `cluster_threshold`.
