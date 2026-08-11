@@ -173,7 +173,11 @@ export class AnchorEditor {
     if (!src) return;
     this._pushUndo();
     const key = `anchor_${Date.now()}_copy`;
-    const pos = src.position.clone().add(new THREE.Vector3(0.3, 0, 0.3));
+    // Décalé de trois rayons de marqueur : le doublon doit être visiblement à
+    // côté de l'original, quelle que soit l'unité du modèle. Une valeur fixe le
+    // posait à trois millimètres sur un export en centimètres, donc dessus.
+    const step = this._markerRadius * 3;
+    const pos = src.position.clone().add(new THREE.Vector3(step, 0, step));
     const newAnchor: EditableAnchor = { ...src, position: pos };
     this._anchors.set(key, newAnchor);
     this._addMarker(key, pos, newAnchor.hidden);
@@ -347,27 +351,41 @@ export class AnchorEditor {
     this._gizmoGroup = new THREE.Group();
     this._gizmoGroup.position.copy(pos);
 
+    /**
+     * Toutes les cotes du gizmo sont exprimées en rayons de marqueur.
+     *
+     * Elles étaient écrites en dur, pour un modèle en mètres : sur un export
+     * Sweet Home 3D de 618 unités, la flèche mesurait six millimètres et sa
+     * zone cliquable un millimètre. Invisible, et impossible à saisir.
+     *
+     * Le marqueur d'ancre et le gizmo de rotation suivaient déjà l'envergure ;
+     * seul celui-ci avait été oublié.
+     */
+    const R = this._markerRadius;
+
     (['x', 'y', 'z'] as const).forEach((axis) => {
       const color = AXIS_COLORS[axis];
 
-      const shaftGeo = new THREE.CylinderGeometry(0.03, 0.03, 0.6, 8);
+      const shaftGeo = new THREE.CylinderGeometry(0.3 * R, 0.3 * R, 6 * R, 8);
       const shaftMat = new THREE.MeshBasicMaterial({ color, depthTest: false });
       const shaft = new THREE.Mesh(shaftGeo, shaftMat);
-      shaft.position.y = 0.3;
+      shaft.position.y = 3 * R;
       shaft.renderOrder = 1000;
       shaft.userData.gizmoAxis = axis;
 
-      const coneGeo = new THREE.ConeGeometry(0.08, 0.18, 8);
+      const coneGeo = new THREE.ConeGeometry(0.8 * R, 1.8 * R, 8);
       const coneMat = new THREE.MeshBasicMaterial({ color, depthTest: false });
       const cone = new THREE.Mesh(coneGeo, coneMat);
-      cone.position.y = 0.69;
+      cone.position.y = 6.9 * R;
       cone.renderOrder = 1000;
       cone.userData.gizmoAxis = axis;
 
-      const hitGeo = new THREE.CylinderGeometry(0.12, 0.12, 0.9, 8);
+      // La zone de saisie est volontairement plus large que la flèche : c'est
+      // elle qui rend le gizmo utilisable au doigt.
+      const hitGeo = new THREE.CylinderGeometry(1.2 * R, 1.2 * R, 9 * R, 8);
       const hitMat = new THREE.MeshBasicMaterial({ visible: false, depthTest: false });
       const hit = new THREE.Mesh(hitGeo, hitMat);
-      hit.position.y = 0.45;
+      hit.position.y = 4.5 * R;
       hit.renderOrder = 1000;
       hit.userData.gizmoAxis = axis;
 

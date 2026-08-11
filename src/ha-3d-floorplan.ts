@@ -693,7 +693,7 @@ class Ha3dFloorplan extends HTMLElement {
           }
           const pos: [number, number, number] = [
             +hits[0].point.x.toFixed(3),
-            +(hits[0].point.y + 0.5).toFixed(3),
+            +(hits[0].point.y + this._modelSpan * 0.04).toFixed(3),
             +hits[0].point.z.toFixed(3),
           ];
           this._placeNewCard(this._cardPlacementType, pos);
@@ -1749,12 +1749,17 @@ class Ha3dFloorplan extends HTMLElement {
 
     // Camera fly-to animation
     if (this._camAnimTo && this.camera && this.controls) {
+      const arrival = Math.max(this._modelSpan * 5e-4, 1e-4);
       const alpha = 1 - Math.exp(-dt / 0.25);
       this.camera.position.lerp(this._camAnimTo.pos, alpha);
       this.controls.target.lerp(this._camAnimTo.target, alpha);
       if (
-        this.camera.position.distanceTo(this._camAnimTo.pos) < 0.005 &&
-        this.controls.target.distanceTo(this._camAnimTo.target) < 0.005
+        // Seuil relatif à l'envergure : fixé à 0,005 unité, un vol vers une vue
+        // n'arrivait jamais sur un modèle en centimètres, et la boucle de rendu
+        // restait éveillée indéfiniment — du GPU consommé pour rien sur la
+        // tablette.
+        this.camera.position.distanceTo(this._camAnimTo.pos) < arrival &&
+        this.controls.target.distanceTo(this._camAnimTo.target) < arrival
       ) {
         this.camera.position.copy(this._camAnimTo.pos);
         this.controls.target.copy(this._camAnimTo.target);
@@ -1890,9 +1895,23 @@ class Ha3dFloorplan extends HTMLElement {
     cam.right = r;
     cam.top = r;
     cam.bottom = -r;
-    cam.near = 0.1;
+    /**
+     * Plan proche et biais de l'ombre, eux aussi à l'échelle.
+     *
+     * Un `near` de 0,1 face à un `far` de près de 2 000 laisse une carte de
+     * profondeur d'ombre presque inutilisable : c'est ce qui produit l'acné —
+     * ces rayures sombres sur les surfaces éclairées.
+     *
+     * `bias` s'exprime en profondeur normalisée : sur une plage aussi étendue,
+     * une valeur fixe se traduit par un décalage monde énorme, et l'ombre se
+     * détache de l'objet. `normalBias`, lui, s'exprime en unités du monde et se
+     * met donc à l'échelle proprement.
+     */
+    cam.near = Math.max(dist * 0.05, 0.01);
     cam.far = dist + r * 2;
     cam.updateProjectionMatrix();
+    this._sunLight.shadow.bias = 0;
+    this._sunLight.shadow.normalBias = Math.max(this._modelSpan * 0.0015, 0.002);
     this._sunLight.shadow.needsUpdate = true;
   }
 

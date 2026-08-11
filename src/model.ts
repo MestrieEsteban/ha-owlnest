@@ -48,7 +48,10 @@ export function makeLight(
     light.shadow.mapSize.set(q.anchorShadowMap, q.anchorShadowMap);
     light.shadow.camera.near = Math.max(dist * 0.01, 0.01);
     light.shadow.camera.far = dist * 1.5;
-    light.shadow.bias = -0.002;
+    // Même raison que pour le soleil : un biais en profondeur normalisée
+    // devient un décalage monde démesuré sur un modèle en centimètres.
+    light.shadow.bias = 0;
+    light.shadow.normalBias = Math.max(dist * 0.004, 0.002);
     const target = new THREE.Object3D();
     target.position.copy(lightTargetPos(pos, direction));
     scene.add(target);
@@ -62,9 +65,10 @@ export function makeLight(
   light.visible = false;
   light.castShadow = q.anchorShadows;
   light.shadow.mapSize.set(q.anchorShadowMap, q.anchorShadowMap);
-  light.shadow.camera.near = 0.1;
+  light.shadow.camera.near = Math.max(dist * 0.01, 0.01);
   light.shadow.camera.far = dist;
-  light.shadow.bias = -0.002;
+  light.shadow.bias = 0;
+  light.shadow.normalBias = Math.max(dist * 0.004, 0.002);
   scene.add(light);
   return { light };
 }
