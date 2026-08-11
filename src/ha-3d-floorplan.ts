@@ -24,7 +24,8 @@ import type { SceneCard, SceneCardType } from './cards/types';
 import { PartController, meshOrder } from './parts-runtime';
 import { partIndexOf, partFrame, guessPart, verticalAxis } from './parts';
 import { separateCoplanarSlabs } from './coplanar';
-import { applyCutaway, clearCutaway, bandFor } from './cutaway';
+import { createUniforms, instrumentMaterials, updateXray, updateCut } from './cutaway';
+import type { CutawayUniforms } from './cutaway';
 import { evalCondition, RuleEngine } from './rules/engine';
 import type { OwlnestRule, Action } from './rules/types';
 
@@ -141,6 +142,9 @@ class Ha3dFloorplan extends HTMLElement {
   // Moteur de regles : porte lui-meme ses etats precedents, ses minuteries de
   // duree et ses anti-rebonds.
   private _ruleEngine = new RuleEngine();
+  /** Uniformes partagés de l'effacement, mis à jour à chaque image. */
+  private _cutaway: CutawayUniforms = createUniforms();
+
   /** Ouvrants du modèle animés par l'état des entités (portes, volets…). */
   private _parts = new PartController();
   /** Renseigné pendant que l'éditeur attend un clic sur une pièce du modèle. */
@@ -1775,6 +1779,9 @@ class Ha3dFloorplan extends HTMLElement {
 
     const moved = this.controls?.update() ?? false;
     if (moved) this._dirty = true;
+    // L'effacement à travers les murs dépend du point de vue : il doit suivre
+    // la caméra, pas seulement les réglages.
+    if (moved || this._camAnimTo) this._updateXray();
 
     if (this._editMode) this._dirty = true;
 
@@ -2100,28 +2107,49 @@ class Ha3dFloorplan extends HTMLElement {
    * Les overlays sont du DOM : ils restent visibles, ce qui est cohérent avec
    * le choix de laisser les pastilles traverser les murs.
    */
+  /**
+   * Applique les réglages d'effacement.
+   *
+   * L'instrumentation des matériaux n'a lieu qu'une fois ; ensuite tout passe
+   * par des uniformes partagés, donc changer un réglage ne recompile rien.
+   */
   private _applyCutaway() {
     if (!this._modelRoot) return;
-    const fraction = this._effectiveConfig.rendering?.cutaway ?? 1;
+    instrumentMaterials(this._modelRoot, this._cutaway);
 
-    if (!(fraction < 1)) {
-      clearCutaway(this._modelRoot);
-      this._requestRender();
-      return;
-    }
+    const rl = this._effectiveConfig.rendering;
 
-    // La verticale se déduit du modèle : un export peut être Y-up comme Z-up.
     const axis = verticalAxis(this._modelBox);
     const up = new THREE.Vector3();
     up.setComponent(axis, 1);
-
-    const { top, bottom } = bandFor(
+    updateCut(
+      this._cutaway, up,
       this._modelBox.min.getComponent(axis),
       this._modelBox.max.getComponent(axis),
-      Math.max(0, fraction),
+      rl?.cutaway ?? 1,
     );
-    applyCutaway(this._modelRoot, { up, top, bottom });
+
+    this._updateXray();
     this._requestRender();
+  }
+
+  /**
+   * Recalage de l'effacement « à travers les murs » sur la caméra.
+   *
+   * Appelé à chaque image où la caméra a bougé : trois écritures d'uniformes,
+   * quel que soit le nombre de matériaux du modèle.
+   */
+  private _updateXray() {
+    if (!this.camera || !this.controls) return;
+    // Rayon de la sphère englobante : c'est l'échelle naturelle du dégagement.
+    const radius = this._modelBox.getBoundingSphere(new THREE.Sphere()).radius;
+    updateXray(
+      this._cutaway,
+      this.camera,
+      this.controls.target,
+      this._effectiveConfig.rendering?.xray ?? 0,
+      radius,
+    );
   }
 
   private _fitOrbitLimits() {

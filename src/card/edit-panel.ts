@@ -1276,6 +1276,12 @@ export class EditPanel {
     sliderWithHelp(t('cfgFogDensity'), t('helpFogDensity'), 0, 0.05, 0.001, rendering.fog_density ?? 0.018,
       (v) => v.toFixed(3), (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, fog_density: v } }));
 
+    // 0 = inactif. C'est le réglage à recommander : il suit le point de vue,
+    // là où la coupe horizontale est fixe.
+    sliderWithHelp(t('cfgXray'), t('helpXray'), 0, 1, 0.05, rendering.xray ?? 0,
+      (v) => (v <= 0 ? t('cutawayOff') : `${Math.round(v * 100)} %`),
+      (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, xray: v } }));
+
     // 1 = rien n'est coupé. Le pas de 5 % suffit : on cherche une hauteur de
     // coupe, pas une cote au millimètre.
     sliderWithHelp(t('cfgCutaway'), t('helpCutaway'), 0.2, 1, 0.05, rendering.cutaway ?? 1,

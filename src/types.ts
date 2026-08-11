@@ -200,6 +200,17 @@ export interface RenderingConfig {
    * et fonctionne sur un modèle fusionné comme sur un modèle découpé.
    */
   cutaway?: number;
+  /**
+   * Effacement de ce qui se trouve entre la caméra et le cœur du logement.
+   *
+   * 0 (défaut) : inactif. Au-delà, c'est la part du trajet caméra-centre sur
+   * laquelle le fondu s'étale — à 0,5, tout ce qui est à moins de la moitié du
+   * chemin a disparu.
+   *
+   * En tournant autour du modèle, le mur qui bouche la vue s'efface et se
+   * reforme derrière. Le reste de la maison reste plein.
+   */
+  xray?: number;
   ground_color?: string;
   shadows?: boolean;
   transparent_background?: boolean;
