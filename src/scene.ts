@@ -21,6 +21,51 @@ export async function saveScene(hass: Hass, sceneId: string, data: OwlnestScene)
   });
 }
 
+/** Supprime une scène côté serveur. Retourne `false` si elle n'existait pas. */
+export async function deleteScene(hass: Hass, sceneId: string): Promise<boolean> {
+  const res = await hass.callWS<{ success: boolean }>({
+    type: 'owlnest/delete_scene',
+    scene_id: sceneId,
+  });
+  return res?.success === true;
+}
+
+/**
+ * Inventaire d'une scène, pour la lister sans l'ouvrir.
+ *
+ * Le backend ne renvoie que des noms : compter ancres, ouvrants et règles
+ * demande de charger chaque scène. C'est un appel par scène, fait une fois à
+ * l'ouverture de la liste — sur une installation réelle, six scènes.
+ */
+export interface SceneSummary {
+  id: string;
+  anchors: number;
+  parts: number;
+  rules: number;
+  views: number;
+  /** Absent si la scène n'a pas pu être lue. */
+  error?: string;
+}
+
+export async function summarizeScenes(hass: Hass, ids: string[]): Promise<SceneSummary[]> {
+  return Promise.all(ids.map(async (id): Promise<SceneSummary> => {
+    try {
+      const scene = await loadScene(hass, id);
+      return {
+        id,
+        anchors: scene.anchors?.length ?? 0,
+        parts: scene.parts?.length ?? 0,
+        rules: scene.rules?.length ?? 0,
+        views: scene.camera_views?.length ?? 0,
+      };
+    } catch (err) {
+      // Une scène illisible doit rester visible et supprimable : c'est
+      // précisément celle dont on veut se débarrasser.
+      return { id, anchors: 0, parts: 0, rules: 0, views: 0, error: String(err) };
+    }
+  }));
+}
+
 export async function listScenes(hass: Hass): Promise<string[]> {
   const res = await hass.callWS<{ scenes: string[] }>({ type: 'owlnest/list_scenes' });
   return res.scenes;

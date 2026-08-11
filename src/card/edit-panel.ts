@@ -6,6 +6,8 @@ import type { OwlnestRule } from '../rules/types';
 import { normalizeRule } from '../rules/types';
 import { t, setLang } from '../i18n';
 import { openEntityPicker } from '../entities/picker';
+import { deleteScene, summarizeScenes } from '../scene';
+import type { SceneSummary } from '../scene';
 import { describeEntity, knownStates, stateLabel } from '../entities/descriptors';
 import { openFraction, hasOpenSemantics } from '../parts-runtime';
 import { detectionLabel, resolveLevel } from '../quality';
@@ -1197,43 +1199,166 @@ export class EditPanel {
     sec(t('cfgScene'));
 
     {
-      const sceneIdInput = textInput(this.getSceneId() ?? '', t('cfgSceneIdPh'), () => {});
-      const sceneIdDlId = 'owlnest-cfg-scenes-dl';
-      sceneIdInput.setAttribute('list', sceneIdDlId);
-      const scenesDl = document.createElement('datalist');
-      scenesDl.id = sceneIdDlId;
-      root.appendChild(scenesDl);
-      this.listScenesFn?.().then((ids) => {
-        ids.forEach((id) => {
-          const opt = document.createElement('option');
-          opt.value = id;
-          scenesDl.appendChild(opt);
-        });
+      /**
+       * Liste des scènes.
+       *
+       * Le réglage était un champ de saisie avec une liste déroulante cachée :
+       * il fallait connaître le nom de la scène pour la charger, on ne voyait
+       * pas ce qu'elle contenait, et rien ne permettait d'en supprimer une —
+       * alors que le backend sait le faire depuis le début.
+       */
+      const list = document.createElement('div');
+      list.style.cssText = 'display:flex;flex-direction:column;gap:1px;margin-bottom:8px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:7px;overflow:hidden;';
+      root.appendChild(list);
+
+      const loading = document.createElement('div');
+      loading.style.cssText = 'padding:11px 12px;font-size:11px;color:#64748b;background:#0f1420;';
+      loading.textContent = t('cfgScenesLoading');
+      list.appendChild(loading);
+
+      const activeId = this.getSceneId();
+
+      /**
+       * Pastille de comptage.
+       *
+       * Un zéro reste affiché, en gris : « 0 ancre » informe, alors qu'une
+       * absence de pastille laisserait douter que le comptage ait eu lieu.
+       *
+       * Les libellés sont donnés au pluriel ; au singulier on retire le « s »
+       * final, ce qui convient au français comme à l'anglais pour ces quatre
+       * mots.
+       */
+      const tally = (n: number, label: string, accent = false) => {
+        const el = document.createElement('span');
+        el.style.cssText = [
+          'font-size:9px', 'font-variant-numeric:tabular-nums',
+          'padding:1px 5px', 'border-radius:3px',
+          accent ? 'color:#7dd3fc' : 'color:#94a3b8',
+          accent ? 'background:rgba(125,209,252,0.1)' : 'background:rgba(255,255,255,0.05)',
+        ].join(';');
+        el.textContent = `${n} ${n === 1 ? label.replace(/s$/, '') : label}`;
+        return el;
+      };
+
+      const render = (summaries: SceneSummary[]) => {
+        list.innerHTML = '';
+        if (summaries.length === 0) {
+          const empty = document.createElement('div');
+          empty.style.cssText = 'padding:11px 12px;font-size:11px;color:#64748b;background:#0f1420;';
+          empty.textContent = t('cfgScenesEmpty');
+          list.appendChild(empty);
+          return;
+        }
+
+        for (const s of summaries) {
+          const isActive = s.id === activeId;
+          const row = document.createElement('div');
+          row.style.cssText = [
+            'display:flex', 'align-items:center', 'gap:8px',
+            'padding:8px 10px',
+            isActive ? 'background:rgba(125,209,252,0.07)' : 'background:#0f1420',
+          ].join(';');
+
+          const text = document.createElement('div');
+          text.style.cssText = 'flex:1;min-width:0;';
+
+          const name = document.createElement('div');
+          name.style.cssText = `font-size:11.5px;font-weight:${isActive ? 650 : 500};color:${isActive ? '#7dd3fc' : '#e2e8f0'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
+          name.textContent = s.id + (isActive ? ` · ${t('cfgSceneActive')}` : '');
+          text.appendChild(name);
+
+          const counts = document.createElement('div');
+          counts.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;';
+          if (s.error) {
+            const bad = document.createElement('span');
+            bad.style.cssText = 'font-size:9px;color:#fbbf24;';
+            bad.textContent = `⚠ ${t('cfgSceneUnreadable')}`;
+            counts.appendChild(bad);
+          } else {
+            counts.append(
+              tally(s.anchors, t('cfgTallyAnchors'), s.anchors > 0),
+              tally(s.parts, t('cfgTallyParts'), s.parts > 0),
+              tally(s.rules, t('cfgTallyRules'), s.rules > 0),
+              tally(s.views, t('cfgTallyViews'), s.views > 0),
+            );
+          }
+          text.appendChild(counts);
+          row.appendChild(text);
+
+          if (!isActive) {
+            const load = document.createElement('button');
+            load.textContent = t('cfgLoadScene');
+            load.style.cssText = 'flex-shrink:0;background:rgba(125,209,252,0.12);border:1px solid rgba(125,209,252,0.28);border-radius:6px;color:#7dd3fc;padding:5px 9px;font-size:10.5px;font-family:inherit;cursor:pointer;white-space:nowrap;';
+            load.addEventListener('click', () => {
+              localStorage.setItem('owlnest_scene_id', s.id);
+              this.onSceneSettingsChange?.({ scene_id: s.id } as SceneSettings, true);
+            });
+            row.appendChild(load);
+          }
+
+          const del = document.createElement('button');
+          del.style.cssText = 'flex-shrink:0;background:none;border:none;color:rgba(248,113,113,0.55);cursor:pointer;font-size:14px;padding:2px 5px;font-family:inherit;';
+          del.textContent = '×';
+          del.title = t('cfgSceneDelete');
+          // La scène ouverte n'est pas supprimable : la carte se retrouverait
+          // sans rien à afficher, et l'utilisateur sans moyen de revenir.
+          if (isActive) {
+            del.disabled = true;
+            del.style.opacity = '0.25';
+            del.style.cursor = 'default';
+            del.title = t('cfgSceneDeleteActive');
+          } else {
+            del.addEventListener('click', () => {
+              if (!confirm(t('cfgSceneConfirm').replace('{id}', s.id))) return;
+              const hass = this.getHass();
+              if (!hass) return;
+              deleteScene(hass, s.id)
+                .then(() => refresh())
+                .catch((err) => console.error('[Owlnest] delete_scene failed:', err));
+            });
+          }
+          row.appendChild(del);
+          list.appendChild(row);
+        }
+      };
+
+      const refresh = () => {
+        const hass = this.getHass();
+        if (!hass) return;
+        this.listScenesFn?.()
+          .then((ids) => summarizeScenes(hass, ids))
+          .then(render)
+          .catch(() => render([]));
+      };
+      refresh();
+
+      // ── Créer une scène ────────────────────────────────────────────────
+      const newRow = document.createElement('div');
+      newRow.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;';
+      const newInput = textInput('', t('cfgSceneIdPh'), () => {});
+      newRow.appendChild(newInput);
+      const create = document.createElement('button');
+      create.textContent = t('cfgSceneCreate');
+      create.style.cssText = 'flex-shrink:0;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.14);border-radius:7px;color:#cbd5e1;padding:6px 10px;font-size:11px;font-family:inherit;cursor:pointer;white-space:nowrap;';
+      create.addEventListener('click', () => {
+        const id = newInput.value.trim();
+        if (!id) return;
+        localStorage.setItem('owlnest_scene_id', id);
+        this.onSceneSettingsChange?.({ scene_id: id } as SceneSettings, true);
       });
-      const sceneRow = document.createElement('div');
-      sceneRow.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;';
-      sceneRow.appendChild(sceneIdInput);
-      const loadSceneBtn = document.createElement('button');
-      loadSceneBtn.textContent = t('cfgLoadScene');
-      loadSceneBtn.style.cssText = 'flex-shrink:0;background:rgba(125,209,252,0.12);border:1px solid rgba(125,209,252,0.28);border-radius:7px;color:#7dd3fc;padding:6px 10px;font-size:11px;font-family:inherit;cursor:pointer;white-space:nowrap;';
-      loadSceneBtn.addEventListener('click', () => {
-        const newId = sceneIdInput.value.trim();
-        if (!newId) return;
-        localStorage.setItem('owlnest_scene_id', newId);
-        this.onSceneSettingsChange?.({ scene_id: newId } as SceneSettings, true);
-      });
-      sceneRow.appendChild(loadSceneBtn);
-      const sceneWrap = document.createElement('div');
-      sceneWrap.style.cssText = 'margin-bottom:8px;';
-      const sceneLblRow = document.createElement('div');
-      sceneLblRow.style.cssText = 'display:flex;align-items:center;margin-bottom:3px;';
-      const sceneLbl = document.createElement('span');
-      sceneLbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;';
-      sceneLbl.textContent = t('cfgSceneId');
-      sceneLblRow.appendChild(sceneLbl);
-      sceneLblRow.appendChild(helpBadge(t('helpSceneId')));
-      sceneWrap.appendChild(sceneLblRow); sceneWrap.appendChild(sceneRow);
-      root.appendChild(sceneWrap);
+      newRow.appendChild(create);
+
+      const newWrap = document.createElement('div');
+      newWrap.style.cssText = 'margin-bottom:8px;';
+      const newLblRow = document.createElement('div');
+      newLblRow.style.cssText = 'display:flex;align-items:center;margin-bottom:3px;';
+      const newLbl = document.createElement('span');
+      newLbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;';
+      newLbl.textContent = t('cfgSceneId');
+      newLblRow.appendChild(newLbl);
+      newLblRow.appendChild(helpBadge(t('helpSceneId')));
+      newWrap.append(newLblRow, newRow);
+      root.appendChild(newWrap);
     }
 
     // ══════════════════════════════════════════════════════════════════════
