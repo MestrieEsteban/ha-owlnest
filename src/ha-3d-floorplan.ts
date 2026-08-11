@@ -1661,6 +1661,8 @@ class Ha3dFloorplan extends HTMLElement {
     this.controls.dampingFactor = 0.08;
 
     const orb = this._config?.orbit ?? {};
+    // Bornes provisoires : le modèle n'est pas encore chargé, donc son échelle
+    // est inconnue. `_fitOrbitLimits()` les recalcule dès qu'elle l'est.
     this.controls.minDistance = orb.min_distance ?? 1;
     this.controls.maxDistance = orb.max_distance ?? 100;
     this.controls.maxPolarAngle =
@@ -1906,7 +1908,7 @@ class Ha3dFloorplan extends HTMLElement {
     }
     // Fog density
     if (rl.fog_density !== undefined && this.scene.fog instanceof THREE.FogExp2) {
-      this.scene.fog.density = rl.fog_density;
+      this._fitFog();
     }
     // Shadows
     if (rl.shadows !== undefined) {
@@ -1983,6 +1985,7 @@ class Ha3dFloorplan extends HTMLElement {
         this.scene.background = useSky ? null : new THREE.Color(bgHex);
         this.renderer.setClearColor(bgHex, 1);
         this.scene.fog = new THREE.FogExp2(0x9fc8e8, rl.fog_density ?? 0.018);
+        this._fitFog();
         // Re-add ground if it was removed and model is loaded
         if (this._modelRoot && this._env && !this._env.hasGround) {
           const box = new THREE.Box3().setFromObject(this._modelRoot);
@@ -2029,6 +2032,55 @@ class Ha3dFloorplan extends HTMLElement {
     }
 
     this._requestShadowUpdate();
+  }
+
+  /**
+   * Adapte les bornes d'orbite à l'échelle du modèle.
+   *
+   * Les valeurs par défaut (1 à 100) supposaient un modèle en mètres. Un export
+   * Sweet Home 3D est en centimètres : une maison de six mètres mesure alors
+   * 600 unités, et la caméra restait épinglée à un mètre du centre — on ne
+   * voyait qu'un mur et du ciel.
+   *
+   * Les bornes explicitement fournies par la scène sont respectées : c'est un
+   * réglage, pas une supposition.
+   */
+  /**
+   * Densité du brouillard, ramenée à l'échelle du modèle.
+   *
+   * `FogExp2` s'exprime par unité de distance : une densité de 0,018, réglée
+   * pour un modèle en mètres, sature entièrement un modèle en centimètres —
+   * à 300 unités le facteur vaut déjà 1, et la maison disparaît dans un aplat
+   * bleu. Le symptôme est trompeur : on croit à un modèle qui ne charge pas.
+   *
+   * Le réglage de l'éditeur garde son sens : il décrit la densité voulue pour
+   * un modèle d'une dizaine d'unités, et on la transpose.
+   */
+  private _fitFog() {
+    const fog = this.scene?.fog;
+    if (!(fog instanceof THREE.FogExp2)) return;
+    const asked = this._effectiveConfig.rendering?.fog_density ?? 0.018;
+    const span = this._modelSpan > 0 ? this._modelSpan : 10;
+    fog.density = asked * (10 / span);
+  }
+
+  private _fitOrbitLimits() {
+    if (!this.controls) return;
+    const settings = this._scene?.settings?.orbit ?? {};
+    const span = this._modelSpan;
+    if (span <= 0) return;
+
+    if (settings.min_distance === undefined) this.controls.minDistance = span * 0.05;
+    if (settings.max_distance === undefined) this.controls.maxDistance = span * 3;
+
+    // Le plan de coupe éloigné doit suivre, sinon le modèle disparaît en
+    // reculant.
+    if (this.camera) {
+      this.camera.near = Math.max(span * 1e-4, 0.01);
+      this.camera.far = Math.max(this.camera.far, span * 8);
+      this.camera.updateProjectionMatrix();
+    }
+    this.controls.update();
   }
 
   // ── Ouvrants ──────────────────────────────────────────────────────────
@@ -2171,6 +2223,9 @@ class Ha3dFloorplan extends HTMLElement {
     this._modelSpan = Math.max(span.x, span.y, span.z, 1e-3);
     this._fitSunShadow();
     this._requestShadowUpdate();
+    // Avant tout placement de caméra : une borne trop serrée écrêterait la
+    // position par défaut, et l'élargir ensuite ne la replacerait pas.
+    this._fitOrbitLimits();
 
     const saved = this._loadView();
     if (saved) {
@@ -2186,12 +2241,7 @@ class Ha3dFloorplan extends HTMLElement {
       this.lockBtn!.textContent = '\uD83D\uDD13';
     }
 
-    if (this.scene.fog instanceof THREE.Fog) {
-      const size = box.getSize(new THREE.Vector3());
-      const maxDim = Math.max(size.x, size.z);
-      this.scene.fog.near = maxDim * 1.2;
-      this.scene.fog.far = maxDim * 4;
-    }
+    this._fitFog();
 
     this.controls!.update();
     this.scene.add(model);
