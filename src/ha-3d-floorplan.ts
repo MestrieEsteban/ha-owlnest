@@ -22,7 +22,7 @@ import { SceneCardRenderer } from './cards/renderer';
 import { PanelGizmo } from './panels/gizmo';
 import type { SceneCard, SceneCardType } from './cards/types';
 import { PartController, meshOrder } from './parts-runtime';
-import { partIndexOf, partFrame, guessPart } from './parts';
+import { partIndexOf, partFrame, guessPart, verticalAxis } from './parts';
 import { evalCondition, RuleEngine } from './rules/engine';
 import type { OwlnestRule, Action } from './rules/types';
 
@@ -2046,6 +2046,8 @@ class Ha3dFloorplan extends HTMLElement {
     this._parts.dispose(this._modelRoot);
     if (configs.length === 0) return;
 
+    // Déduite du modèle entier, pas de chaque pièce : voir verticalAxis().
+    this._parts.setVertical(verticalAxis(this._modelBox));
     const { missing } = this._parts.build(this._modelRoot, configs);
     if (missing.length) {
       console.warn(

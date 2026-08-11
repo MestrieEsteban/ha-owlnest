@@ -183,6 +183,27 @@ export function hingePivot(box: THREE.Box3, frame: PartFrame, side: HingeSide): 
   return new THREE.Vector3(p[0], p[1], p[2]);
 }
 
+/**
+ * Axe vertical du modèle, déduit de ses proportions d'ensemble.
+ *
+ * Le repère d'une pièce ne suffit pas : `partFrame` prend le plus grand axe
+ * pour la hauteur, ce qui est juste pour une porte mais faux pour un volet de
+ * baie, plus large que haut — « coulisse vers le bas » le ferait glisser de
+ * côté.
+ *
+ * Une maison est toujours plus étendue au sol qu'en hauteur, quelle que soit
+ * la convention d'export. L'axe de plus **faible** étendue est donc la
+ * verticale : Y sur un modèle Y-up (760 × 250 × 520), Z sur un modèle Z-up
+ * (788 × 733 × 250).
+ */
+export function verticalAxis(modelBox: THREE.Box3): 0 | 1 | 2 {
+  const s = modelBox.getSize(new THREE.Vector3());
+  const size = [s.x, s.y, s.z];
+  let best: 0 | 1 | 2 = 1;
+  for (const a of [0, 1, 2] as const) if (size[a] < size[best]) best = a;
+  return best;
+}
+
 const AXIS_NAME = ['x', 'y', 'z'] as const;
 export const axisName = (a: 0 | 1 | 2) => AXIS_NAME[a];
 

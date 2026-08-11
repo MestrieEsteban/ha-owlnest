@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import {
-  buildPartIndex, partFrame, hingePivot, extractPart, removeTriangles, guessPart,
+  buildPartIndex, partFrame, hingePivot, extractPart, removeTriangles, guessPart, verticalAxis,
 } from './parts.mjs';
 
 /** Géométrie indexée à partir de sommets bruts et d'une liste de triangles. */
@@ -111,6 +111,26 @@ test('le gond n’est jamais au centre du vantail', () => {
     const p = hingePivot(box, f, side);
     assert.notEqual(p.getComponent(f.wide), centre.getComponent(f.wide));
   }
+});
+
+// ── Verticale du modèle ─────────────────────────────────────────────────────
+
+test('verticalAxis reconnaît un modèle Y-up', () => {
+  // Un appartement : 600 large, 250 haut, 618 profond.
+  const box = new THREE.Box3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(600, 250, 618));
+  assert.equal(verticalAxis(box), 1);
+});
+
+test('verticalAxis reconnaît un modèle Z-up', () => {
+  // Une maison exportée sans conversion : la hauteur est sur Z.
+  const box = new THREE.Box3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(788, 733, 250));
+  assert.equal(verticalAxis(box), 2);
+});
+
+test('verticalAxis ne dépend pas de la position du modèle', () => {
+  // Le modèle réel est décalé sous zéro : seules les étendues comptent.
+  const box = new THREE.Box3(new THREE.Vector3(-400, -216, -300), new THREE.Vector3(388, 34, 318));
+  assert.equal(verticalAxis(box), 1);
 });
 
 // ── Extraction ──────────────────────────────────────────────────────────────

@@ -144,6 +144,17 @@ export function resolveMesh(
 export class PartController {
   private items: LiveMesh[] = [];
   private _built = false;
+  /**
+   * Verticale du modèle. Sans elle, un coulissant se rabat sur son propre plus
+   * grand axe, ce qui fait glisser de côté un volet plus large que haut.
+   */
+  private _vertical: 0 | 1 | 2 | null = null;
+
+  /** Renseigne la verticale, déduite de la boîte englobante du modèle. */
+  setVertical(axis: 0 | 1 | 2 | null) {
+    this._vertical = axis;
+    for (const item of this.items) this._configure(item, item.cfg);
+  }
 
   get count() { return this.items.length; }
   get built() { return this._built; }
@@ -221,7 +232,13 @@ export class PartController {
 
     if (cfg.motion === 'slide') {
       const dir = cfg.slide ?? 'down';
-      const along = dir === 'down' || dir === 'up' ? frame.up : frame.wide;
+      const vertical = this._vertical ?? frame.up;
+      // « Vers le bas » suit la verticale du modèle ; « vers un côté » suit le
+      // plus grand axe restant, celui dans lequel le tablier a de la course.
+      const sideways = ([frame.up, frame.wide, frame.thin] as const)
+        .filter((a) => a !== vertical)
+        .sort((a, b) => frame.size[b] - frame.size[a])[0] ?? frame.wide;
+      const along = dir === 'down' || dir === 'up' ? vertical : sideways;
       item.span = frame.size[along] * (cfg.travel ?? 1);
       item.axis = axisName(along);
       item.sign = dir === 'up' || dir === 'end' ? 1 : -1;

@@ -308,3 +308,11 @@ dev/cameras.json
 # Modele local pour les bancs d essai (non versionne)
 dev/*.local.glb
 .test-build/
+
+# Modeles sources : trop lourds pour le depot. flat-archi.glb, lui, est versionne.
+Modele3D/*.obj
+Modele3D/*.mtl
+Modele3D/flat-full.glb
+Modele3D/flat-lite.glb
+Modele3D/*.jpeg
+Modele3D/*.png
