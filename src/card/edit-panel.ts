@@ -1282,12 +1282,6 @@ export class EditPanel {
       (v) => (v <= 0 ? t('cutawayOff') : `${Math.round(v * 100)} %`),
       (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, xray: v } }));
 
-    // 1 = rien n'est coupé. Le pas de 5 % suffit : on cherche une hauteur de
-    // coupe, pas une cote au millimètre.
-    sliderWithHelp(t('cfgCutaway'), t('helpCutaway'), 0.2, 1, 0.05, rendering.cutaway ?? 1,
-      (v) => (v >= 1 ? t('cutawayOff') : `${Math.round(v * 100)} %`),
-      (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, cutaway: v } }));
-
     toggleWithHelp(t('cfgTransparent'), t('helpTransparent'), rendering.transparent_background === true, (v) => {
       this.onSceneSettingsChange?.({ rendering: { ...rendering, transparent_background: v } });
     });

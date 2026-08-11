@@ -24,7 +24,7 @@ import type { SceneCard, SceneCardType } from './cards/types';
 import { PartController, meshOrder } from './parts-runtime';
 import { partIndexOf, partFrame, guessPart, verticalAxis } from './parts';
 import { separateCoplanarSlabs } from './coplanar';
-import { createUniforms, instrumentMaterials, updateXray, updateCut } from './cutaway';
+import { createUniforms, instrumentMaterials, updateXray } from './cutaway';
 import type { CutawayUniforms } from './cutaway';
 import { evalCondition, RuleEngine } from './rules/engine';
 import type { OwlnestRule, Action } from './rules/types';
@@ -2108,33 +2108,20 @@ class Ha3dFloorplan extends HTMLElement {
    * le choix de laisser les pastilles traverser les murs.
    */
   /**
-   * Applique les réglages d'effacement.
+   * Applique le réglage d'effacement.
    *
    * L'instrumentation des matériaux n'a lieu qu'une fois ; ensuite tout passe
-   * par des uniformes partagés, donc changer un réglage ne recompile rien.
+   * par des uniformes partagés, donc changer le réglage ne recompile rien.
    */
   private _applyCutaway() {
     if (!this._modelRoot) return;
     instrumentMaterials(this._modelRoot, this._cutaway);
-
-    const rl = this._effectiveConfig.rendering;
-
-    const axis = verticalAxis(this._modelBox);
-    const up = new THREE.Vector3();
-    up.setComponent(axis, 1);
-    updateCut(
-      this._cutaway, up,
-      this._modelBox.min.getComponent(axis),
-      this._modelBox.max.getComponent(axis),
-      rl?.cutaway ?? 1,
-    );
-
     this._updateXray();
     this._requestRender();
   }
 
   /**
-   * Recalage de l'effacement « à travers les murs » sur la caméra.
+   * Recalage de l'effacement sur la caméra.
    *
    * Appelé à chaque image où la caméra a bougé : trois écritures d'uniformes,
    * quel que soit le nombre de matériaux du modèle.

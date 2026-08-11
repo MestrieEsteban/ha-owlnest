@@ -190,17 +190,6 @@ export interface RenderingConfig {
   exposure?: number;
   fog_density?: number;
   /**
-   * Hauteur du plan de coupe, en fraction de la hauteur du modèle.
-   *
-   * 1 (défaut) : rien n'est coupé. En dessous, tout ce qui dépasse disparaît —
-   * les murs extérieurs s'ouvrent et l'on plonge dans le logement, comme dans
-   * une maison de poupée. Un plafond exporté se retire par la même occasion.
-   *
-   * La coupe se fait dans le nuanceur : elle ne coûte aucun calcul de géométrie
-   * et fonctionne sur un modèle fusionné comme sur un modèle découpé.
-   */
-  cutaway?: number;
-  /**
    * Effacement de ce qui se trouve entre la caméra et le cœur du logement.
    *
    * 0 (défaut) : inactif. Au-delà, c'est la part du trajet caméra-centre sur
