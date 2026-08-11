@@ -25,6 +25,7 @@ const ENTRIES = [
   'src/parts.ts',
   'src/parts-runtime.ts',
   'src/coplanar.ts',
+  'src/lights.ts',
 ];
 
 /**

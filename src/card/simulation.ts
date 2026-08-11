@@ -19,6 +19,8 @@ export class SimulationPanel {
     private getAnchors: () => Map<string, AnchorEntry>,
     private getEffectiveConfig: () => CardConfig,
     private updateOverlayStates: () => void,
+    /** Envergure du modèle : les lumières s'y mettent à l'échelle. */
+    private getModelSpan?: () => number,
   ) {}
 
   get isOpen() { return this._simOpen; }
@@ -175,7 +177,7 @@ export class SimulationPanel {
         const hass = this.getHass();
         if (hass) {
           this.env.updateFromHass(hass);
-          syncLights(this.getAnchors(), hass, this.getEffectiveConfig());
+          syncLights(this.getAnchors(), hass, this.getEffectiveConfig(), this.getModelSpan?.());
           this.updateOverlayStates();
           this.requestRender();
         }

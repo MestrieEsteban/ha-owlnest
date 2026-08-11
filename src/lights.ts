@@ -2,12 +2,44 @@ import * as THREE from 'three';
 import type { AnchorEntry, CardConfig, Hass } from './types';
 import { describeEntity } from './entities/descriptors';
 
+/**
+ * Envergure supposée par les réglages d'origine, en unités de modèle.
+ *
+ * Les valeurs par défaut — portée 8, intensité 3 — ont été choisies pour une
+ * maison exprimée en mètres, donc une dizaine d'unités de large.
+ */
+export const LIGHT_REFERENCE_SPAN = 12;
+
+/**
+ * Facteur d'échelle des lumières, déduit de l'envergure du modèle.
+ *
+ * Un export Sweet Home 3D est en centimètres : une maison y mesure 600 unités
+ * au lieu de 6. Une portée de 8 éclaire alors 8 cm, et l'intensité par défaut
+ * disparaît — c'est le symptôme « on ne voit même pas la lumière ».
+ */
+export function lightScale(span?: number): number {
+  return span && span > 0 ? span / LIGHT_REFERENCE_SPAN : 1;
+}
+
+/**
+ * Multiplicateur d'intensité pour une lumière à décroissance physique.
+ *
+ * `THREE.PointLight` avec `decay: 2` suit la loi du carré inverse :
+ * l'éclairement reçu vaut `intensité / distance²`. Éloigner tout d'un facteur k
+ * demande donc k² fois plus d'intensité pour le même rendu — pas k.
+ */
+export function intensityScale(span?: number): number {
+  const k = lightScale(span);
+  return k * k;
+}
+
 export function syncLights(
   anchors: Map<string, AnchorEntry>,
   hass: Hass,
   config: CardConfig | null,
+  span?: number,
 ): void {
-  const scale = config?.intensity_scale ?? 1;
+  const scale = (config?.intensity_scale ?? 1) * intensityScale(span);
 
   anchors.forEach((entry) => {
     // Hidden anchors have no light effect

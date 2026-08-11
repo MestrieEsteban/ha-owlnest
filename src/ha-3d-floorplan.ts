@@ -252,7 +252,7 @@ class Ha3dFloorplan extends HTMLElement {
     }
 
     if (this.modelLoaded && !this._editMode) {
-      syncLights(this.anchors, hass, this._effectiveConfig);
+      syncLights(this.anchors, hass, this._effectiveConfig, this._modelSpan);
       this._updateOverlayStates();
       // Skip real-entity weather/sun when simulation is overriding
       if (!this._sim?.isActive) this._env?.updateFromHass(hass);
@@ -1203,13 +1203,13 @@ class Ha3dFloorplan extends HTMLElement {
       if (entry.lightTarget) this.scene?.remove(entry.lightTarget);
     });
 
-    this.anchors = buildAnchorsFromEditable(editable, this.scene!, this._effectiveConfig);
+    this.anchors = buildAnchorsFromEditable(editable, this.scene!, this._effectiveConfig, this._modelSpan);
 
     if (this.controls) this.controls.enabled = !this._locked;
 
     this._createOverlays();
     if (this._hass) {
-      syncLights(this.anchors, this._hass, this._config);
+      syncLights(this.anchors, this._hass, this._config, this._modelSpan);
       this._updateOverlayStates();
     }
 
@@ -1243,7 +1243,7 @@ class Ha3dFloorplan extends HTMLElement {
 
       if (ea.entity.split('.')[0] === 'light' && newStyle !== oldStyle) {
         // Rebuild light with new style
-        rebuildAnchorLight(entry, this.scene!, this._effectiveConfig, newStyle, ea.lightDirection);
+        rebuildAnchorLight(entry, this.scene!, this._effectiveConfig, newStyle, ea.lightDirection, this._modelSpan);
         // Restore last intensity
         if (entry.light) {
           entry.light.intensity = entry.targetIntensity;
@@ -2277,7 +2277,7 @@ class Ha3dFloorplan extends HTMLElement {
 
     this._buildParts();
 
-    this.anchors = detectAnchors(model, this.scene, ec);
+    this.anchors = detectAnchors(model, this.scene, ec, this._modelSpan);
     this._createOverlays();
 
     this._overlaysVisible = !(ec.tap_to_toggle ?? false);
@@ -2290,7 +2290,7 @@ class Ha3dFloorplan extends HTMLElement {
 
     this.modelLoaded = true;
     if (this._hass) {
-      syncLights(this.anchors, this._hass, ec);
+      syncLights(this.anchors, this._hass, ec, this._modelSpan);
       this._updateOverlayStates();
       this._evaluatePassiveConditions();
       this._env?.updateFromHass(this._hass);
@@ -2310,6 +2310,7 @@ class Ha3dFloorplan extends HTMLElement {
         () => this.anchors,
         () => this._effectiveConfig,
         () => this._updateOverlayStates(),
+        () => this._modelSpan,
       );
     }
 

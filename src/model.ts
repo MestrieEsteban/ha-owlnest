@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { AnchorEntry, AnchorConfig, CardConfig, EditableAnchor, LightStyle } from './types';
 import { qualityFromConfig } from './quality';
+import { lightScale } from './lights';
 
 export async function loadGLTF(url: string): Promise<THREE.Group> {
   const loader = new GLTFLoader();
@@ -26,8 +27,12 @@ export function makeLight(
   config: CardConfig,
   style: LightStyle = 'point',
   direction?: [number, number, number],
+  span?: number,
 ): { light: THREE.PointLight | THREE.SpotLight; target?: THREE.Object3D } {
-  const dist = config.lights?.distance ?? 8;
+  // Une portée explicite est un réglage de l'utilisateur, exprimé dans l'unité
+  // de son modèle : on la respecte. Seule la valeur par défaut se met à
+  // l'échelle, faute de quoi une lampe éclairerait huit centimètres.
+  const dist = config.lights?.distance ?? 8 * lightScale(span);
   const decay = config.lights?.decay ?? 2;
   // Une lumière qui projette une ombre fait rendre la scène 6 fois de plus
   // (cube map). C'est le premier poste de coût sur GPU faible.
@@ -41,7 +46,7 @@ export function makeLight(
     light.visible = false;
     light.castShadow = q.anchorShadows;
     light.shadow.mapSize.set(q.anchorShadowMap, q.anchorShadowMap);
-    light.shadow.camera.near = 0.1;
+    light.shadow.camera.near = Math.max(dist * 0.01, 0.01);
     light.shadow.camera.far = dist * 1.5;
     light.shadow.bias = -0.002;
     const target = new THREE.Object3D();
@@ -74,6 +79,7 @@ export function rebuildAnchorLight(
   config: CardConfig,
   style: LightStyle,
   direction?: [number, number, number],
+  span?: number,
 ): void {
   if (entry.light) { scene.remove(entry.light); entry.light.dispose(); }
   if (entry.lightTarget) scene.remove(entry.lightTarget);
@@ -84,7 +90,7 @@ export function rebuildAnchorLight(
     return;
   }
 
-  const { light, target } = makeLight(entry.worldPos, scene, config, style, direction);
+  const { light, target } = makeLight(entry.worldPos, scene, config, style, direction, span);
   entry.light = light;
   entry.lightTarget = target;
   entry.lightStyle = style;
@@ -95,6 +101,7 @@ export function detectAnchors(
   root: THREE.Object3D,
   scene: THREE.Scene,
   config: CardConfig,
+  span?: number,
 ): Map<string, AnchorEntry> {
   const anchors = new Map<string, AnchorEntry>();
   const cfgAnchors = config.anchors;
@@ -106,7 +113,7 @@ export function detectAnchors(
       const domain = ac.entity.split('.')[0];
       const worldPos = new THREE.Vector3(...ac.position);
       const { light, target } = domain === 'light'
-        ? makeLight(worldPos, scene, config, ac.lightStyle ?? 'point', ac.lightDirection)
+        ? makeLight(worldPos, scene, config, ac.lightStyle ?? 'point', ac.lightDirection, span)
         : { light: null, target: undefined };
       anchors.set(key, {
         light,
@@ -145,7 +152,7 @@ export function detectAnchors(
     const domain = entityId.split('.')[0];
     const worldPos = new THREE.Vector3();
     node.getWorldPosition(worldPos);
-    const { light, target } = domain === 'light' ? makeLight(worldPos, scene, config) : { light: null, target: undefined };
+    const { light, target } = domain === 'light' ? makeLight(worldPos, scene, config, 'point', undefined, span) : { light: null, target: undefined };
     anchors.set(node.name, {
       light,
       lightTarget: target,
@@ -165,13 +172,14 @@ export function buildAnchorsFromEditable(
   editable: Map<string, EditableAnchor>,
   scene: THREE.Scene,
   config: CardConfig,
+  span?: number,
 ): Map<string, AnchorEntry> {
   const anchors = new Map<string, AnchorEntry>();
   editable.forEach((ea, key) => {
     const domain = ea.entity.split('.')[0];
     const worldPos = ea.position.clone();
     const { light, target } = domain === 'light'
-      ? makeLight(worldPos, scene, config, ea.lightStyle ?? 'point', ea.lightDirection)
+      ? makeLight(worldPos, scene, config, ea.lightStyle ?? 'point', ea.lightDirection, span)
       : { light: null, target: undefined };
     anchors.set(key, {
       light,
