@@ -15,9 +15,17 @@
  *    plantes et l'écran se retrouvaient pointillés autant que le mur. Essayé,
  *    mesuré, jugé laid.
  *
- * Reste le rejet franc, retenu ici : un fragment plus proche que le seuil n'est
- * pas dessiné, point. Aucun tri, aucune trame, et le mur s'efface au ras de sa
- * propre surface — la coupure ne se voit donc pas.
+ * Le rejet franc seul a été jugé trop brutal : le mur disparaît d'un coup, on
+ * perd le repère.
+ *
+ * La solution retenue combine les deux : **la scène est dessinée sans le mur**,
+ * puis une **seconde passe** repose par-dessus un calque translucide qui ne garde
+ * que ce qui a été retiré. On voit donc le mur en filigrane, et l'intérieur au
+ * travers.
+ *
+ * Cette passe échappe au problème de tri : c'est une couche unique posée sur une
+ * image déjà opaque, sans écriture de profondeur. Elle coûte en revanche un
+ * second envoi de la géométrie — mesuré avant d'être retenu.
  */
 import * as THREE from 'three';
 
@@ -163,4 +171,86 @@ export function updateXray(
   const nearFace = distance - radius;
   u.near.value = nearFace + radius * Math.min(Math.max(strength, 0), 1);
   u.on.value = 1;
+}
+
+/**
+ * Calque translucide du mur retiré.
+ *
+ * Les mailles partagent la géométrie de l'original — aucune copie en mémoire —
+ * et n'en diffèrent que par le matériau : non éclairé, translucide, sans
+ * écriture de profondeur, dessiné après les opaques.
+ *
+ * Le test de profondeur reste actif : le calque est la chose la plus proche de
+ * la caméra, il passe donc, mais reste masqué par ce qui serait devant lui.
+ */
+export function createGhost(
+  root: THREE.Object3D,
+  u: CutawayUniforms,
+  opacity = 0.22,
+): THREE.Group {
+  const ghost = new THREE.Group();
+  ghost.name = 'owlnest-ghost';
+  ghost.renderOrder = 10;
+
+  const material = new THREE.MeshBasicMaterial({
+    color: 0xdfe6ee,
+    transparent: true,
+    opacity,
+    depthWrite: false,
+    // Une seule face : un mur a deux parois, les cumuler doublerait la densité.
+    side: THREE.FrontSide,
+  });
+  material.customProgramCacheKey = () => 'owlnest-ghost';
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.owlnestCamPos = u.camPos;
+    shader.uniforms.owlnestCamDir = u.camDir;
+    shader.uniforms.owlnestNear = u.near;
+    shader.uniforms.owlnestOn = u.on;
+
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nvarying vec3 vOwlnestWorld;',
+      )
+      .replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\nvOwlnestWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;',
+      );
+
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+varying vec3 vOwlnestWorld;
+uniform vec3 owlnestCamPos;
+uniform vec3 owlnestCamDir;
+uniform float owlnestNear;
+uniform float owlnestOn;`,
+      )
+      .replace(
+        '#include <clipping_planes_fragment>',
+        `#include <clipping_planes_fragment>
+// Exactement l'inverse de la passe opaque : on ne garde que ce qu'elle a retiré.
+if (owlnestOn < 0.5) discard;
+{
+  float owlnestDepth = dot(owlnestCamDir, vOwlnestWorld - owlnestCamPos);
+  if (owlnestDepth >= owlnestNear) discard;
+}`,
+      );
+  };
+
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh || mesh.userData.owlnestPartId) return;
+    const copy = new THREE.Mesh(mesh.geometry, material);
+    mesh.updateWorldMatrix(true, false);
+    copy.matrixAutoUpdate = false;
+    copy.matrix.copy(mesh.matrixWorld);
+    copy.castShadow = false;
+    copy.receiveShadow = false;
+    copy.raycast = () => {};
+    ghost.add(copy);
+  });
+
+  return ghost;
 }

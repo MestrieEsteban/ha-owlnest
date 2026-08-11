@@ -24,7 +24,7 @@ import type { SceneCard, SceneCardType } from './cards/types';
 import { PartController, meshOrder } from './parts-runtime';
 import { partIndexOf, partFrame, guessPart, verticalAxis } from './parts';
 import { separateCoplanarSlabs } from './coplanar';
-import { createUniforms, instrumentMaterials, updateXray } from './cutaway';
+import { createUniforms, instrumentMaterials, updateXray, createGhost } from './cutaway';
 import type { CutawayUniforms } from './cutaway';
 import { evalCondition, RuleEngine } from './rules/engine';
 import type { OwlnestRule, Action } from './rules/types';
@@ -142,6 +142,9 @@ class Ha3dFloorplan extends HTMLElement {
   // Moteur de regles : porte lui-meme ses etats precedents, ses minuteries de
   // duree et ses anti-rebonds.
   private _ruleEngine = new RuleEngine();
+  /** Calque translucide du mur retiré — voir cutaway.ts. */
+  private _ghost: THREE.Group | null = null;
+
   /** Uniformes partagés de l'effacement, mis à jour à chaque image. */
   private _cutaway: CutawayUniforms = createUniforms();
 
@@ -2114,8 +2117,18 @@ class Ha3dFloorplan extends HTMLElement {
    * par des uniformes partagés, donc changer le réglage ne recompile rien.
    */
   private _applyCutaway() {
-    if (!this._modelRoot) return;
+    if (!this._modelRoot || !this.scene) return;
     instrumentMaterials(this._modelRoot, this._cutaway);
+
+    const on = (this._effectiveConfig.rendering?.xray ?? 0) > 0;
+    if (on && !this._ghost) {
+      this._ghost = createGhost(this._modelRoot, this._cutaway);
+      this.scene.add(this._ghost);
+    } else if (!on && this._ghost) {
+      this.scene.remove(this._ghost);
+      this._ghost = null;
+    }
+
     this._updateXray();
     this._requestRender();
   }
@@ -2214,6 +2227,7 @@ class Ha3dFloorplan extends HTMLElement {
     // Exit edit mode cleanly
     if (this._editMode) this._exitEditMode();
     this._parts.dispose(this._modelRoot ?? undefined);
+    if (this._ghost) { this.scene?.remove(this._ghost); this._ghost = null; }
     // Dispose card renderer
     this._cardRenderer?.dispose();
     this._cardRenderer = null;
