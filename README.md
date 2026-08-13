@@ -38,8 +38,6 @@
   </a>
 </p>
 
-<p align="center"><em>Two minutes, no narration: lights, anchors, labels and camera views.</em></p>
-
 ---
 
 > **⚠️ Beta** — Owlnest is under active development. Features may change, bugs may appear. Feedback and bug reports are very welcome via [Issues](https://github.com/MestrieEsteban/ha-owlnest/issues).

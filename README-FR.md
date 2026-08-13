@@ -38,8 +38,6 @@
   </a>
 </p>
 
-<p align="center"><em>Deux minutes, sans commentaire : lumières, ancres, étiquettes et vues caméra.</em></p>
-
 ---
 
 > **⚠️ Beta** — Owlnest est en développement actif. Des fonctionnalités peuvent changer et des bugs peuvent apparaître. Vos retours et signalements sont les bienvenus via les [Issues](https://github.com/MestrieEsteban/ha-owlnest/issues).
