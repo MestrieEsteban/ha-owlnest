@@ -7,6 +7,7 @@ import { normalizeRule } from '../rules/types';
 import { t, setLang } from '../i18n';
 import { openEntityPicker } from '../entities/picker';
 import { deleteScene, summarizeScenes } from '../scene';
+import { PARTS_ENABLED } from '../parts';
 import type { SceneSummary } from '../scene';
 import { describeEntity, knownStates, stateLabel } from '../entities/descriptors';
 import { openFraction, hasOpenSemantics } from '../parts-runtime';
@@ -604,7 +605,8 @@ export class EditPanel {
     const defaultTab: TabId = CARDS_ENABLED && this.getSelectedCardId?.() ? 'cards' : 'anchors';
     // Un onglet masqué mémorisé d'un précédent rendu ne doit pas être restauré :
     // son volet existe toujours, mais aucun bouton ne permettrait d'en sortir.
-    const tabVisible = (id: string) => id !== 'cards' || CARDS_ENABLED;
+    const tabVisible = (id: string) =>
+      (id !== 'cards' || CARDS_ENABLED) && (id !== 'parts' || PARTS_ENABLED);
     const remembered = this._activeInspectorTab;
     let activeTab: TabId =
       (remembered && TAB_DEFS.find(d => d.id === remembered) && tabVisible(remembered)
@@ -642,7 +644,7 @@ export class EditPanel {
 
     TAB_DEFS.forEach(({ id, icon, label }) => {
       // Onglet masqué : pas de bouton dans la barre latérale…
-      const hideTab = id === 'cards' && !CARDS_ENABLED;
+      const hideTab = (id === 'cards' && !CARDS_ENABLED) || (id === 'parts' && !PARTS_ENABLED);
       if (!hideTab) {
         const btn = document.createElement('button');
         btn.style.cssText = [

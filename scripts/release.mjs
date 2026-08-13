@@ -68,6 +68,11 @@ console.log(`\n📦 Version: ${oldVersion} → ${newVersion}`);
 console.log('🔎 Typecheck...');
 execSync('npm run typecheck', { stdio: 'inherit' });
 
+// Ni une régression : les tests couvrent la géométrie, les règles et l'échelle,
+// c'est-à-dire précisément ce qui casse en silence.
+console.log('🧪 Tests...');
+execSync('npm test', { stdio: 'inherit' });
+
 pkg.version = newVersion;
 manifest.version = newVersion;
 writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');

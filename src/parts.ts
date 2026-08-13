@@ -13,6 +13,22 @@
  */
 import * as THREE from 'three';
 
+/**
+ * Les ouvrants apparaissent-ils dans l'éditeur ?
+ *
+ * `false` masque l'onglet « Ouvrants ». Le reste continue de fonctionner : une
+ * scène qui en contient déjà les anime normalement, et l'enregistrement les
+ * préserve. Seule la création est retirée.
+ *
+ * La raison n'est pas technique — la fonctionnalité est testée et vérifiée sur
+ * un modèle réel. Mais elle n'a jamais servi sur un vrai tableau de bord, et le
+ * choix du côté des gonds demande encore du tâtonnement. On la garde pour une
+ * version où elle aura été éprouvée.
+ *
+ * Même dispositif que `CARDS_ENABLED` : basculer à `true` la réactive.
+ */
+export const PARTS_ENABLED = false;
+
 // ── Index des pièces ────────────────────────────────────────────────────────
 
 export interface MeshPart {
