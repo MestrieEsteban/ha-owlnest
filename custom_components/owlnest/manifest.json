@@ -1,12 +1,16 @@
 {
   "domain": "owlnest",
   "name": "Owlnest",
-  "codeowners": ["@MestrieEsteban"],
+  "codeowners": [
+    "@MestrieEsteban"
+  ],
   "config_flow": true,
-  "dependencies": ["websocket_api"],
+  "dependencies": [
+    "websocket_api"
+  ],
   "documentation": "https://github.com/MestrieEsteban/ha-owlnest",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/MestrieEsteban/ha-owlnest/issues",
   "requirements": [],
-  "version": "1.0.0"
+  "version": "1.1.0"
 }
