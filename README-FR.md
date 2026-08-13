@@ -32,6 +32,14 @@
   🌐 <a href="README.md"><strong>English version available here</strong></a>
 </p>
 
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=_MbcDL5JaTE">
+    <img src="https://img.youtube.com/vi/_MbcDL5JaTE/maxresdefault.jpg" alt="Voir la démo" width="700" />
+  </a>
+</p>
+
+<p align="center"><em>Deux minutes, sans commentaire : lumières, ancres, étiquettes et vues caméra.</em></p>
+
 ---
 
 > **⚠️ Beta** — Owlnest est en développement actif. Des fonctionnalités peuvent changer et des bugs peuvent apparaître. Vos retours et signalements sont les bienvenus via les [Issues](https://github.com/MestrieEsteban/ha-owlnest/issues).
@@ -55,7 +63,8 @@ J'ai voulu autre chose des lumières 3D temps réel, un éditeur visuel, de la m
 | 🏠 | **Scène 3D interactive** | Chargez n'importe quel modèle GLB/GLTF et naviguez librement avec la souris ou le tactile |
 | 💡 | **Lumières synchronisées** | Vos entités `light.*` pilotent de vraies lumières 3D — couleur, intensité, transitions fluides |
 | 📍 | **Ancres interactives** | Tap pour allumer/éteindre, appui long pour les détails. Compatible : lumières, capteurs, volets, climat, media players |
-| 🃏 | **Cartes 3D** | Panneaux d'information flottants dans la scène — résumé de pièce, valeur de capteur, bouton d'action |
+| 👁️ | **Voir à travers les murs** | Le mur qui bouche la vue s'efface pendant que vous tournez autour, et se reforme derrière |
+| 📐 | **N'importe quelle unité** | Mètres, centimètres, pouces : distances, lumières et météo se déduisent de la taille du modèle |
 | 🎥 | **Vues caméra** | Sauvegardez des points de vue nommés et naviguez entre eux avec une transition animée |
 | ⚡ | **Moteur de règles** | *Mouvement détecté → voler vers la pièce*, *Porte ouverte → afficher un panneau* |
 | 🌦️ | **Météo dynamique** | Soleil réaliste depuis `sun.sun`, pluie/neige/brouillard/éclairs depuis votre entité météo |
@@ -108,7 +117,7 @@ Placez votre fichier `.glb` dans le dossier `config/www/models/` de votre instan
 Dans n'importe quel tableau de bord, ajoutez une carte manuelle :
 
 ```yaml
-type: custom:owlnest-card
+type: custom:ha-3d-floorplan
 scene_id: ma_maison
 model_url: /local/models/maison.glb
 ```
@@ -195,37 +204,6 @@ Configurez cela dans les propriétés de l'ancre → **Visible si** dans l'édit
 
 ---
 
-### Cartes 3D
-
-Les cartes sont des panneaux d'information qui flottent dans la scène. Elles font toujours face à la caméra (billboard).
-
-#### Types de cartes
-
-| Type | Usage | Contenu |
-|---|---|---|
-| **Room** | Résumé d'une pièce | Icône + nom + jusqu'à 4 valeurs d'entités |
-| **Entity** | Focus sur un appareil | État principal + unité + bouton d'action optionnel |
-| **Info** | Annotation statique | Icône + titre + sous-titre |
-
-#### Tailles
-
-| Taille | Largeur 3D |
-|---|---|
-| `small` | 0.6 mètre |
-| `medium` | 1.0 mètre (défaut) |
-| `large` | 1.5 mètre |
-
-#### Ajouter une carte
-
-1. Mode édition → onglet **Cards**
-2. Cliquez **+ Ajouter** et choisissez le type
-3. Remplissez les champs (nom, entités, couleur d'accent…)
-4. Utilisez le gizmo pour positionner la carte dans la scène
-
-Les cartes supportent aussi la **visibilité conditionnelle** (comme les ancres).
-
----
-
 ### Vues caméra
 
 Les vues caméra vous permettent de sauvegarder des points de vue et de naviguer entre eux avec une animation fluide.
@@ -286,8 +264,8 @@ Chaque condition peut être **inversée** (mode « Masquer si »).
 | Action | Description |
 |---|---|
 | **Aller à la vue** | Anime la caméra vers une vue sauvegardée |
-| **Afficher une carte** | Rend une carte 3D visible |
-| **Masquer une carte** | Cache une carte 3D |
+| **Mettre en évidence** | Fait pulser une ancre dans la couleur de votre choix |
+| **Message** | Affiche un court message dans la carte |
 | **Appeler un service** | Appelle un service HA (ex: `light.turn_on`, `notify.mobile`) |
 
 #### Exemple concret
@@ -297,7 +275,8 @@ Chaque condition peut être **inversée** (mode « Masquer si »).
 > - Condition : `alarm_control_panel.maison` = `armed_away`
 > - Actions :
 >   - Aller à la vue « Entrée »
->   - Afficher la carte « Alerte porte »
+>   - Mettre en évidence l'ancre `light.entree` en rouge
+>   - Message « Quelqu'un à la porte »
 
 <p align="center">
   <img src="assets/rules.gif" alt="Moteur de règles en action" width="600" />
@@ -392,7 +371,7 @@ Le sol est configurable en couleur et en échelle via `ground_color` et `ground_
 Voici l'ensemble des options disponibles :
 
 ```yaml
-type: custom:owlnest-card
+type: custom:ha-3d-floorplan
 scene_id: ma_maison
 model_url: /local/models/maison.glb
 ```

@@ -32,6 +32,14 @@
   🌐 <a href="README-FR.md"><strong>Version française disponible ici</strong></a>
 </p>
 
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=_MbcDL5JaTE">
+    <img src="https://img.youtube.com/vi/_MbcDL5JaTE/maxresdefault.jpg" alt="Watch the demo" width="700" />
+  </a>
+</p>
+
+<p align="center"><em>Two minutes, no narration: lights, anchors, labels and camera views.</em></p>
+
 ---
 
 > **⚠️ Beta** — Owlnest is under active development. Features may change, bugs may appear. Feedback and bug reports are very welcome via [Issues](https://github.com/MestrieEsteban/ha-owlnest/issues).
@@ -55,7 +63,8 @@ I wanted something different: real-time 3D lights, a visual editor, weather effe
 | 🏠 | **Interactive 3D scene** | Load any GLB/GLTF model and navigate freely with mouse or touch |
 | 💡 | **Synchronized lights** | Your `light.*` entities drive real 3D lights — color, brightness, smooth transitions |
 | 📍 | **Interactive anchors** | Tap to toggle, long-press for details. Supports lights, sensors, covers, climate, media players |
-| 🃏 | **3D cards** | Floating info panels inside the scene — room summary, sensor values, action buttons |
+| 👁️ | **See through walls** | Whatever stands between you and the rooms fades out as you orbit, and comes back behind you |
+| 📐 | **Any unit** | Metres, centimetres, inches: distances, lights and weather all derive from the model's own size |
 | 🎥 | **Camera views** | Save named viewpoints and fly between them with smooth transitions |
 | ⚡ | **Rules engine** | *Motion detected → fly to room*, *Door opened → show panel* |
 | 🌦️ | **Dynamic weather** | Realistic sun from `sun.sun`, rain/snow/fog/storm particles from your weather entity |
@@ -108,7 +117,7 @@ Place your `.glb` file in the `config/www/models/` folder of your HA instance.
 On any dashboard, add a manual card:
 
 ```yaml
-type: custom:owlnest-card
+type: custom:ha-3d-floorplan
 scene_id: my_home
 model_url: /local/models/house.glb
 ```
@@ -195,37 +204,6 @@ Configure this in anchor properties → **Visible if** in the editor.
 
 ---
 
-### 3D Cards
-
-Cards are information panels that float inside the scene. They always face the camera (billboard).
-
-#### Card types
-
-| Type | Use case | Content |
-|---|---|---|
-| **Room** | Room summary | Icon + name + up to 4 entity states |
-| **Entity** | Single device focus | Main state + unit + optional action button |
-| **Info** | Static annotation | Icon + title + subtitle |
-
-#### Sizes
-
-| Size | 3D width |
-|---|---|
-| `small` | 0.6 meter |
-| `medium` | 1.0 meter (default) |
-| `large` | 1.5 meter |
-
-#### Adding a card
-
-1. Edit mode → **Cards** tab
-2. Click **+ Add** and choose the type
-3. Fill in the fields (name, entities, accent color…)
-4. Use the gizmo to position the card in the scene
-
-Cards also support **conditional visibility** (just like anchors).
-
----
-
 ### Camera views
 
 Camera views let you save viewpoints and navigate between them with smooth animation.
@@ -286,8 +264,8 @@ Each condition can be **negated** ("Hide if" mode).
 | Action | Description |
 |---|---|
 | **Go to view** | Animate camera to a saved viewpoint |
-| **Show card** | Make a 3D card visible |
-| **Hide card** | Hide a 3D card |
+| **Highlight anchor** | Pulse an anchor in the colour of your choice |
+| **Toast** | Show a short message inside the card |
 | **Call service** | Call an HA service (e.g. `light.turn_on`, `notify.mobile`) |
 
 #### Concrete example
@@ -297,7 +275,8 @@ Each condition can be **negated** ("Hide if" mode).
 > - Condition: `alarm_control_panel.home` = `armed_away`
 > - Actions:
 >   - Go to view "Entrance"
->   - Show card "Door alert"
+>   - Highlight the `light.entrance` anchor in red
+>   - Toast "Someone at the front door"
 
 <p align="center">
   <img src="assets/rules.gif" alt="Rules engine in action" width="600" />
@@ -392,7 +371,7 @@ Ground color and scale are configurable via `ground_color` and `ground_scale`.
 Here are all available options:
 
 ```yaml
-type: custom:owlnest-card
+type: custom:ha-3d-floorplan
 scene_id: my_home
 model_url: /local/models/house.glb
 ```
