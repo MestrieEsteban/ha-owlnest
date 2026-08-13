@@ -86,6 +86,9 @@ execSync(`git add package.json ${MANIFEST}`);
 execSync(`git commit -m "chore: release v${newVersion}"`);
 execSync(`git tag v${newVersion}`);
 
+// Deux lignes distinctes plutôt qu'un `&&` : Windows PowerShell ne connaît pas
+// cet enchaînement et répond par une erreur d'analyse.
 console.log('\n✅ Fait ! Pour publier la release sur GitHub :');
-console.log(`   git push && git push origin v${newVersion}`);
+console.log('   git push');
+console.log(`   git push origin v${newVersion}`);
 console.log('\nGitHub Actions va builder et créer la release automatiquement.');
