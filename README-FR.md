@@ -79,12 +79,16 @@ Owlnest se compose de deux parties :
 
 ### Via HACS (recommandé)
 
-> 1. Ouvrir **HACS** → **Frontend** → menu ⋮ → **Dépôts personnalisés**
-> 2. Ajouter `https://github.com/MestrieEsteban/ha-owlnest` en catégorie **Plugin**
-> 3. Rechercher **Owlnest 3D Floorplan** et installer
-> 4. Copier le dossier `custom_components/owlnest/` dans votre répertoire `config/custom_components/`
+> **Important :** HACS installe actuellement **uniquement la carte frontend** depuis ce dépôt. L'intégration Home Assistant qui accompagne Owlnest doit encore être copiée manuellement.
+>
+> 1. Ouvrir **HACS** → menu ⋮ → **Dépôts personnalisés**
+> 2. Ajouter `https://github.com/MestrieEsteban/ha-owlnest` en catégorie **Dashboard**
+> 3. Rechercher **Owlnest 3D Floorplan** et installer. HACS installe et enregistre `ha-3d-floorplan.js` automatiquement.
+> 4. Depuis ce dépôt, copier `custom_components/owlnest/` vers `config/custom_components/owlnest/`
 > 5. **Redémarrer** Home Assistant
 > 6. Aller dans **Paramètres → Appareils & Services → Ajouter une intégration** → chercher **Owlnest**
+
+> Si HACS a déjà installé Owlnest dans `config/custom_components/owlnest/`, le dépôt a été ajouté avec la mauvaise catégorie. Supprimez cette entrée de dépôt personnalisé puis ajoutez-la de nouveau en **Dashboard**. Pour le moment, HACS ne gère que la partie frontend.
 
 ### Installation manuelle
 
