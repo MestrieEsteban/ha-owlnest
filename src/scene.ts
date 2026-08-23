@@ -9,8 +9,50 @@ import type { Hass, CardConfig, OwlnestScene, OwlnestAnchor, CameraView, Editabl
 
 // ── WebSocket helpers ──────────────────────────────────────────────────────
 
+/**
+ * Session fallbacks for scenes that could not be loaded.
+ *
+ * Home Assistant updates the card's `hass` property very frequently. Without
+ * remembering a failed scene load, a missing/unavailable scene is requested on
+ * every state update; the card then falls back to the Lovelace model and can
+ * end up tearing down and reloading the GLB over and over.
+ *
+ * Keeping a lightweight empty scene for the current page session makes the
+ * failure stable: the frontend can still use `model_url`, while a successful
+ * save clears the fallback. Reloading Home Assistant also naturally retries.
+ */
+const failedSceneFallbacks = new Map<string, OwlnestScene>();
+
+function emptyScene(sceneId: string): OwlnestScene {
+  return {
+    version: 1,
+    scene_id: sceneId,
+    model_url: '',
+    anchors: [],
+    camera_views: [],
+    cards: [],
+    rules: [],
+    parts: [],
+  };
+}
+
 export async function loadScene(hass: Hass, sceneId: string): Promise<OwlnestScene> {
-  return hass.callWS<OwlnestScene>({ type: 'owlnest/load_scene', scene_id: sceneId });
+  const fallback = failedSceneFallbacks.get(sceneId);
+  if (fallback) return fallback;
+
+  try {
+    const scene = await hass.callWS<OwlnestScene>({ type: 'owlnest/load_scene', scene_id: sceneId });
+    failedSceneFallbacks.delete(sceneId);
+    return scene;
+  } catch (err) {
+    const scene = emptyScene(sceneId);
+    failedSceneFallbacks.set(sceneId, scene);
+    console.warn(
+      `[Owlnest] Scene "${sceneId}" could not be loaded; using an empty session scene to prevent repeated reloads.`,
+      err,
+    );
+    return scene;
+  }
 }
 
 export async function saveScene(hass: Hass, sceneId: string, data: OwlnestScene): Promise<void> {
@@ -19,6 +61,7 @@ export async function saveScene(hass: Hass, sceneId: string, data: OwlnestScene)
     scene_id: sceneId,
     data,
   });
+  failedSceneFallbacks.delete(sceneId);
 }
 
 /** Supprime une scène côté serveur. Retourne `false` si elle n'existait pas. */
@@ -27,6 +70,7 @@ export async function deleteScene(hass: Hass, sceneId: string): Promise<boolean>
     type: 'owlnest/delete_scene',
     scene_id: sceneId,
   });
+  failedSceneFallbacks.delete(sceneId);
   return res?.success === true;
 }
 
