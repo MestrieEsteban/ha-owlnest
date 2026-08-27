@@ -87,6 +87,10 @@ Vous installez une seule chose ; la carte est servie et déclarée pour vous.
 > C'est tout. L'intégration sert elle-même la carte Lovelace : rien à copier, aucune
 > ressource à déclarer, et la carte est toujours à la version du backend.
 
+> **Après le redémarrage, rechargez la page en forçant le cache** (Ctrl+Maj+R).
+> Le navigateur garde encore la page d'avant l'installation, et afficherait sinon
+> `Custom element doesn't exist: ha-3d-floorplan`.
+
 ### Installation manuelle
 
 > 1. Téléchargez les sources de la [dernière version](https://github.com/MestrieEsteban/ha-owlnest/releases/latest)

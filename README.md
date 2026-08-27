@@ -87,6 +87,10 @@ install one thing; the card is served and registered for you.
 > That's all. The integration serves the Lovelace card itself, so there is nothing
 > to copy and no resource to declare. Card and backend always share a version.
 
+> **After restarting, reload the page with a forced refresh** (Ctrl+Shift+R). Your
+> browser still holds the page from before the card existed, and would otherwise
+> report `Custom element doesn't exist: ha-3d-floorplan`.
+
 ### Manual installation
 
 > 1. Download the source of the [latest release](https://github.com/MestrieEsteban/ha-owlnest/releases/latest)

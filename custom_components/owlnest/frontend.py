@@ -63,6 +63,6 @@ async def async_register_card(hass: HomeAssistant) -> None:
     add_extra_js_url(hass, f"{URL_BASE}/{CARD_FILENAME}?v={integration.version}")
 
     hass.data[_REGISTERED] = True
-    _LOGGER.info(
+    _LOGGER.debug(
         "Owlnest card served from %s/%s (v%s)", URL_BASE, CARD_FILENAME, integration.version
     )
