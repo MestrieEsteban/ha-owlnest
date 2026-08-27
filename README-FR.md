@@ -78,18 +78,53 @@ Vous installez une seule chose ; la carte est servie et déclarée pour vous.
 
 ### Via HACS (recommandé)
 
-> 1. Ouvrez **HACS** → menu ⋮ → **Dépôts personnalisés**
-> 2. Ajoutez `https://github.com/MestrieEsteban/ha-owlnest` avec la catégorie **Intégration**
-> 3. Cherchez **Owlnest** et installez-le
-> 4. **Redémarrez** Home Assistant
-> 5. Allez dans **Paramètres → Appareils et services → Ajouter une intégration** → cherchez **Owlnest**
->
-> C'est tout. L'intégration sert elle-même la carte Lovelace : rien à copier, aucune
-> ressource à déclarer, et la carte est toujours à la version du backend.
+[HACS](https://hacs.xyz) doit être installé au préalable. Owlnest n'est pas encore
+dans le magasin par défaut : on l'ajoute comme dépôt personnalisé.
 
-> **Après le redémarrage, rechargez la page en forçant le cache** (Ctrl+Maj+R).
-> Le navigateur garde encore la page d'avant l'installation, et afficherait sinon
+> **1. Ouvrir la fenêtre des dépôts personnalisés**
+>
+> Cliquez sur **HACS** dans la barre latérale, puis sur le menu **⋮** en haut à
+> droite de la page, et choisissez **Dépôts personnalisés**.
+>
+> **2. Ajouter ce dépôt**
+>
+> Collez `https://github.com/MestrieEsteban/ha-owlnest` dans le champ du dépôt.
+>
+> Dans le champ type/catégorie, choisissez **Intégration** — ni Tableau de bord,
+> ni Plugin. C'est déterminant : HACS n'installe qu'une catégorie par dépôt, et
+> Owlnest livre sa carte *à l'intérieur* de l'intégration. Tout autre choix n'en
+> installe que la moitié.
+>
+> Cliquez sur **Ajouter**. La fenêtre se ferme et Owlnest apparaît dans la liste.
+>
+> **3. Le télécharger**
+>
+> Cherchez **Owlnest** dans HACS, ouvrez-le, puis cliquez sur **Télécharger**.
+> HACS copie les fichiers dans `config/custom_components/owlnest/`, carte comprise.
+>
+> **4. Redémarrer Home Assistant**
+>
+> **Paramètres → Système**, puis l'icône d'alimentation en haut à droite →
+> **Redémarrer Home Assistant**. Une intégration fraîchement téléchargée n'est
+> prise en compte qu'au redémarrage.
+>
+> **5. Ajouter l'intégration**
+>
+> **Paramètres → Appareils et services → Ajouter une intégration**, cherchez
+> **Owlnest** et validez. Il n'y a rien à configurer.
+>
+> **6. Recharger le navigateur en forçant le cache**
+>
+> **Ctrl+Maj+R** (**Cmd+Maj+R** sur macOS). Le navigateur garde encore la page
+> d'avant l'installation, et afficherait sinon
 > `Custom element doesn't exist: ha-3d-floorplan`.
+
+Aucune ressource Lovelace à déclarer. L'intégration sert elle-même la carte, qui
+est donc toujours à la version du backend.
+
+> **Déjà ajouté avec la mauvaise catégorie ?** Retirez le dépôt de HACS,
+> supprimez `config/custom_components/owlnest/` s'il subsiste, puis reprenez à
+> l'étape 1 en choisissant **Intégration**.
 
 ### Installation manuelle
 
@@ -100,6 +135,8 @@ Vous installez une seule chose ; la carte est servie et déclarée pour vous.
 >
 > La carte est livrée dans ce dossier : aucun fichier JavaScript à placer, aucune
 > ressource Lovelace à déclarer.
+>
+> Puis **rechargez le navigateur en forçant le cache** (Ctrl+Maj+R), même raison.
 
 ### Prérequis
 

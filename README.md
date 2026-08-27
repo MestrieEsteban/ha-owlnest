@@ -78,18 +78,51 @@ install one thing; the card is served and registered for you.
 
 ### Via HACS (recommended)
 
-> 1. Open **HACS** → ⋮ menu → **Custom repositories**
-> 2. Add `https://github.com/MestrieEsteban/ha-owlnest` with category **Integration**
-> 3. Search for **Owlnest** and install it
-> 4. **Restart** Home Assistant
-> 5. Go to **Settings → Devices & Services → Add Integration** → search **Owlnest**
->
-> That's all. The integration serves the Lovelace card itself, so there is nothing
-> to copy and no resource to declare. Card and backend always share a version.
+You need [HACS](https://hacs.xyz) installed first. Owlnest is not in the default
+store yet, so it is added as a custom repository.
 
-> **After restarting, reload the page with a forced refresh** (Ctrl+Shift+R). Your
-> browser still holds the page from before the card existed, and would otherwise
-> report `Custom element doesn't exist: ha-3d-floorplan`.
+> **1. Open the custom repositories dialog**
+>
+> Click **HACS** in the sidebar, then the **⋮** menu at the top right of the page,
+> and choose **Custom repositories**.
+>
+> **2. Add this repository**
+>
+> Paste `https://github.com/MestrieEsteban/ha-owlnest` in the repository field.
+>
+> In the type/category field, choose **Integration** — not Dashboard, not Plugin.
+> This matters: HACS installs one category per repository, and Owlnest ships its
+> card *inside* the integration. Picking anything else installs half of it.
+>
+> Click **Add**. The dialog closes and Owlnest appears in the HACS list.
+>
+> **3. Download it**
+>
+> Search for **Owlnest** in HACS, open it, and click **Download**. HACS copies the
+> files to `config/custom_components/owlnest/`, card included.
+>
+> **4. Restart Home Assistant**
+>
+> **Settings → System**, then the power icon at the top right → **Restart Home
+> Assistant**. A newly downloaded integration is only picked up on restart.
+>
+> **5. Add the integration**
+>
+> **Settings → Devices & Services → Add Integration**, search **Owlnest**, and
+> confirm. There is nothing to configure.
+>
+> **6. Force-reload your browser**
+>
+> Press **Ctrl+Shift+R** (**Cmd+Shift+R** on macOS). Your browser still holds the
+> page from before the card existed, and would otherwise report
+> `Custom element doesn't exist: ha-3d-floorplan`.
+
+There is no Lovelace resource to declare. The integration serves the card itself,
+so card and backend always share a version.
+
+> **Already added it with the wrong category?** Remove the repository from HACS,
+> delete `config/custom_components/owlnest/` if it is still there, then start again
+> at step 1 with **Integration** selected.
 
 ### Manual installation
 
@@ -100,6 +133,8 @@ install one thing; the card is served and registered for you.
 >
 > The card ships inside that folder, so there is no separate JavaScript file to
 > place and no Lovelace resource to declare.
+>
+> Then **force-reload your browser** (Ctrl+Shift+R), same reason as above.
 
 ### Requirements
 
