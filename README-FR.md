@@ -73,9 +73,8 @@ J'ai voulu autre chose des lumières 3D temps réel, un éditeur visuel, de la m
 
 ## 📦 Installation
 
-Owlnest se compose de deux parties :
-- **Carte Lovelace** (frontend) — le fichier JavaScript
-- **Intégration HA** (backend) — pour la sauvegarde des scènes
+Owlnest est une intégration Home Assistant qui embarque sa propre carte Lovelace.
+Vous installez une seule chose ; la carte est servie et déclarée pour vous.
 
 ### Via HACS (recommandé)
 
@@ -90,14 +89,13 @@ Owlnest se compose de deux parties :
 
 ### Installation manuelle
 
-> 1. Télécharger `ha-3d-floorplan.js` depuis la [dernière release](https://github.com/MestrieEsteban/ha-owlnest/releases/latest)
-> 2. Placer le fichier dans `config/www/ha-3d-floorplan.js`
-> 3. Ajouter la ressource Lovelace : **Paramètres → Tableaux de bord → Ressources → Ajouter**
->    - URL : `/local/ha-3d-floorplan.js`
->    - Type : Module JavaScript
-> 4. Copier `custom_components/owlnest/` dans `config/custom_components/owlnest/`
-> 5. **Redémarrer** Home Assistant
-> 6. Ajouter l'intégration : **Paramètres → Appareils & Services → Ajouter → Owlnest**
+> 1. Téléchargez les sources de la [dernière version](https://github.com/MestrieEsteban/ha-owlnest/releases/latest)
+> 2. Copiez `custom_components/owlnest/` dans `config/custom_components/owlnest/`
+> 3. **Redémarrez** Home Assistant
+> 4. Ajoutez l'intégration : **Paramètres → Appareils & Services → Ajouter → Owlnest**
+>
+> La carte est livrée dans ce dossier : aucun fichier JavaScript à placer, aucune
+> ressource Lovelace à déclarer.
 
 ### Prérequis
 
