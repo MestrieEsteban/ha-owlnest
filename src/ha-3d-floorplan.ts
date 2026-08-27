@@ -6,6 +6,7 @@ import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import type { Hass, CardConfig, AnchorEntry, SavedView, EditableAnchor, OwlnestScene } from './types';
 import { syncLights, stepTransitions } from './lights';
 import { loadGLTF, detectAnchors, buildAnchorsFromEditable, rebuildAnchorLight, lightTargetPos } from './model';
+import { modelErrorMessage } from './model-errors';
 import { AnchorOverlay, SensorOverlay, ClusterOverlay, LabelOverlay, CameraOverlay, pulseOverlay } from './overlay';
 import type { ClusterItem } from './overlay';
 import { AnchorEditor } from './editor';
@@ -2301,7 +2302,9 @@ class Ha3dFloorplan extends HTMLElement {
       model = await loadGLTF(ec.model_url);
     } catch (err) {
       console.error('[Owlnest] model load failed:', err);
-      loadingEl.innerHTML = `<div style="font-size:11px;color:#f87171;font-family:var(--primary-font-family,sans-serif);">⚠ Échec du chargement du modèle</div>`;
+      // Le code HTTP dit s'il faut corriger le chemin ou regarder le serveur.
+      const reason = modelErrorMessage(err);
+      loadingEl.innerHTML = `<div style="font-size:11px;color:#f87171;font-family:var(--primary-font-family,sans-serif);text-align:center;padding:0 16px;">⚠ ${reason}</div>`;
       return;
     }
     loadingEl.remove();

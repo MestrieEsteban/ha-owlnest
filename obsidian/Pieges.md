@@ -20,6 +20,24 @@ Deux occurrences distinctes :
 > [!tip] Réflexe
 > Avant de chercher un bug logique, vérifier que la page exécute bien le code écrit. `constructor.OWLNEST_BUILD` est là pour ça.
 
+### Le cache qui ment
+
+Home Assistant sert ses **404** avec `Cache-Control: public, max-age=2678400` — trente et un jours.
+
+Conséquence : qui se trompe une fois de chemin de modèle voit la carte échouer **pendant un mois après avoir corrigé**. Le navigateur répond depuis son cache sans jamais redemander au serveur. Rien ne le laisse deviner : le fichier est bien là, `curl` renvoie 200, et la carte affiche 404.
+
+Diagnostic : `curl` réussit là où le navigateur échoue. Cet écart **est** la signature — il ne reste alors plus qu'à lire les en-têtes de la réponse 404.
+
+Deux corrections, ensemble :
+
+1. **Le message porte le code HTTP.** « Échec du chargement » ne distinguait pas chemin faux, accès refusé et serveur en panne, alors que la marche à suivre diffère à chaque fois.
+2. **Une seconde tentative sur 404 seulement**, avec un paramètre que le cache ne connaît pas. Si elle réussit, le fichier existait et c'est le cache qui mentait. Si elle échoue, c'est l'erreur d'origine qui remonte : parler de cache égarerait.
+
+Voir `src/model-errors.ts`. Le `Ctrl+Maj+R` **ne suffit pas** ici : le rechargement forcé couvre la page et ses ressources de chargement, pas un `fetch()` déclenché plus tard.
+
+> [!warning] Le piège du piège
+> Le même mécanisme frappe ailleurs : la carte elle-même reste en cache après une mise à jour HACS, d'où l'étape de rafraîchissement forcé du README. Voir [[Chantiers ouverts]].
+
 ### La donnée perdue en silence
 
 Trois fois le même schéma : une liste blanche de champs qui n'a pas suivi l'ajout de nouveaux champs.

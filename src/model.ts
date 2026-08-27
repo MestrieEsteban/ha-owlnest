@@ -3,13 +3,36 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { AnchorEntry, AnchorConfig, CardConfig, EditableAnchor, LightStyle } from './types';
 import { qualityFromConfig } from './quality';
 import { lightScale } from './lights';
+import { bustCache, shouldRetryUncached } from './model-errors';
+
+function fetchGLTF(url: string): Promise<THREE.Group> {
+  const loader = new GLTFLoader();
+  return new Promise<{ scene: THREE.Group }>((resolve, reject) =>
+    loader.load(url, resolve as (g: unknown) => void, undefined, reject),
+  ).then((gltf) => gltf.scene);
+}
 
 export async function loadGLTF(url: string): Promise<THREE.Group> {
-  const loader = new GLTFLoader();
-  const gltf = await new Promise<{ scene: THREE.Group }>((resolve, reject) =>
-    loader.load(url, resolve as (g: unknown) => void, undefined, reject),
-  );
-  return gltf.scene;
+  try {
+    return await fetchGLTF(url);
+  } catch (err) {
+    if (!shouldRetryUncached(err)) throw err;
+
+    // Un 404 peut venir du cache du navigateur et non du serveur : voir
+    // `shouldRetryUncached`. Une URL que le cache ne connaît pas tranche.
+    const model = await fetchGLTF(bustCache(url)).catch(() => {
+      // Le fichier est bien absent : c'est l'erreur d'origine qui décrit
+      // l'échec, pas celle de la tentative anti-cache.
+      throw err;
+    });
+
+    console.warn(
+      `[Owlnest] "${url}" a répondu 404 depuis le cache du navigateur alors que le fichier existe. ` +
+      `Home Assistant sert ses 404 avec un cache d'un mois : un chemin corrigé reste en échec ` +
+      `jusqu'à ce que le cache expire. Le modèle a été chargé en contournant le cache.`,
+    );
+    return model;
+  }
 }
 
 /** Compute light target position from anchor world pos and optional direction vector */

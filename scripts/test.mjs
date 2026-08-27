@@ -27,6 +27,7 @@ const ENTRIES = [
   'src/coplanar.ts',
   'src/lights.ts',
   'src/scale.ts',
+  'src/model-errors.ts',
 ];
 
 /**
