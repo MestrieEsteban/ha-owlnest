@@ -94,7 +94,21 @@ export interface SceneSummary {
 export async function summarizeScenes(hass: Hass, ids: string[]): Promise<SceneSummary[]> {
   return Promise.all(ids.map(async (id): Promise<SceneSummary> => {
     try {
-      const scene = await loadScene(hass, id);
+      /**
+       * Interrogation directe, sans passer par `loadScene`.
+       *
+       * Celui-ci absorbe les echecs et renvoie une scene vide, ce qui est le bon
+       * comportement au rendu : sans cela un chargement rate serait retente a
+       * chaque mise a jour de `hass`, et le modele rechargerait en boucle.
+       *
+       * Mais une liste doit dire la verite. En passant par le repli, une scene
+       * illisible s'afficherait comme « vide », et le cache de session la
+       * maintiendrait ainsi jusqu'au rechargement de la page.
+       */
+      const scene = await hass.callWS<OwlnestScene>({
+        type: 'owlnest/load_scene',
+        scene_id: id,
+      });
       return {
         id,
         anchors: scene.anchors?.length ?? 0,
