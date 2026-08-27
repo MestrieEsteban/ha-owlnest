@@ -79,16 +79,14 @@ Owlnest has two parts:
 
 ### Via HACS (recommended)
 
-> **Important:** HACS currently installs the **frontend card only** from this repository. The companion Home Assistant integration still needs to be copied manually.
->
 > 1. Open **HACS** → ⋮ menu → **Custom repositories**
-> 2. Add `https://github.com/MestrieEsteban/ha-owlnest` with category **Dashboard**
-> 3. Search for **Owlnest 3D Floorplan** and install it. HACS installs and registers `ha-3d-floorplan.js` for you.
-> 4. From this repository, copy `custom_components/owlnest/` to `config/custom_components/owlnest/`
-> 5. **Restart** Home Assistant
-> 6. Go to **Settings → Devices & Services → Add Integration** → search **Owlnest**
-
-> If HACS has already installed Owlnest under `config/custom_components/owlnest/`, the repository was added with the wrong category. Remove that custom repository entry and add it again as **Dashboard**. HACS is only used for the frontend part for now.
+> 2. Add `https://github.com/MestrieEsteban/ha-owlnest` with category **Integration**
+> 3. Search for **Owlnest** and install it
+> 4. **Restart** Home Assistant
+> 5. Go to **Settings → Devices & Services → Add Integration** → search **Owlnest**
+>
+> That's all. The integration serves the Lovelace card itself, so there is nothing
+> to copy and no resource to declare. Card and backend always share a version.
 
 ### Manual installation
 

@@ -37,7 +37,6 @@ jobs:
             - 🏠 Load any GLB/GLTF model with free camera navigation
             - 💡 Real-time synchronized lights (color, brightness, smooth transitions)
             - 📍 Interactive anchors for lights, sensors, covers, climate, media players
-            - 🃏 3D scene cards (Room, Entity, Info) with billboard rendering
             - 🎥 Named camera views with fly-to animation
             - ⚡ Rules engine (trigger → conditions → actions)
             - 🌦️ Dynamic weather and realistic sun from HA entities
@@ -46,8 +45,6 @@ jobs:
 
             ### Install
 
-            **HACS** → Custom repositories → `https://github.com/MestrieEsteban/ha-owlnest` (Plugin)
+            **HACS** → Custom repositories → `https://github.com/MestrieEsteban/ha-owlnest` → category **Integration**, then restart and add the integration. The card comes with it.
 
-            **Manual** → Download `ha-3d-floorplan.js` below, place it in `config/www/` and add it as a Lovelace resource.
-
-            Both methods require the backend integration: copy `custom_components/owlnest/` to your HA config.
+            **Manual** → Copy `custom_components/owlnest/` to your HA config and restart. The card is inside and gets served automatically.

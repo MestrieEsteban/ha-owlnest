@@ -6,6 +6,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
+from .frontend import async_register_card
 from .storage import OwlnestStorage
 from .websocket import async_setup_websocket
 
@@ -21,6 +22,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = storage
 
     async_setup_websocket(hass, storage)
+
+    # The card travels with the integration: see frontend.py for why.
+    await async_register_card(hass)
 
     _LOGGER.info("Owlnest integration loaded — %d scene(s) in storage", len(storage.list_scenes()))
     return True

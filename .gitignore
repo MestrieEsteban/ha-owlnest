@@ -319,3 +319,6 @@ Modele3D/*.png
 
 # Modele de travail local, trop lourd pour le depot
 Modele3D/home.glb
+
+# Cache Python de l integration
+custom_components/**/__pycache__/
