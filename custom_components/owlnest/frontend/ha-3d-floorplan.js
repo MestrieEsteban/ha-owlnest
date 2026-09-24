@@ -23009,7 +23009,7 @@ function $r(s) {
   const e = (t = s.triggers) != null && t.length ? s.triggers : s.trigger ? [s.trigger] : [];
   return { ...s, triggers: e, trigger: void 0, logic: s.logic ?? "and" };
 }
-const Sd = !1;
+const Sd = !0;
 class k0 {
   constructor(e) {
     this.p = new Int32Array(e);

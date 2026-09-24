@@ -27,7 +27,7 @@ import * as THREE from 'three';
  *
  * Même dispositif que `CARDS_ENABLED` : basculer à `true` la réactive.
  */
-export const PARTS_ENABLED = false;
+export const PARTS_ENABLED = true;
 
 // ── Index des pièces ────────────────────────────────────────────────────────
 
