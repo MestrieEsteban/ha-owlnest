@@ -6,7 +6,7 @@ import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import type { Hass, CardConfig, AnchorEntry, SavedView, EditableAnchor, OwlnestScene } from './types';
 import { syncLights, stepTransitions } from './lights';
 import { loadGLTF, detectAnchors, buildAnchorsFromEditable, rebuildAnchorLight, lightTargetPos } from './model';
-import { modelErrorMessage } from './model-errors';
+import { modelErrorKey, httpStatus } from './model-errors';
 import { AnchorOverlay, SensorOverlay, ClusterOverlay, LabelOverlay, CameraOverlay, pulseOverlay } from './overlay';
 import type { ClusterItem } from './overlay';
 import { AnchorEditor } from './editor';
@@ -341,10 +341,10 @@ class Ha3dFloorplan extends HTMLElement {
         this._scene = sceneData;
       } while (this._saveQueued);
 
-      this._showToast('✓ Scène sauvegardée');
+      this._showToast(t('toastSceneSaved'));
     } catch (err) {
       console.error('[Owlnest] Save failed:', err);
-      this._showToast('✗ Erreur lors de la sauvegarde', true);
+      this._showToast(t('toastSceneSaveError'), true);
     } finally {
       this._savePending = false;
       this._saveQueued = false;
@@ -854,7 +854,7 @@ class Ha3dFloorplan extends HTMLElement {
     const btn = document.createElement('button');
     btn.style.cssText = this._hudBtnStyle();
     btn.textContent = this._lockOpenIcon;
-    btn.title = 'Verrouiller la vue';
+    btn.title = t('viewLock');
     btn.addEventListener('click', (e) => { e.stopPropagation(); this._toggleLock(); });
     return btn;
   }
@@ -863,7 +863,7 @@ class Ha3dFloorplan extends HTMLElement {
     const btn = document.createElement('button');
     btn.style.cssText = this._hudBtnStyle();
     btn.textContent = icon;
-    btn.title = 'Editer les ancres';
+    btn.title = t('editAnchorsTitle');
     btn.addEventListener('click', (e) => { e.stopPropagation(); this._toggleEditMode(); });
     return btn;
   }
@@ -943,7 +943,7 @@ class Ha3dFloorplan extends HTMLElement {
         'opacity:0', 'transition:opacity .2s ease',
         'white-space:nowrap',
       ].join(';');
-      badge.innerHTML = '<span style="font-size:13px">🙈</span> Overlays masqués — tapez pour afficher';
+      badge.innerHTML = `<span style="font-size:13px">🙈</span> ${t('overlaysHidden')}`;
       this.overlayContainer.appendChild(badge);
       this._overlayHideBadge = badge;
       requestAnimationFrame(() => { badge.style.opacity = '1'; });
@@ -954,7 +954,7 @@ class Ha3dFloorplan extends HTMLElement {
     this._locked = force !== undefined ? force : !this._locked;
     if (this.controls) this.controls.enabled = !this._locked && !this._editMode;
     this.lockBtn!.textContent = this._locked ? this._lockClosedIcon : this._lockOpenIcon;
-    this.lockBtn!.title = this._locked ? 'Déverrouiller la vue' : 'Verrouiller la vue';
+    this.lockBtn!.title = this._locked ? t('viewUnlock') : t('viewLock');
     this.lockBtn!.style.boxShadow = this._locked ? '0 0 0 2px rgba(239,68,68,0.8)' : 'none';
     this._saveView();
   }
@@ -972,7 +972,7 @@ class Ha3dFloorplan extends HTMLElement {
     this._editMode = true;
     if (this.editBtn) {
       this.editBtn.style.boxShadow = '0 0 0 2px rgba(59,130,246,0.9)';
-      this.editBtn.title = 'Quitter le mode édition';
+      this.editBtn.title = t('exitEditMode');
     }
     // Reposition HUD to center + restore bar glassmorphism for edit toolbar
     if (this._hud) {
@@ -1127,9 +1127,9 @@ class Ha3dFloorplan extends HTMLElement {
     this._editor.onDragStart = (type) => {
       if (this._editPanel) this._editPanel.gizmoDragging = true;
       const texts: Record<string, string> = {
-        grab:   'Déplacer  ·  X/Y/Z axe  ·  Entrée confirmer  ·  Esc annuler',
-        rotate: 'Orienter  ·  Esc quitter',
-        gizmo:  'Déplacer sur axe  ·  Relâcher pour confirmer',
+        grab:   t('hintBarGrab'),
+        rotate: t('hintBarRotate'),
+        gizmo:  t('hintBarAxis'),
       };
       this._editPanel?.showStatusBar(texts[type] ?? '');
     };
@@ -1168,7 +1168,7 @@ class Ha3dFloorplan extends HTMLElement {
         'pointer-events:none',
         'z-index:30',
       ].join(';');
-      hint.textContent = 'Clique sur le modèle pour placer une ancre';
+      hint.textContent = t('hintBarPlaceAnchor');
       this.overlayContainer!.appendChild(hint);
       setTimeout(() => hint.remove(), 4000);
     }
@@ -1181,7 +1181,7 @@ class Ha3dFloorplan extends HTMLElement {
     this._editMode = false;
     if (this.editBtn) {
       this.editBtn.style.boxShadow = 'none';
-      this.editBtn.title = 'Editer les ancres';
+      this.editBtn.title = t('editAnchorsTitle');
     }
 
     document.removeEventListener('keydown', this._onCardKeyDown);
@@ -1311,7 +1311,7 @@ class Ha3dFloorplan extends HTMLElement {
       } else {
         this._cardGrabPlane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 0, 1), new THREE.Vector3(...card.position));
       }
-      this._editPanel?.showStatusBar('Déplacer carte  ·  Entrée confirmer  ·  Esc annuler');
+      this._editPanel?.showStatusBar(t('hintBarMoveCard'));
       e.preventDefault();
     }
     if (this._cardGrabMode) {
@@ -1373,7 +1373,7 @@ class Ha3dFloorplan extends HTMLElement {
   startCardPlacement(type: SceneCardType) {
     this._cardPlacementMode = true;
     this._cardPlacementType = type;
-    this._editPanel?.showStatusBar('🎯 Cliquez sur le modèle pour placer la carte  ·  Esc pour annuler');
+    this._editPanel?.showStatusBar(t('hintBarPlaceCard'));
     if (this.canvas) this.canvas.style.cursor = 'crosshair';
   }
 
@@ -1386,7 +1386,7 @@ class Ha3dFloorplan extends HTMLElement {
     const newCard = {
       id: `card_${Date.now()}`,
       type,
-      name: type === 'room' ? 'Pièce' : type === 'entity' ? 'Entité' : 'Info',
+      name: type === 'room' ? t('cardTypeRoom') : type === 'entity' ? t('cardTypeEntity') : t('cardTypeInfo'),
       position,
       visible: true,
       size: 'medium' as const,
@@ -2205,7 +2205,7 @@ class Ha3dFloorplan extends HTMLElement {
     const { missing } = this._parts.build(this._modelRoot, configs);
     if (missing.length) {
       console.warn(
-        `[Owlnest] ${missing.length} ouvrant(s) introuvable(s) dans le modèle :`,
+        `[Owlnest] ${missing.length} opening(s) not found in the model:`,
         missing.map((m) => m.label || m.entity).join(', '),
       );
     }
@@ -2290,7 +2290,7 @@ class Ha3dFloorplan extends HTMLElement {
     ].join(';');
     loadingEl.innerHTML = `
       <div style="width:32px;height:32px;border:3px solid rgba(255,255,255,0.12);border-top-color:rgba(125,209,252,0.8);border-radius:50%;animation:owlnest-spin 0.8s linear infinite;"></div>
-      <div style="font-size:11px;color:rgba(255,255,255,0.35);font-family:var(--primary-font-family,sans-serif);letter-spacing:.04em;">Chargement du modèle…</div>
+      <div style="font-size:11px;color:rgba(255,255,255,0.35);font-family:var(--primary-font-family,sans-serif);letter-spacing:.04em;">${t('modelLoading')}</div>
     `;
     const styleEl = document.createElement('style');
     styleEl.textContent = '@keyframes owlnest-spin{to{transform:rotate(360deg)}}';
@@ -2302,8 +2302,10 @@ class Ha3dFloorplan extends HTMLElement {
       model = await loadGLTF(ec.model_url);
     } catch (err) {
       console.error('[Owlnest] model load failed:', err);
-      // Le code HTTP dit s'il faut corriger le chemin ou regarder le serveur.
-      const reason = modelErrorMessage(err);
+      // Le code HTTP dit s'il faut corriger le chemin ou regarder le serveur ;
+      // on le garde à l'écran, c'est lui qu'on demandera dans un rapport de bug.
+      const status = httpStatus(err);
+      const reason = `${t(modelErrorKey(err))}${status !== null ? ` (${status})` : ''}`;
       loadingEl.innerHTML = `<div style="font-size:11px;color:#f87171;font-family:var(--primary-font-family,sans-serif);text-align:center;padding:0 16px;">⚠ ${reason}</div>`;
       return;
     }
@@ -2336,7 +2338,7 @@ class Ha3dFloorplan extends HTMLElement {
     // terrain déborde du sol et son retrait laisserait un trou.
     const lifted = separateCoplanarSlabs(model, this._modelSpan, verticalAxis(this._modelBox));
     if (lifted) {
-      console.debug(`[Owlnest] ${lifted} surface(s) coplanaire(s) écartée(s)`);
+      console.debug(`[Owlnest] ${lifted} coplanar surface(s) separated`);
     }
     // Avant tout placement de caméra : une borne trop serrée écrêterait la
     // position par défaut, et l'élargir ensuite ne la replacerait pas.
@@ -2754,7 +2756,7 @@ class Ha3dFloorplan extends HTMLElement {
       return;
     }
     if (!action.domain || !action.service) {
-      console.warn('[Owlnest] Action incomplète, ignorée :', action);
+      console.warn('[Owlnest] incomplete action, ignored:', action);
       return;
     }
     this._hass?.callService(action.domain, action.service, action.service_data ?? {});
@@ -2766,7 +2768,7 @@ class Ha3dFloorplan extends HTMLElement {
     const view = normalizeViews(this._scene?.camera_views ?? [])
       .find((v) => v.id === viewId);
     if (!view) {
-      console.warn(`[Owlnest] Vue « ${viewId} » introuvable.`);
+      console.warn(`[Owlnest] view "${viewId}" not found.`);
       return;
     }
     this._viewMgr?.flyTo(view);
@@ -2826,7 +2828,7 @@ class Ha3dFloorplan extends HTMLElement {
     if (actions.length) {
       // Trace volontaire : sans elle, une regle qui ne part pas et une regle
       // qui part sans effet visible sont impossibles a distinguer.
-      console.debug('[Owlnest] règle déclenchée →', actions.map((a) => a.type).join(', '));
+      console.debug('[Owlnest] rule fired →', actions.map((a) => a.type).join(', '));
     }
     for (const action of actions) this._executeAction(action);
   }
@@ -2902,7 +2904,7 @@ class Ha3dFloorplan extends HTMLElement {
       case 'highlight_anchor': {
         const ov = this._findOverlayFor(action.anchor);
         if (ov) pulseOverlay(ov.el, action.color ?? '#ef4444', (action.duration ?? 6) * 1000);
-        else console.warn('[Owlnest] highlight_anchor : ancre introuvable :', action.anchor);
+        else console.warn('[Owlnest] highlight_anchor: anchor not found:', action.anchor);
         break;
       }
       case 'toast':

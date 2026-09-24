@@ -19,7 +19,7 @@ if (import.meta.hot) {
   import.meta.hot.accept(() => location.reload());
 
   console.info(
-    '%c[Owlnest]%c mode dev — rechargement auto à chaque sauvegarde',
+    '%c[Owlnest]%c dev mode — auto reload on every save',
     'color:#6C63FF;font-weight:bold',
     'color:inherit',
   );

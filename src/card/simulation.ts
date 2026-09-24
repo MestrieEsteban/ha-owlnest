@@ -125,14 +125,14 @@ export class SimulationPanel {
     // Weather presets — 2 rows of 4
     type SimWeather = 'clear' | 'cloudy' | 'rain' | 'storm' | 'hail' | 'snow' | 'fog' | 'wind';
     const presets: { emoji: string; label: string; value: SimWeather }[] = [
-      { emoji: '☀️', label: 'Soleil',      value: 'clear'  },
-      { emoji: '⛅', label: 'Nuageux',     value: 'cloudy' },
-      { emoji: '🌧️', label: 'Pluie',       value: 'rain'   },
-      { emoji: '⛈️', label: 'Orage',       value: 'storm'  },
-      { emoji: '🌨️', label: 'Grêle',       value: 'hail'   },
-      { emoji: '❄️', label: 'Neige',       value: 'snow'   },
-      { emoji: '🌫️', label: 'Brouillard',  value: 'fog'    },
-      { emoji: '💨', label: 'Vent',         value: 'wind'   },
+      { emoji: '☀️', label: t('simWeatherClear'),  value: 'clear'  },
+      { emoji: '⛅', label: t('simWeatherCloudy'), value: 'cloudy' },
+      { emoji: '🌧️', label: t('simWeatherRain'),   value: 'rain'   },
+      { emoji: '⛈️', label: t('simWeatherStorm'),  value: 'storm'  },
+      { emoji: '🌨️', label: t('simWeatherHail'),   value: 'hail'   },
+      { emoji: '❄️', label: t('simWeatherSnow'),   value: 'snow'   },
+      { emoji: '🌫️', label: t('simWeatherFog'),    value: 'fog'    },
+      { emoji: '💨', label: t('simWeatherWind'),   value: 'wind'   },
     ];
     const weatherBtns: HTMLButtonElement[] = [];
     const syncWeather = () => {

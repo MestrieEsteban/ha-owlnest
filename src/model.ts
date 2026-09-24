@@ -27,9 +27,9 @@ export async function loadGLTF(url: string): Promise<THREE.Group> {
     });
 
     console.warn(
-      `[Owlnest] "${url}" a répondu 404 depuis le cache du navigateur alors que le fichier existe. ` +
-      `Home Assistant sert ses 404 avec un cache d'un mois : un chemin corrigé reste en échec ` +
-      `jusqu'à ce que le cache expire. Le modèle a été chargé en contournant le cache.`,
+      `[Owlnest] "${url}" answered 404 from the browser cache although the file exists. ` +
+      'Home Assistant serves its 404s with a one-month cache, so a corrected path keeps failing ' +
+      'until the cache expires. The model was loaded by bypassing the cache.',
     );
     return model;
   }

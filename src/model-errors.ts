@@ -23,19 +23,26 @@ export function httpStatus(err: unknown): number | null {
 }
 
 /**
- * Message affiché dans la carte.
+ * Clé de traduction décrivant la cause de l’échec.
  *
- * « Échec du chargement » seul ne distingue pas un chemin faux d'un serveur en
- * panne, alors que la marche à suivre n'est pas la même. Le code HTTP suffit à
- * trancher, et sa présence permet de chercher l'erreur ailleurs.
+ * On rend une clé et non une phrase : ce module reste ainsi sans dépendance,
+ * donc testable seul, et la carte compose le texte dans la langue courante.
+ *
+ * « Échec du chargement » seul ne distingue pas un chemin faux d’un serveur en
+ * panne, alors que la marche à suivre n’est pas la même. Le code HTTP tranche.
  */
-export function modelErrorMessage(err: unknown): string {
+export type ModelErrorKey =
+  | 'modelErrLoad'
+  | 'modelErrNotFound'
+  | 'modelErrDenied'
+  | 'modelErrServer';
+
+export function modelErrorKey(err: unknown): ModelErrorKey {
   const status = httpStatus(err);
-  if (status === null) return 'Échec du chargement du modèle';
-  if (status === 404) return 'Modèle introuvable (404) — vérifiez le chemin';
-  if (status === 401 || status === 403) return `Accès refusé au modèle (${status})`;
-  if (status >= 500) return `Le serveur n'a pas pu fournir le modèle (${status})`;
-  return `Échec du chargement du modèle (${status})`;
+  if (status === 404) return 'modelErrNotFound';
+  if (status === 401 || status === 403) return 'modelErrDenied';
+  if (status !== null && status >= 500) return 'modelErrServer';
+  return 'modelErrLoad';
 }
 
 /**

@@ -2378,7 +2378,7 @@ export class EditPanel {
         this.getEditor()?.updateAnchor(key, { precision: v });
         this.scheduleAutoSave();
       });
-      field('Précision (décimales)', precInput);
+      field(t('anchorPrecision'), precInput);
       const precHint = document.createElement('div');
       precHint.style.cssText = 'font-size:9px;color:#475569;margin-top:-5px;margin-bottom:8px;';
       precHint.textContent = 'Ex : 0 → "18", 1 → "17.6"';
@@ -3019,8 +3019,8 @@ export class EditPanel {
       container.appendChild(colorOverrideWrap);
 
       // Show toggles
-      container.appendChild(mkToggle('Afficher le nom', card.show?.name !== false, (v) => this._updateCard(card.id, { show: { ...card.show, name: v } } as Partial<import('../cards/types').InfoCard>)));
-      container.appendChild(mkToggle('Afficher le sous-titre', card.show?.subtitle !== false, (v) => this._updateCard(card.id, { show: { ...card.show, subtitle: v } } as Partial<import('../cards/types').InfoCard>)));
+      container.appendChild(mkToggle(t('cardInfoShowName'), card.show?.name !== false, (v) => this._updateCard(card.id, { show: { ...card.show, name: v } } as Partial<import('../cards/types').InfoCard>)));
+      container.appendChild(mkToggle(t('cardInfoShowSubtitle'), card.show?.subtitle !== false, (v) => this._updateCard(card.id, { show: { ...card.show, subtitle: v } } as Partial<import('../cards/types').InfoCard>)));
     }
 
     // ── Section: Visibilité conditionnelle ────────────────────────────────────

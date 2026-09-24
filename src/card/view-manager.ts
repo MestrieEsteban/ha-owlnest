@@ -465,7 +465,7 @@ export class ViewManager {
       hideBtn.style.cssText = btnStyle;
       hideBtn.textContent = v.hidden ? '👁' : '👁';
       hideBtn.style.opacity = v.hidden ? '0.3' : '1';
-      hideBtn.title = v.hidden ? 'Afficher dans le menu' : 'Masquer du menu';
+      hideBtn.title = v.hidden ? t('viewShowInMenu') : t('viewHideFromMenu');
       hideBtn.addEventListener('click', async () => {
         const views = normalizeViews(this.getEffectiveConfig().camera_views ?? []).map(
           (x) => x.id === v.id ? { ...x, hidden: !x.hidden } : x,

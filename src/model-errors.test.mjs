@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { httpStatus, modelErrorMessage, bustCache, shouldRetryUncached } from './model-errors.mjs';
+import { httpStatus, modelErrorKey, bustCache, shouldRetryUncached } from './model-errors.mjs';
 
 test('le code HTTP se lit dans le message de three.js', () => {
   // Forme exacte rejetée par GLTFLoader.
@@ -19,18 +19,20 @@ test('un echec non HTTP ne produit pas de code', () => {
   assert.equal(httpStatus(new Error('invalid glb: 404 vertices')), null);
 });
 
-test('le message distingue les causes', () => {
-  const of = (s) => modelErrorMessage(new Error(`fetch for "u" responded with ${s}: x`));
-  assert.match(of(404), /introuvable/);
-  assert.match(of(403), /Acces refuse|Accès refusé/);
-  assert.match(of(500), /serveur/);
-  assert.equal(modelErrorMessage(new Error('boom')), 'Échec du chargement du modèle');
+test('la cause se traduit en cle', () => {
+  const of = (s) => modelErrorKey(new Error(`fetch for "u" responded with ${s}: x`));
+  assert.equal(of(404), 'modelErrNotFound');
+  assert.equal(of(403), 'modelErrDenied');
+  assert.equal(of(401), 'modelErrDenied');
+  assert.equal(of(500), 'modelErrServer');
+  assert.equal(of(503), 'modelErrServer');
+  // Un echec sans code HTTP retombe sur le message general.
+  assert.equal(modelErrorKey(new Error('boom')), 'modelErrLoad');
 });
 
-test('le message porte toujours le code quand il existe', () => {
-  for (const s of [404, 401, 403, 500, 502, 418]) {
-    assert.match(modelErrorMessage(new Error(`fetch for "u" responded with ${s}: x`)), new RegExp(String(s)));
-  }
+test('un code inattendu ne casse rien', () => {
+  // 418 n'a pas de cas dedie : il ne doit ni jeter ni produire une cle vide.
+  assert.equal(modelErrorKey(new Error('fetch for "u" responded with 418: x')), 'modelErrLoad');
 });
 
 test('le parametre anti-cache respecte une URL deja parametree', () => {
