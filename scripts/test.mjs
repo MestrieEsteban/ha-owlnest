@@ -69,10 +69,12 @@ try {
   }
 
   const tests = findTests('src');
+  const copied = [];
   for (const file of tests) {
     const dest = join(out, relative('src', file));
     mkdirSync(dirname(dest), { recursive: true });
     copyFileSync(file, dest);
+    copied.push(dest);
   }
 
   if (tests.length === 0) {
@@ -80,7 +82,10 @@ try {
     process.exit(0);
   }
 
-  execFileSync(process.execPath, ['--test', out], { stdio: 'inherit' });
+  // Les fichiers sont passes un par un, et non le dossier : Node 24 traite un
+  // repertoire nu comme un module a charger et echoue avant d'avoir teste quoi
+  // que ce soit. La liste explicite fonctionne sur toutes les versions.
+  execFileSync(process.execPath, ['--test', ...copied], { stdio: 'inherit' });
 } finally {
   rmSync(out, { recursive: true, force: true });
 }
