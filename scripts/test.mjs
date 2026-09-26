@@ -24,6 +24,9 @@ const ENTRIES = [
   'src/types.ts',
   'src/parts.ts',
   'src/parts-runtime.ts',
+  'src/model-outline.ts',
+  'src/part-highlight.ts',
+  'src/part-tint.ts',
   'src/coplanar.ts',
   'src/lights.ts',
   'src/scale.ts',
@@ -69,10 +72,12 @@ try {
   }
 
   const tests = findTests('src');
+  const copied = [];
   for (const file of tests) {
     const dest = join(out, relative('src', file));
     mkdirSync(dirname(dest), { recursive: true });
     copyFileSync(file, dest);
+    copied.push(dest);
   }
 
   if (tests.length === 0) {
@@ -80,7 +85,8 @@ try {
     process.exit(0);
   }
 
-  execFileSync(process.execPath, ['--test', out], { stdio: 'inherit' });
+  // Node 24 ne parcourt plus un dossier passé à `--test` : on liste les fichiers.
+  execFileSync(process.execPath, ['--test', ...copied], { stdio: 'inherit' });
 } finally {
   rmSync(out, { recursive: true, force: true });
 }
