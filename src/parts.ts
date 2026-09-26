@@ -184,18 +184,36 @@ export function partFrame(box: THREE.Box3): PartFrame {
 export type HingeSide = 'start' | 'end';
 
 /**
- * Position du gond : sur l'arête verticale choisie, au milieu de l'épaisseur.
+ * Arête portant les gonds : `axis` est l'axe de rotation, `across` l'axe le
+ * long duquel on choisit le bord. Le troisième axe est l'épaisseur.
+ */
+export interface HingeEdge {
+  axis: 0 | 1 | 2;
+  across: 0 | 1 | 2;
+}
+
+/**
+ * Position du gond : sur l'arête choisie, au milieu de l'épaisseur.
+ *
+ * Par défaut l'arête est verticale (porte) ; un abattant passe une arête
+ * horizontale, bord pris le long de la verticale.
  *
  * Faire pivoter un vantail autour de son centre le ferait traverser le mur —
  * c'est le défaut classique quand on anime un objet sans déplacer son pivot.
  */
-export function hingePivot(box: THREE.Box3, frame: PartFrame, side: HingeSide): THREE.Vector3 {
+export function hingePivot(
+  box: THREE.Box3,
+  frame: PartFrame,
+  side: HingeSide,
+  edge: HingeEdge = { axis: frame.up, across: frame.wide },
+): THREE.Vector3 {
   const min = [box.min.x, box.min.y, box.min.z];
   const max = [box.max.x, box.max.y, box.max.z];
+  const depth = (3 - edge.axis - edge.across) as 0 | 1 | 2;
   const p: [number, number, number] = [0, 0, 0];
-  p[frame.up] = min[frame.up];
-  p[frame.wide] = side === 'start' ? min[frame.wide] : max[frame.wide];
-  p[frame.thin] = (min[frame.thin] + max[frame.thin]) / 2;
+  p[edge.axis] = min[edge.axis];
+  p[edge.across] = side === 'start' ? min[edge.across] : max[edge.across];
+  p[depth] = (min[depth] + max[depth]) / 2;
   return new THREE.Vector3(p[0], p[1], p[2]);
 }
 
@@ -230,6 +248,8 @@ export interface ExtractedPart {
   mesh: THREE.Mesh;
   frame: PartFrame;
   pivot: THREE.Vector3;
+  /** Index d'origine des triangles retirés, pour `restoreTriangles`. */
+  saved: Uint32Array;
 }
 
 /**
@@ -289,51 +309,58 @@ export function extractPart(
   detached.name = `${mesh.name || 'part'}#${part.id}`;
   mesh.add(detached);
 
-  removeTriangles(mesh, part.tris);
+  const saved = removeTriangles(mesh, part.tris);
 
-  return { mesh: detached, frame, pivot };
+  return { mesh: detached, frame, pivot, saved };
 }
 
 /**
- * Retire des triangles d'une géométrie en réécrivant son index.
+ * Retire des triangles d'une géométrie sans renuméroter les autres.
  *
- * Les attributs de sommets sont laissés en place : les sommets orphelins ne
- * coûtent que de la mémoire, alors que les renuméroter obligerait à réécrire
- * tous les attributs pour un gain nul à l'affichage.
+ * Chaque triangle retiré devient dégénéré (ses trois coins sur un même
+ * sommet) : il ne se dessine plus et le lancer de rayons l'ignore, mais sa
+ * place dans l'index demeure. Compacter l'index décalait tous les triangles
+ * suivants — le triangle d'amorce d'un second ouvrant de la même maille, ou
+ * celui d'un clic, désignait alors une autre pièce.
+ *
+ * @returns Les indices d'origine, trois par triangle, pour `restoreTriangles`.
  */
-export function removeTriangles(mesh: THREE.Mesh, tris: ArrayLike<number>) {
+export function removeTriangles(mesh: THREE.Mesh, tris: ArrayLike<number>): Uint32Array {
   const geom = mesh.geometry;
-  const index = geom.getIndex();
-  const drop = new Set<number>();
-  for (let i = 0; i < tris.length; i++) drop.add(tris[i]);
-
-  if (index) {
-    const total = index.count / 3 | 0;
-    const kept = new Uint32Array((total - drop.size) * 3);
-    let w = 0;
-    for (let t = 0; t < total; t++) {
-      if (drop.has(t)) continue;
-      kept[w++] = index.getX(t * 3);
-      kept[w++] = index.getX(t * 3 + 1);
-      kept[w++] = index.getX(t * 3 + 2);
-    }
-    geom.setIndex(new THREE.BufferAttribute(kept, 1));
-  } else {
+  let index = geom.getIndex();
+  if (!index) {
     // Géométrie non indexée : on en fabrique un index plutôt que de recopier
     // tous les attributs.
-    const total = geom.getAttribute('position').count / 3 | 0;
-    const kept = new Uint32Array((total - drop.size) * 3);
-    let w = 0;
-    for (let t = 0; t < total; t++) {
-      if (drop.has(t)) continue;
-      kept[w++] = t * 3;
-      kept[w++] = t * 3 + 1;
-      kept[w++] = t * 3 + 2;
-    }
-    geom.setIndex(new THREE.BufferAttribute(kept, 1));
+    const n = geom.getAttribute('position').count;
+    const seq = new Uint32Array(n);
+    for (let i = 0; i < n; i++) seq[i] = i;
+    index = new THREE.BufferAttribute(seq, 1);
+    geom.setIndex(index);
   }
+  const saved = new Uint32Array(tris.length * 3);
+  for (let i = 0; i < tris.length; i++) {
+    const t = tris[i];
+    for (let c = 0; c < 3; c++) saved[i * 3 + c] = index.getX(t * 3 + c);
+    const a = saved[i * 3];
+    index.setX(t * 3 + 1, a);
+    index.setX(t * 3 + 2, a);
+  }
+  index.needsUpdate = true;
   geom.computeBoundingBox();
   geom.computeBoundingSphere();
+  return saved;
+}
+
+/** Rend à une géométrie les triangles retirés par `removeTriangles`. */
+export function restoreTriangles(mesh: THREE.Mesh, tris: ArrayLike<number>, saved: ArrayLike<number>) {
+  const index = mesh.geometry.getIndex();
+  if (!index) return;
+  for (let i = 0; i < tris.length; i++) {
+    for (let c = 0; c < 3; c++) index.setX(tris[i] * 3 + c, saved[i * 3 + c]);
+  }
+  index.needsUpdate = true;
+  mesh.geometry.computeBoundingBox();
+  mesh.geometry.computeBoundingSphere();
 }
 
 // ── Reconnaissance ──────────────────────────────────────────────────────────

@@ -61,6 +61,7 @@ J'ai voulu autre chose des lumières 3D temps réel, un éditeur visuel, de la m
 | 🏠 | **Scène 3D interactive** | Chargez n'importe quel modèle GLB/GLTF et naviguez librement avec la souris ou le tactile |
 | 💡 | **Lumières synchronisées** | Vos entités `light.*` pilotent de vraies lumières 3D — couleur, intensité, transitions fluides |
 | 📍 | **Ancres interactives** | Tap pour allumer/éteindre, appui long pour les détails. Compatible : lumières, capteurs, volets, climat, media players |
+| 🚪 | **Ouvrants animés** | Portes, fenêtres, volets et portes d'électroménager pivotent ou coulissent selon l'état de leur entité |
 | 👁️ | **Voir à travers les murs** | Le mur qui bouche la vue s'efface pendant que vous tournez autour, et se reforme derrière |
 | 📐 | **N'importe quelle unité** | Mètres, centimètres, pouces : distances, lumières et météo se déduisent de la taille du modèle |
 | 🎥 | **Vues caméra** | Sauvegardez des points de vue nommés et naviguez entre eux avec une transition animée |
@@ -240,6 +241,43 @@ Configurez cela dans les propriétés de l'ancre → **Visible si** dans l'édit
 | `icon` | Icône MDI personnalisée (ex: `mdi:thermometer`) |
 | `precision` | Nombre de décimales pour les capteurs (ex: `0` → "18", `1` → "17.6") |
 | `lightIntensity` | Multiplicateur d'intensité lumineuse (défaut: 1) |
+
+---
+
+### Ouvrants
+
+Les ouvrants sont des pièces de votre modèle (portes, fenêtres, volets, porte de lave-vaisselle ou de four) qui bougent quand une entité Home Assistant s'ouvre ou se ferme. Le fichier du modèle n'est pas modifié : la pièce est détachée et animée dans la carte.
+
+#### Ajouter un ouvrant
+
+1. Mode édition → onglet **Ouvrants** → **+ Ouvrant**
+2. Cliquez la porte, la fenêtre ou le volet sur le modèle
+3. Réglez-le dans le panneau qui s'ouvre, vérifiez le mouvement avec **Aperçu**, puis enregistrez la scène
+
+Le panneau est une fenêtre flottante : déplacez-la par son en-tête pour voir le modèle derrière, et continuez à tourner autour pendant qu'elle est ouverte. **Annuler** (ou **Échap**) abandonne vos changements, ou supprime un ouvrant tout juste créé. Ouvrir un autre ouvrant conserve les réglages du précédent ; quitter le mode édition ferme le panneau.
+
+#### Choisir ce qui bouge
+
+L'arborescence **Objet** liste les objets et groupes du modèle, comme l'outliner de Blender. Survolez une ligne pour la surligner dans la vue, cliquez-la pour en faire la pièce mobile : un groupe bouge avec tout son contenu. La pièce cliquée est révélée et sélectionnée à l'ouverture du panneau ; **Pièce cliquée** revient au seul morceau de maille. Le filtre recherche par nom.
+
+#### Options
+
+| Option | Description |
+|---|---|
+| **Nom** | Affiché dans la liste des ouvrants et l'en-tête du panneau |
+| **Entité** | Pilote le mouvement. Les entités `cover` suivent `current_position` ; `cover`, `valve`, `lock`, `binary_sensor`, `switch`, `light`, `input_boolean`, `fan` et `group` sont lues comme ouvert/fermé |
+| **Mouvement** | **Pivote** (porte, fenêtre à battant) ou **Coulisse** (volet roulant, baie) |
+| **Rotation** | Battants uniquement. **Verticale** pour une porte, **Horizontale** pour un lave-vaisselle, un four ou une fenêtre à soufflet |
+| **Côté des gonds** | L'arête qui porte les gonds : un côté / l'autre, ou **En bas** / **En haut** pour une rotation horizontale |
+| **S'ouvre vers** | Le côté du mur vers lequel pivote le vantail. Le modèle ne sait pas où est l'intérieur : vérifiez à l'aperçu et inversez si besoin |
+| **Angle d'ouverture** / **Se retire vers** / **Course** | Amplitude et sens du mouvement |
+| **Durée** | Durée de l'animation, en secondes |
+| **Inverser** | Pour les entités dont « ouvert » dans Home Assistant signifie fermé à l'écran |
+| **Couleur fermé** / **Couleur ouvert** | Teinte facultative de l'objet dans chaque état (**Aucune** pour désactiver). Entre les deux, la teinte suit le mouvement |
+
+Pour supprimer un ouvrant, cliquez son bouton de suppression dans la liste, puis cliquez à nouveau dans les 3 secondes pour confirmer.
+
+> **Astuce** : le gond est placé sur l'arête de la boîte englobante de la pièce, pas sur l'origine de l'objet dans Blender.
 
 ---
 
