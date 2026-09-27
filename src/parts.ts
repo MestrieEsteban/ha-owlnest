@@ -363,6 +363,198 @@ export function restoreTriangles(mesh: THREE.Mesh, tris: ArrayLike<number>, save
   mesh.geometry.computeBoundingSphere();
 }
 
+// ── Déroulant ───────────────────────────────────────────────────────────────
+
+/**
+ * Repère d'une toile, dans l'espace du modèle.
+ *
+ * Tout est exprimé dans un espace métrique : un nœud Blender porte souvent une
+ * échelle non uniforme, où un angle mesuré ne voudrait plus rien dire.
+ */
+export interface ExtendFrame {
+  up: THREE.Vector3;
+  /** Horizontale qui s'éloigne du mur. */
+  out: THREE.Vector3;
+  /** Horizontale le long du mur, `up × out`. */
+  along: THREE.Vector3;
+  /** Normale au plan de la toile. */
+  normal: THREE.Vector3;
+  /** Pente de la toile, en degrés sous l'horizontale, le long de `out`. */
+  tilt: number;
+  /** Axe suggéré : une toile presque verticale est un store ou un rideau. */
+  axis: 'out' | 'vertical' | 'along';
+}
+
+/** Valeurs et vecteurs propres d'une matrice symétrique 3 × 3 (Jacobi). */
+function eigenSym3(a: number[][]): { values: number[]; vectors: THREE.Vector3[] } {
+  const A = a.map((r) => r.slice());
+  const V = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  for (let sweep = 0; sweep < 32; sweep++) {
+    if (A[0][1] ** 2 + A[0][2] ** 2 + A[1][2] ** 2 < 1e-30) break;
+    for (const [p, q] of [[0, 1], [0, 2], [1, 2]]) {
+      if (A[p][q] === 0) continue;
+      const theta = (A[q][q] - A[p][p]) / (2 * A[p][q]);
+      const t = (theta >= 0 ? 1 : -1) / (Math.abs(theta) + Math.sqrt(theta * theta + 1));
+      const c = 1 / Math.sqrt(t * t + 1);
+      const s = t * c;
+      for (let k = 0; k < 3; k++) {
+        const kp = A[k][p], kq = A[k][q];
+        A[k][p] = c * kp - s * kq; A[k][q] = s * kp + c * kq;
+      }
+      for (let k = 0; k < 3; k++) {
+        const pk = A[p][k], qk = A[q][k];
+        A[p][k] = c * pk - s * qk; A[q][k] = s * pk + c * qk;
+      }
+      for (let k = 0; k < 3; k++) {
+        const kp = V[k][p], kq = V[k][q];
+        V[k][p] = c * kp - s * kq; V[k][q] = s * kp + c * kq;
+      }
+    }
+  }
+  return {
+    values: [A[0][0], A[1][1], A[2][2]],
+    vectors: [0, 1, 2].map((k) => new THREE.Vector3(V[0][k], V[1][k], V[2][k]).normalize()),
+  };
+}
+
+const horizontal = (v: THREE.Vector3, up: THREE.Vector3) => v.clone().addScaledVector(up, -v.dot(up));
+
+/**
+ * Déduit le repère d'une toile de ses sommets.
+ *
+ * Le plan vient d'une analyse en composantes principales : robuste à une toile
+ * double face (les normales des faces s'y annuleraient) comme à une toile
+ * légèrement bombée. L'axe le long du mur est l'horizontale de ce plan ; l'axe
+ * qui descend dans le plan part du bord haut, qui est celui du mur.
+ *
+ * Une toile à plat ne dit pas de quel côté est le mur, pas plus qu'une toile
+ * verticale ne dit où est l'extérieur : on s'éloigne alors du centre du modèle.
+ *
+ * @param points Coordonnées à plat (x, y, z), dans l'espace du modèle.
+ */
+export function detectExtend(points: ArrayLike<number>, up: THREE.Vector3, center: THREE.Vector3): ExtendFrame {
+  const U = up.clone().normalize();
+  const n = Math.floor(points.length / 3);
+  const c = new THREE.Vector3();
+  for (let i = 0; i < n; i++) c.add(new THREE.Vector3(points[i * 3], points[i * 3 + 1], points[i * 3 + 2]));
+  if (n) c.divideScalar(n);
+  const cov = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  for (let i = 0; i < n; i++) {
+    const d = [points[i * 3] - c.x, points[i * 3 + 1] - c.y, points[i * 3 + 2] - c.z];
+    for (let r = 0; r < 3; r++) for (let k = 0; k < 3; k++) cov[r][k] += d[r] * d[k];
+  }
+  const { values, vectors } = eigenSym3(cov);
+  const order = [0, 1, 2].sort((a, b) => values[a] - values[b]);
+  const normal = vectors[order[0]];
+  const away = horizontal(c.clone().sub(center), U);
+
+  let along: THREE.Vector3;
+  const nh = horizontal(normal, U);
+  if (nh.length() > 0.17) {
+    along = U.clone().cross(normal).normalize();
+  } else {
+    // À plat : l'axe de la toile le plus tourné vers l'extérieur sort du mur.
+    const [a, b] = [vectors[order[1]], vectors[order[2]]].map((v) => horizontal(v, U).normalize());
+    const out = Math.abs(a.dot(away)) >= Math.abs(b.dot(away)) ? a : b;
+    along = U.clone().cross(out).normalize();
+  }
+
+  const e = along.clone().cross(normal).normalize();
+  if (Math.abs(e.dot(U)) > 0.05) { if (e.dot(U) > 0) e.negate(); } else if (e.dot(away) < 0) e.negate();
+
+  let out = horizontal(e, U);
+  if (out.length() > 1e-3) out.normalize();
+  else {
+    out = nh.lengthSq() > 0 ? nh.clone().normalize() : new THREE.Vector3(1, 0, 0);
+    if (out.dot(away) < 0) out.negate();
+  }
+  const tilt = THREE.MathUtils.radToDeg(Math.atan2(-e.dot(U), e.dot(out)));
+  along = U.clone().cross(out).normalize();
+  return {
+    up: U, out, along, normal: normal.clone(), tilt,
+    axis: Math.abs(tilt) > 75 ? 'vertical' : 'out',
+  };
+}
+
+/** Direction d'écrasement, de l'arête fixe vers l'arête mobile (ancrage `start`). */
+export function extendDirection(frame: ExtendFrame, axis: 'out' | 'vertical' | 'along', tiltDeg: number): THREE.Vector3 {
+  if (axis === 'vertical') return frame.up.clone().negate();
+  if (axis === 'along') return frame.along.clone();
+  const t = THREE.MathUtils.degToRad(tiltDeg);
+  return frame.out.clone().multiplyScalar(Math.cos(t)).addScaledVector(frame.up, -Math.sin(t)).normalize();
+}
+
+/** Étendue de points (x, y, z à plat) projetés sur une direction. */
+export function projectRange(points: ArrayLike<number>, dir: THREE.Vector3): { min: number; max: number } {
+  let min = Infinity, max = -Infinity;
+  for (let i = 0; i + 2 < points.length; i += 3) {
+    const d = points[i] * dir.x + points[i + 1] * dir.y + points[i + 2] * dir.z;
+    if (d < min) min = d;
+    if (d > max) max = d;
+  }
+  return { min, max };
+}
+
+/**
+ * Géométrie d'une toile vue le long de son axe d'écrasement : `anchor` et
+ * `far` sont les projections des arêtes fixe et mobile sur `u`, les bornes
+ * `w` et `n` celles de la toile en largeur et en épaisseur.
+ */
+export interface ExtendSpan {
+  u: THREE.Vector3;
+  w: THREE.Vector3;
+  n: THREE.Vector3;
+  anchor: number;
+  far: number;
+  wMin: number; wMax: number;
+  nMin: number; nMax: number;
+}
+
+export function extendSpan(
+  points: ArrayLike<number>, frame: ExtendFrame, u: THREE.Vector3, anchorAt: 'start' | 'end',
+): ExtendSpan {
+  const r = projectRange(points, u);
+  let w = frame.normal.clone().cross(u);
+  if (w.length() < 1e-6) w = frame.along.clone();
+  w.normalize();
+  const n = u.clone().cross(w).normalize();
+  const rw = projectRange(points, w);
+  const rn = projectRange(points, n);
+  return {
+    u: u.clone(), w, n,
+    anchor: anchorAt === 'end' ? r.max : r.min,
+    far: anchorAt === 'end' ? r.min : r.max,
+    wMin: rw.min, wMax: rw.max, nMin: rn.min, nMax: rn.max,
+  };
+}
+
+/**
+ * Un objet touche-t-il l'arête mobile d'une toile ? Retourne sa distance à
+ * cette arête, en fraction de la longueur de la toile, ou `null`.
+ *
+ * Il doit être court le long de l'axe (une barre, pas un mur), pas plus large
+ * que la toile, en face d'elle, et chevaucher l'arête mobile.
+ *
+ * @param corners Sommets de ses boîtes (x, y, z à plat), dans l'espace du modèle.
+ */
+export function edgeContact(corners: ArrayLike<number>, span: ExtendSpan): number | null {
+  const L = Math.abs(span.far - span.anchor);
+  if (!(L > 0) || corners.length < 3) return null;
+  const tol = 0.08 * L;
+  const cu = projectRange(corners, span.u);
+  const cw = projectRange(corners, span.w);
+  const cn = projectRange(corners, span.n);
+  if (cu.max < span.far - tol || cu.min > span.far + tol) return null;
+  if (cu.max - cu.min > 0.5 * L) return null;
+  const width = span.wMax - span.wMin;
+  const cwSize = cw.max - cw.min;
+  if (cwSize > 1.5 * width + tol) return null;
+  const overlap = Math.min(cw.max, span.wMax) - Math.max(cw.min, span.wMin);
+  if (overlap < 0.5 * cwSize - 1e-9) return null;
+  if (cn.max < span.nMin - 2 * tol || cn.min > span.nMax + 2 * tol) return null;
+  return Math.abs((cu.min + cu.max) / 2 - span.far) / L;
+}
+
 // ── Reconnaissance ──────────────────────────────────────────────────────────
 
 export type PartGuess = 'door' | 'window' | 'other';

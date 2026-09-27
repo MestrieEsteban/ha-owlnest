@@ -223,8 +223,26 @@ export interface RenderingConfig {
 /** A full Owlnest scene, persisted by the backend integration. */
 // ── Ouvrants ────────────────────────────────────────────────────────────────
 
-/** Battant (porte, fenêtre) ou coulissant (volet, baie, porte de garage). */
-export type PartMotion = 'swing' | 'slide';
+/**
+ * Battant (porte, fenêtre), coulissant (volet, baie, porte de garage) ou
+ * déroulant (store banne, rideau) : ce dernier s'écrase vers une arête fixe.
+ */
+export type PartMotion = 'swing' | 'slide' | 'extend';
+
+/**
+ * Axe d'écrasement d'un déroulant, relatif au mur qui le porte.
+ *
+ * `out` sort du mur, incliné de `extendTilt` sous l'horizontale (store banne) ;
+ * `vertical` descend le long du mur (store, rideau) ; `along` court le long du
+ * mur (rideau qui se tire de côté).
+ */
+export type ExtendAxis = 'out' | 'vertical' | 'along';
+
+/** Nœud du modèle désigné comme dans `OwlnestPart.node` / `nodeIndex`. */
+export interface PartNodeRef {
+  node: string;
+  nodeIndex?: number;
+}
 
 /** Sens du coulissement, dans le repère propre à la pièce. */
 export type SlideDirection = 'down' | 'up' | 'start' | 'end';
@@ -284,6 +302,28 @@ export interface OwlnestPart {
   slide?: SlideDirection;
   /** Course d'un coulissant, en fraction de sa propre dimension. */
   travel?: number;
+  /** Axe d'un déroulant. Absent : déduit de la géométrie de la toile. */
+  extendAxis?: ExtendAxis;
+  /**
+   * Inclinaison de l'axe `out`, en degrés sous l'horizontale : 0 sort à plat,
+   * 90 descend le long du mur. Absente : celle de la toile.
+   */
+  extendTilt?: number;
+  /**
+   * Arête fixe d'un déroulant : `start` côté mur (ou haut, ou début de l'axe
+   * `along`), `end` à l'opposé. Absente : `start`.
+   */
+  extendAnchor?: 'start' | 'end';
+  /** Échelle le long de l'axe quand l'entité est ouverte. Absente : 1, la pose du modèle. */
+  extendOpen?: number;
+  /** Échelle quand l'entité est fermée. Absente : 0 (bornée à un souffle, voir le runtime). */
+  extendClosed?: number;
+  /**
+   * Objets qui suivent l'arête mobile d'un déroulant sans être déformés : la
+   * barre de charge d'un store. Absent : ceux qui touchent l'arête mobile ;
+   * vide : aucun.
+   */
+  followers?: PartNodeRef[];
   /**
    * États qui signifient « ouvert ».
    *

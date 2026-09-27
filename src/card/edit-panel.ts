@@ -10,11 +10,11 @@ import { deleteScene, summarizeScenes } from '../scene';
 import { PARTS_ENABLED } from '../parts';
 import type { SceneSummary } from '../scene';
 import { describeEntity, knownStates, stateLabel } from '../entities/descriptors';
-import { openFraction, hasOpenSemantics } from '../parts-runtime';
+import { openFraction, hasOpenSemantics, type ExtendInfo } from '../parts-runtime';
 import { detectionLabel, resolveLevel } from '../quality';
 import type { TapAction } from '../entities/descriptors';
 import type { QualityLevel } from '../quality';
-import type { AnchorKind, OwlnestPart } from '../types';
+import type { AnchorKind, OwlnestPart, ExtendAxis } from '../types';
 import {
   filterOutline, ancestorsOf, locatePart, revealRanks, outlineRows, centredScrollTop, PIECE_ROW,
   type ModelOutline, type OutlineRow,
@@ -42,6 +42,8 @@ export interface PartHighlightTarget {
   node?: number;
   mesh?: number;
   triangle?: number;
+  /** Rangs des suiveurs d'un déroulant, surlignés à part. */
+  followers?: number[];
 }
 
 export interface PartHighlightRequest {
@@ -52,6 +54,7 @@ export interface PartHighlightRequest {
 const MOTION_LABEL: Record<string, () => string> = {
   swing: () => t('partSwing'),
   slide: () => t('partSlide'),
+  extend: () => t('partExtend'),
 };
 
 /**
@@ -314,6 +317,8 @@ export class EditPanel {
     private getModelOutline?: () => ModelOutline | null,
     /** Surligne dans la vue ce que l'arborescence survole et sélectionne. */
     private onHighlightPart?: (req: PartHighlightRequest) => void,
+    /** Valeurs détectées d'un déroulant monté, et ses suiveurs possibles. */
+    private getExtendInfo?: (id: string) => ExtendInfo | null,
   ) {}
 
   // ── Card undo/redo ────────────────────────────────────────────────────────
@@ -3436,7 +3441,7 @@ export class EditPanel {
 
       const icon = document.createElement('span');
       icon.style.cssText = 'font-size:13px;flex-shrink:0;';
-      icon.textContent = part.motion === 'slide' ? '🪟' : '🚪';
+      icon.textContent = part.motion === 'slide' ? '🪟' : part.motion === 'extend' ? '⛱' : '🚪';
       row.appendChild(icon);
 
       const text = document.createElement('div');
@@ -3612,7 +3617,10 @@ export class EditPanel {
     // Les cotes du clic ne décrivent plus rien une fois un autre objet choisi.
     const objectSection = this._partObjectSection(draft, inputStyle, () => {
       if (dimsEl) dimsEl.style.display = draft.node ? 'none' : '';
+      // Autre objet : les suiveurs de l'ancien n'ont plus de sens.
+      if (draft.motion === 'extend') draft.followers = undefined;
       apply();
+      if (draft.motion === 'extend') { redetect(false); rebuildSpecific(); }
     });
     if (objectSection) body.appendChild(objectSection.el);
 
@@ -3750,7 +3758,9 @@ export class EditPanel {
     // ── Mouvement ─────────────────────────────────────────────────────────
     const motionSel = document.createElement('select');
     motionSel.style.cssText = inputStyle + SELECT_STYLE;
-    for (const [value, label] of [['swing', t('partSwing')], ['slide', t('partSlide')]] as const) {
+    for (const [value, label] of [
+      ['swing', t('partSwing')], ['slide', t('partSlide')], ['extend', t('partExtend')],
+    ] as const) {
       const o = document.createElement('option');
       o.value = value; o.textContent = label;
       motionSel.appendChild(styleOption(o));
@@ -3785,9 +3795,174 @@ export class EditPanel {
       field(label, row, into);
     };
 
+    const hintStyle = 'font-size:9px;color:#64748b;line-height:1.5;margin:-8px 0 12px;';
+    const hintLine = (into: HTMLElement, text: string) => {
+      const h = document.createElement('div');
+      h.style.cssText = hintStyle;
+      h.textContent = text;
+      into.appendChild(h);
+    };
+    const choice = (
+      into: HTMLElement, label: string, options: ReadonlyArray<readonly [string, string]>,
+      value: string, onChange: (v: string) => void,
+    ) => {
+      const sel = document.createElement('select');
+      sel.style.cssText = inputStyle + SELECT_STYLE;
+      for (const [v, lab] of options) {
+        const o = document.createElement('option');
+        o.value = v; o.textContent = lab;
+        sel.appendChild(styleOption(o));
+      }
+      sel.value = value;
+      sel.addEventListener('change', () => { onChange(sel.value); apply(); });
+      return field(label, sel, into);
+    };
+
+    // ── Déroulant ─────────────────────────────────────────────────────────
+    // Les valeurs par défaut viennent de la géométrie montée : seuls les
+    // écarts de l'utilisateur sont enregistrés.
+    let extInfo: ExtendInfo | null = null;
+    /** Relit la détection. `all` revient entièrement à la géométrie. */
+    const redetect = (all: boolean) => {
+      if (all) {
+        draft.extendAxis = undefined;
+        draft.extendTilt = undefined;
+        draft.extendAnchor = undefined;
+        draft.followers = undefined;
+        apply();
+      }
+      extInfo = this.getExtendInfo?.(draft.id) ?? null;
+      // Les suiveurs suggérés sont figés dans la configuration : la tablette
+      // n'a pas à les rechercher à chaque chargement.
+      if (extInfo && draft.followers === undefined) {
+        draft.followers = extInfo.suggested;
+        apply();
+      }
+      objectSection?.refresh();
+    };
+
+    const buildExtend = () => {
+      if (!extInfo) redetect(false);
+      const info = extInfo;
+      if (!info) {
+        // Ouvrant pas encore monté : son premier enregistrement est en cours.
+        hintLine(specific, t('partExtendPending'));
+        setTimeout(() => {
+          if (closed || draft.motion !== 'extend' || extInfo) return;
+          redetect(false);
+          if (extInfo) rebuildSpecific();
+        }, 700);
+        return;
+      }
+      const detected = info.axis;
+      const axis = draft.extendAxis ?? detected;
+      const mark = (v: ExtendAxis, lab: string) => (v === detected ? `${lab} · ${t('partExtendDetected')}` : lab);
+      choice(specific, t('partExtendAxis'), [
+        ['out', mark('out', t('partExtendOut'))],
+        ['vertical', mark('vertical', t('partExtendVertical'))],
+        ['along', mark('along', t('partExtendAlong'))],
+      ], axis, (v) => {
+        draft.extendAxis = v === detected ? undefined : (v as ExtendAxis);
+        rebuildSpecific();
+      });
+
+      if (axis === 'out') {
+        const tilt = Math.round(info.tilt);
+        slider(specific, t('partExtendTilt'), -90, 90, 1, Math.round(draft.extendTilt ?? info.tilt),
+          (v) => `${v}°`, (v) => { draft.extendTilt = v === tilt ? undefined : v; });
+        hintLine(specific, `${t('partExtendTiltHint')} ${tilt}°`);
+      }
+
+      const anchorLabels = axis === 'out'
+        ? [t('partExtendAnchorWall'), t('partExtendAnchorFar')]
+        : axis === 'vertical'
+          ? [t('partExtendAnchorTop'), t('partExtendAnchorBottom')]
+          : [t('partExtendAnchorStart'), t('partExtendAnchorEnd')];
+      choice(specific, t('partExtendAnchor'), [['start', anchorLabels[0]], ['end', anchorLabels[1]]],
+        draft.extendAnchor ?? 'start', (v) => { draft.extendAnchor = v === 'end' ? 'end' : undefined; });
+
+      slider(specific, t('partExtendOpenScale'), 0, 150, 1, Math.round((draft.extendOpen ?? 1) * 100),
+        (v) => `${v} %`, (v) => { draft.extendOpen = v === 100 ? undefined : v / 100; });
+      slider(specific, t('partExtendClosedScale'), 0, 100, 1, Math.round((draft.extendClosed ?? 0) * 100),
+        (v) => `${v} %`, (v) => { draft.extendClosed = v === 0 ? undefined : v / 100; });
+      hintLine(specific, t('partExtendScaleHint'));
+
+      // Même champ que « Inverser » : un volet qui rapporte 100 % fermé.
+      choice(specific, t('partExtendClosedAt'), [
+        ['0', t('partExtendClosedAt0')], ['100', t('partExtendClosedAt100')],
+      ], draft.invert ? '100' : '0', (v) => {
+        draft.invert = v === '100' || undefined;
+        inv.checked = !!draft.invert;
+      });
+
+      // ── Suiveurs ──
+      const list = draft.followers ?? [];
+      const same = (a: { node: string; nodeIndex?: number }, b: { node: string; nodeIndex?: number }) =>
+        a.node === b.node && a.nodeIndex === b.nodeIndex;
+      const setFollowers = (next: NonNullable<OwlnestPart['followers']>) => {
+        draft.followers = next;
+        rebuildSpecific();
+        apply();
+        objectSection?.refresh();
+      };
+      const box = document.createElement('div');
+      const chips = document.createElement('div');
+      chips.style.cssText = 'display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px;';
+      if (!list.length) {
+        const none = document.createElement('span');
+        none.style.cssText = 'font-size:10px;color:#64748b;';
+        none.textContent = t('partFollowersNone');
+        chips.appendChild(none);
+      }
+      for (const f of list) {
+        const chip = document.createElement('button');
+        chip.style.cssText = 'padding:3px 8px;border-radius:99px;font-size:10px;cursor:pointer;font-family:inherit;background:rgba(56,189,248,0.15);color:#7dd3fc;border:1px solid rgba(56,189,248,0.45);';
+        chip.textContent = `${f.node} ✕`;
+        chip.addEventListener('click', (e) => {
+          e.preventDefault();
+          setFollowers(list.filter((x) => x !== f));
+        });
+        chips.appendChild(chip);
+      }
+      const add = document.createElement('select');
+      add.style.cssText = inputStyle + SELECT_STYLE;
+      const first = document.createElement('option');
+      first.value = ''; first.textContent = t('partFollowersAdd');
+      add.appendChild(styleOption(first));
+      const offered = info.candidates.filter((c) => !list.some((f) => same(f, c)));
+      offered.forEach((c, i) => {
+        const o = document.createElement('option');
+        o.value = String(i);
+        o.textContent = `${c.touching ? '★ ' : ''}${c.node}`;
+        add.appendChild(styleOption(o));
+      });
+      add.addEventListener('change', () => {
+        const c = offered[Number(add.value)];
+        if (add.value === '' || !c) return;
+        setFollowers([...list, { node: c.node, nodeIndex: c.nodeIndex }]);
+      });
+      const again = document.createElement('button');
+      again.textContent = t('partExtendRedetect');
+      again.style.cssText = 'margin-top:6px;width:100%;padding:5px;border-radius:6px;font-size:10px;cursor:pointer;font-family:inherit;background:rgba(255,255,255,0.06);color:#cbd5e1;border:1px solid rgba(255,255,255,0.12);';
+      again.addEventListener('click', (e) => {
+        e.preventDefault();
+        redetect(true);
+        rebuildSpecific();
+      });
+      const note = document.createElement('div');
+      note.style.cssText = 'font-size:9px;color:#64748b;line-height:1.5;margin-top:4px;';
+      note.textContent = t('partFollowersHint');
+      box.append(chips, add, note, again);
+      field(t('partFollowers'), box, specific);
+    };
+
     const rebuildSpecific = () => {
       specific.innerHTML = '';
-      if (draft.motion === 'swing') {
+      // Pour un déroulant, l'inversion se règle par « Fermé à ».
+      invWrap.style.display = draft.motion === 'extend' ? 'none' : '';
+      if (draft.motion === 'extend') {
+        buildExtend();
+      } else if (draft.motion === 'swing') {
         const horizontal = draft.swingAxis === 'horizontal';
         const axis = document.createElement('select');
         axis.style.cssText = inputStyle + SELECT_STYLE;
@@ -3860,8 +4035,11 @@ export class EditPanel {
 
     motionSel.addEventListener('change', () => {
       draft.motion = motionSel.value as OwlnestPart['motion'];
+      // Monté d'abord en déroulant : la détection lit l'ouvrant tel qu'il est.
+      if (draft.motion === 'extend') { apply(); redetect(false); }
       rebuildSpecific();
       apply();
+      objectSection?.refresh();
     });
 
     // ── Aperçu ────────────────────────────────────────────────────────────
@@ -4047,7 +4225,9 @@ export class EditPanel {
     draft: OwlnestPart,
     inputStyle: string,
     onChange: () => void,
-  ): { el: HTMLElement; dispose: () => void; reveal: () => void; mute: (on: boolean) => void } | null {
+  ): {
+    el: HTMLElement; dispose: () => void; reveal: () => void; mute: (on: boolean) => void; refresh: () => void;
+  } | null {
     const outline = this.getModelOutline?.();
     if (!outline || outline.byRank.length === 0) return null;
     const PIECE = PIECE_ROW;
@@ -4071,7 +4251,10 @@ export class EditPanel {
     });
     const selectedTarget = (): PartHighlightTarget => {
       const r = selectedRank();
-      return { part: draft.id, node: r ?? undefined, mesh: seed?.meshRank, triangle: draft.triangle };
+      const followers = draft.motion === 'extend'
+        ? (draft.followers ?? []).map((f) => f.nodeIndex).filter((n): n is number => n !== undefined)
+        : undefined;
+      return { part: draft.id, node: r ?? undefined, mesh: seed?.meshRank, triangle: draft.triangle, followers };
     };
     let hover: PartHighlightTarget | null = null;
     let muted = false;
@@ -4329,6 +4512,7 @@ export class EditPanel {
         muted = on;
         highlight();
       },
+      refresh: () => highlight(),
     };
   }
 
