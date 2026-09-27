@@ -11,7 +11,8 @@
  */
 import * as THREE from 'three';
 
-export type HighlightSlot = 'hover' | 'selected';
+/** `follower` : objets entraînés par l'arête mobile d'un déroulant. */
+export type HighlightSlot = 'hover' | 'selected' | 'follower';
 
 /** Ce qu'il faut surligner : un sous-arbre entier, ou quelques triangles d'une maille. */
 export type HighlightSource =
@@ -22,12 +23,14 @@ const STYLE: Record<HighlightSlot, { color: number; opacity: number; order: numb
   // Orange de sélection de Blender ; le survol, plus pâle, reste en dessous.
   selected: { color: 0xff8c1a, opacity: 0.45, order: 1001 },
   hover: { color: 0xffe0a0, opacity: 0.3, order: 1000 },
+  // Dessiné par-dessus la sélection : un suiveur est souvent l'enfant de l'objet choisi.
+  follower: { color: 0x38bdf8, opacity: 0.55, order: 1002 },
 };
 
 const noRaycast = () => {};
 
 export class PartHighlight {
-  private overlays: Record<HighlightSlot, THREE.Mesh[]> = { hover: [], selected: [] };
+  private overlays: Record<HighlightSlot, THREE.Mesh[]> = { hover: [], selected: [], follower: [] };
   private materials: Partial<Record<HighlightSlot, THREE.MeshBasicMaterial>> = {};
 
   private _material(slot: HighlightSlot): THREE.MeshBasicMaterial {
@@ -77,7 +80,7 @@ export class PartHighlight {
   }
 
   clear(slot?: HighlightSlot) {
-    for (const s of slot ? [slot] : (['hover', 'selected'] as const)) {
+    for (const s of slot ? [slot] : (['hover', 'selected', 'follower'] as const)) {
       for (const o of this.overlays[s]) {
         o.parent?.remove(o);
         if (o.userData.ownedGeometry) o.geometry.dispose();

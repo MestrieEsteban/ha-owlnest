@@ -59,6 +59,19 @@ test('un nouvel affichage remplace le précédent du même emplacement', () => {
   assert.equal(door.children[0].children.length, 0);
 });
 
+test('les suiveurs ont leur propre teinte, dessinée par-dessus la sélection', () => {
+  const { door, b } = scene();
+  const h = new PartHighlight();
+  h.show('selected', [{ object: door }]);
+  h.show('follower', [{ object: b }]);
+  const [sel, fol] = b.children;
+  assert.notEqual(fol.material.color.getHex(), sel.material.color.getHex());
+  assert.ok(fol.renderOrder > sel.renderOrder);
+  h.clear();
+  assert.equal(h.count('follower'), 0);
+  assert.equal(b.children.length, 0);
+});
+
 test('une pièce se surligne par ses seuls triangles', () => {
   const { a } = scene();
   const h = new PartHighlight();

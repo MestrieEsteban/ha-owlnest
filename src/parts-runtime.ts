@@ -9,12 +9,13 @@
  * rapporte — ouvrir une porte à l'écran n'ouvre pas la vraie.
  */
 import * as THREE from 'three';
-import type { OwlnestPart } from './types';
+import type { OwlnestPart, ExtendAxis, PartNodeRef } from './types';
 import {
   partIndexOf, extractPart, restoreTriangles, partFrame, hingePivot, axisName,
-  type PartFrame, type HingeEdge, type MeshPart,
+  detectExtend, extendDirection, extendSpan, edgeContact,
+  type PartFrame, type HingeEdge, type MeshPart, type ExtendFrame, type ExtendSpan,
 } from './parts';
-import { stampOrder, nodeOrder, resolveNode, meshRankOf } from './model-outline';
+import { stampOrder, nodeOrder, resolveNode, meshRankOf, rankOf } from './model-outline';
 import { describeEntity } from './entities/descriptors';
 import { PartTint, untinted } from './part-tint';
 
@@ -121,6 +122,78 @@ interface LiveMesh {
   rest: number;
   current: number;
   goal: number;
+  /** Déroulant : repère de la toile, mesuré au repos. */
+  ext: ExtendState | null;
+  /** Déroulant : axe d'écrasement et arêtes, d'après les réglages. */
+  extSpan: ExtendSpan | null;
+  followers: Follower[];
+  /** Suiveurs refusés déjà signalés, pour ne pas inonder la console à chaque réglage. */
+  warned: Set<string>;
+}
+
+/**
+ * Plus petite échelle appliquée à un déroulant.
+ *
+ * Une échelle nulle rend la matrice non inversible : ni le lancer de rayons ni
+ * la compensation des suiveurs n'y survivraient. Un millième d'une toile de
+ * deux mètres fait deux millimètres, invisibles sous le coffre.
+ */
+const MIN_SCALE = 1e-3;
+
+/** Au-delà, les sommets d'une toile sont sous-échantillonnés : le plan n'en demande pas tant. */
+const MAX_EXTEND_POINTS = 20000;
+
+interface ExtendState {
+  /** Suiveurs exclus de la mesure, pour savoir quand la refaire. */
+  key: string;
+  /** Espace de l'hôte du pivot → espace du modèle, et l'inverse. */
+  toModel: THREE.Matrix4;
+  fromModel: THREE.Matrix4;
+  frame: ExtendFrame;
+  points: Float32Array;
+}
+
+/** Objet qui suit l'arête mobile d'un déroulant, sans se déformer. */
+interface Follower {
+  obj: THREE.Object3D;
+  claim: string;
+  /** Matrice propre d'origine, rendue au démontage. */
+  local: THREE.Matrix4;
+  autoUpdate: boolean;
+  /** Parent → modèle, au repos. */
+  parentRest: THREE.Matrix4;
+  /** Sous le pivot : son parent subit l'écrasement, qu'il faut défaire. */
+  inside: boolean;
+  /** Teinte propre, pour un suiveur hors de l'objet (sinon celle de l'objet le couvre). */
+  tint: PartTint | null;
+}
+
+/** Ce que l'éditeur montre d'un déroulant : valeurs détectées et suiveurs possibles. */
+export interface ExtendInfo {
+  axis: ExtendAxis;
+  /** Pente détectée de la toile, en degrés sous l'horizontale. */
+  tilt: number;
+  /** Longueur de la toile le long de l'axe réglé, en unités du modèle. */
+  length: number;
+  /** Objets qui touchent l'arête mobile, du plus proche au plus lointain. */
+  suggested: PartNodeRef[];
+  /** Enfants et voisins de l'objet, les suggestions d'abord. */
+  candidates: (PartNodeRef & { touching: boolean })[];
+}
+
+const refOf = (o: THREE.Object3D): PartNodeRef => ({ node: o.name, nodeIndex: rankOf(o) });
+
+const isRuntimeObject = (o: THREE.Object3D) => !!(o.userData.owlnestPartId || o.userData.owlnestHelper);
+
+/** Écrasement d'un facteur `s` le long de `u`, le plan `x·u = a` restant fixe. */
+function directionalScale(u: THREE.Vector3, a: number, s: number): THREE.Matrix4 {
+  const k = s - 1;
+  return new THREE.Matrix4().set(
+    1 + k * u.x * u.x, k * u.x * u.y, k * u.x * u.z, -k * a * u.x,
+    k * u.y * u.x, 1 + k * u.y * u.y, k * u.y * u.z, -k * a * u.y,
+    k * u.z * u.x, k * u.z * u.y, 1 + k * u.z * u.z, -k * a * u.z,
+    0, 0, 0, 1,
+  );
 }
 
 /**
@@ -228,6 +301,7 @@ export class PartController {
   build(root: THREE.Object3D, configs: OwlnestPart[]): { ok: number; missing: OwlnestPart[] } {
     this.dispose(root);
     this._root = root;
+    this._center = null;
     const missing: OwlnestPart[] = [];
 
     // Tout se résout avant le premier montage : les rangs sont ceux du modèle
@@ -251,10 +325,15 @@ export class PartController {
     }
 
     this._built = true;
+    // Les suiveurs se lient une fois toutes les cibles montées : une cible
+    // l'emporte sur un suiveur, quel que soit l'ordre des ouvrants.
+    for (const item of this.items) if (item.cfg.motion === 'extend') this._configure(item, item.cfg);
     return { ok: this.items.length, missing };
   }
 
   private _root: THREE.Object3D | null = null;
+  /** Centre du modèle, dans son propre espace : où se trouve l'intérieur. */
+  private _center: THREE.Vector3 | null = null;
 
   /**
    * Trouve la cible d'une configuration et prépare son montage.
@@ -316,6 +395,7 @@ export class PartController {
       },
       key: partTargetKey(cfg), claim: '',
       span: 0, axis: 'x', sign: 1, rest: 0, current: 0, goal: 0,
+      ext: null, extSpan: null, followers: [], warned: new Set(),
     };
     this._configure(item, cfg);
     return item;
@@ -360,6 +440,7 @@ export class PartController {
       },
       key: partTargetKey(cfg), claim: '',
       span: 0, axis: 'x', sign: 1, rest: 0, current: 0, goal: 0,
+      ext: null, extSpan: null, followers: [], warned: new Set(),
     };
     this._configure(item, cfg);
     return item;
@@ -367,6 +448,7 @@ export class PartController {
 
   /** Défait le montage d'un ouvrant. */
   private _unmount(item: LiveMesh) {
+    this._releaseFollowers(item);
     item.tint.restore();
     item.pivotNode.parent?.remove(item.pivotNode);
     item.restore();
@@ -383,8 +465,10 @@ export class PartController {
     if (!root) return false;
     const at = this.items.indexOf(item);
     this._unmount(item);
+    item.claim = '';
 
-    const claimed = new Set(this.items.filter((o) => o !== item).map((o) => o.claim));
+    const claimed = new Set(this.items.filter((o) => o !== item)
+      .flatMap((o) => [o.claim, ...o.followers.map((f) => f.claim)]));
     const tryMount = (c: OwlnestPart) => {
       const mount = this._resolve(c, meshOrder(root), nodeOrder(root), claimed);
       return mount ? mount() : null;
@@ -419,6 +503,14 @@ export class PartController {
    */
   private _configure(item: LiveMesh, cfg: OwlnestPart) {
     item.cfg = cfg;
+    if (cfg.motion === 'extend') {
+      this._configureExtend(item, cfg);
+      this._place(item);
+      return;
+    }
+    this._releaseFollowers(item);
+    item.pivotNode.matrixAutoUpdate = true;
+    item.pivotNode.scale.set(1, 1, 1);
     const frame = item.frame;
     const up = this._localVertical(item);
     const edge = cfg.motion === 'swing' && cfg.swingAxis === 'horizontal'
@@ -546,11 +638,322 @@ export class PartController {
   }
 
   private _place(item: LiveMesh) {
-    const value = item.current * item.span * item.sign;
-    if (item.cfg.motion === 'slide') item.pivotNode.position[item.axis] = item.rest + value;
-    else item.pivotNode.rotation[item.axis] = value;
+    if (item.cfg.motion === 'extend') this._placeExtend(item);
+    else {
+      const value = item.current * item.span * item.sign;
+      if (item.cfg.motion === 'slide') item.pivotNode.position[item.axis] = item.rest + value;
+      else item.pivotNode.rotation[item.axis] = value;
+    }
     // La position animée, pas la cible : la teinte fond avec le mouvement.
     item.tint.apply(item.cfg.closedColor, item.cfg.openColor, item.current);
+    for (const f of item.followers) f.tint?.apply(item.cfg.closedColor, item.cfg.openColor, item.current);
+  }
+
+  // ── Déroulant ─────────────────────────────────────────────────────────────
+
+  /**
+   * Échelle d'un déroulant pour une fraction d'ouverture.
+   *
+   * La pose du modèle est la pose ouverte : `extendOpen` vaut 1 par défaut.
+   */
+  private _extendScale(item: LiveMesh): number {
+    const open = item.cfg.extendOpen ?? 1;
+    const closed = item.cfg.extendClosed ?? 0;
+    return Math.max(MIN_SCALE, closed + (open - closed) * item.current);
+  }
+
+  /**
+   * Écrase la toile vers son arête fixe et entraîne les suiveurs.
+   *
+   * Le pivot reçoit `C⁻¹·W·C` : l'écrasement `W` est défini dans l'espace du
+   * modèle, métrique, puis ramené dans celui de l'hôte, qui peut être tourné et
+   * étiré (échelle non uniforme d'un nœud Blender, redressement d'un Z-up).
+   * Une matrice composée, donc, et non position/rotation/échelle : un
+   * écrasement oblique n'est pas décomposable.
+   */
+  private _placeExtend(item: LiveMesh) {
+    const ext = item.ext;
+    const sp = item.extSpan;
+    if (!ext || !sp) return;
+    const s = this._extendScale(item);
+    const W = directionalScale(sp.u, sp.anchor, s);
+    item.pivotNode.matrix.multiplyMatrices(ext.fromModel, W).multiply(ext.toModel);
+    item.pivotNode.matrixWorldNeedsUpdate = true;
+
+    // Les suiveurs se translatent avec l'arête mobile, sans subir l'écrasement.
+    const d = sp.u.clone().multiplyScalar((s - 1) * (sp.far - sp.anchor));
+    const move = new THREE.Matrix4().makeTranslation(d.x, d.y, d.z);
+    const parentNow = new THREE.Matrix4();
+    for (const f of item.followers) {
+      parentNow.copy(f.parentRest);
+      if (f.inside) parentNow.premultiply(W);
+      f.obj.matrix.copy(parentNow.invert()).multiply(move).multiply(f.parentRest).multiply(f.local);
+      f.obj.matrixWorldNeedsUpdate = true;
+    }
+  }
+
+  /** Espace du modèle ← espace d'un objet, tel qu'il est posé en ce moment. */
+  private _toModel(o: THREE.Object3D): THREE.Matrix4 {
+    const root = this._root;
+    o.updateWorldMatrix(true, false);
+    if (!root) return o.matrixWorld.clone();
+    root.updateWorldMatrix(true, false);
+    return new THREE.Matrix4().copy(root.matrixWorld).invert().multiply(o.matrixWorld);
+  }
+
+  /** Verticale du monde, exprimée dans l'espace du modèle. */
+  private _modelUp(): THREE.Vector3 {
+    const up = new THREE.Vector3().setComponent(this._vertical ?? 1, 1);
+    const root = this._root;
+    if (!root) return up;
+    root.updateWorldMatrix(true, false);
+    return up.transformDirection(new THREE.Matrix4().copy(root.matrixWorld).invert());
+  }
+
+  private _modelCenter(): THREE.Vector3 {
+    if (this._center) return this._center;
+    const root = this._root;
+    if (!root) return new THREE.Vector3();
+    root.updateWorldMatrix(true, true);
+    const c = new THREE.Box3().setFromObject(root).getCenter(new THREE.Vector3());
+    this._center = c.applyMatrix4(new THREE.Matrix4().copy(root.matrixWorld).invert());
+    return this._center;
+  }
+
+  /**
+   * Ramène un ouvrant à sa pose de repos, suiveurs libérés.
+   *
+   * Toute mesure se fait là : une toile écrasée, ou un suiveur déjà déplacé,
+   * fausseraient le repère.
+   */
+  private _toRest(item: LiveMesh) {
+    this._releaseFollowers(item);
+    const p = item.pivotNode;
+    p.matrixAutoUpdate = true;
+    p.position.set(0, 0, 0);
+    p.rotation.set(0, 0, 0);
+    p.scale.set(1, 1, 1);
+    p.updateMatrix();
+    item.object.position.copy(item.origin);
+  }
+
+  /**
+   * Sommets de la toile, dans l'espace du modèle.
+   *
+   * Un nœud qui porte sa propre maille est mesuré seul : ses enfants (la barre
+   * d'un store) ne sont pas la toile. Un groupe est mesuré en entier, suiveurs
+   * exclus.
+   */
+  private _extendPoints(item: LiveMesh, skip: Set<THREE.Object3D>): Float32Array {
+    const meshes: THREE.Mesh[] = [];
+    const own = item.target as THREE.Mesh;
+    if (own.isMesh) meshes.push(own);
+    else {
+      const walk = (o: THREE.Object3D) => {
+        if (skip.has(o) || o.userData.owlnestHelper) return;
+        const owner = o.userData.owlnestPartId;
+        if (o !== item.target && owner !== undefined && owner !== item.cfg.id) return;
+        if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh);
+        for (const c of o.children) walk(c);
+      };
+      walk(item.target);
+    }
+    const total = meshes.reduce((n, m) => n + (m.geometry.getAttribute('position')?.count ?? 0), 0);
+    const stride = Math.max(1, Math.ceil(total / MAX_EXTEND_POINTS));
+    const out: number[] = [];
+    const v = new THREE.Vector3();
+    for (const m of meshes) {
+      const pos = m.geometry.getAttribute('position');
+      if (!pos) continue;
+      const M = this._toModel(m);
+      for (let i = 0; i < pos.count; i += stride) {
+        v.fromBufferAttribute(pos, i).applyMatrix4(M);
+        out.push(v.x, v.y, v.z);
+      }
+    }
+    return new Float32Array(out);
+  }
+
+  private _extendState(item: LiveMesh, skip: Set<THREE.Object3D>, key: string): ExtendState {
+    const host = item.pivotNode.parent ?? item.pivotNode;
+    const toModel = this._toModel(host);
+    const points = this._extendPoints(item, skip);
+    return {
+      key, toModel, fromModel: toModel.clone().invert(),
+      frame: detectExtend(points, this._modelUp(), this._modelCenter()),
+      points,
+    };
+  }
+
+  private _spanOf(ext: ExtendState, cfg: OwlnestPart): ExtendSpan {
+    const axis = cfg.extendAxis ?? ext.frame.axis;
+    const u = extendDirection(ext.frame, axis, cfg.extendTilt ?? ext.frame.tilt);
+    return extendSpan(ext.points, ext.frame, u, cfg.extendAnchor ?? 'start');
+  }
+
+  /**
+   * Suiveurs possibles : enfants de l'objet, puis ses voisins.
+   *
+   * Pour une pièce détachée, les voisins sont ceux de sa maille ; la maille
+   * elle-même, qui porte tout le reste du modèle, n'en est pas un.
+   */
+  private _candidates(item: LiveMesh): THREE.Object3D[] {
+    const host = item.pivotNode.parent;
+    const pool: THREE.Object3D[] = [...item.target.children];
+    if (host) {
+      pool.push(...host.children);
+      if (!item.cfg.node && host.parent) pool.push(...host.parent.children);
+    }
+    const seen = new Set<THREE.Object3D>();
+    return pool.filter((o) => {
+      if (seen.has(o) || o === host || o === item.target || isRuntimeObject(o) || rankOf(o) === undefined) return false;
+      seen.add(o);
+      return true;
+    });
+  }
+
+  /** Coins des boîtes des mailles d'un objet, dans l'espace du modèle. */
+  private _corners(o: THREE.Object3D): Float32Array {
+    const out: number[] = [];
+    const v = new THREE.Vector3();
+    o.traverse((m) => {
+      const mesh = m as THREE.Mesh;
+      if (!mesh.isMesh || mesh.userData.owlnestHelper) return;
+      if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+      const b = mesh.geometry.boundingBox;
+      if (!b || b.isEmpty()) return;
+      const M = this._toModel(mesh);
+      for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) for (const z of [b.min.z, b.max.z]) {
+        v.set(x, y, z).applyMatrix4(M);
+        out.push(v.x, v.y, v.z);
+      }
+    });
+    return new Float32Array(out);
+  }
+
+  /** Candidats qui touchent l'arête mobile, du plus proche au plus lointain. */
+  private _touching(item: LiveMesh, span: ExtendSpan): { obj: THREE.Object3D; score: number | null }[] {
+    return this._candidates(item)
+      .map((obj) => ({ obj, score: edgeContact(this._corners(obj), span) }))
+      .sort((a, b) => (a.score ?? Infinity) - (b.score ?? Infinity));
+  }
+
+  /** Qui d'autre tient cet objet : cible ou suiveur d'un autre ouvrant. */
+  private _heldBy(item: LiveMesh, obj: THREE.Object3D): LiveMesh | undefined {
+    const claim = `n:${obj.uuid}`;
+    return this.items.find((o) => o !== item && (o.claim === claim || o.followers.some((f) => f.obj === obj)));
+  }
+
+  /**
+   * Suiveurs à lier : ceux de la configuration, ou à défaut ceux qui touchent
+   * l'arête mobile.
+   *
+   * Un objet déjà tenu par un autre ouvrant est écarté — le déplacer des deux
+   * côtés le ferait sauter d'une pose à l'autre. Choisi explicitement, il est
+   * signalé ; suggéré, il est ignoré sans bruit. L'objet lui-même et ses
+   * ancêtres sont exclus : ils portent le pivot.
+   */
+  private _followerObjects(item: LiveMesh, cfg: OwlnestPart, span: ExtendSpan): THREE.Object3D[] {
+    const root = this._root;
+    if (!root) return [];
+    const ancestors = new Set<THREE.Object3D>();
+    for (let a: THREE.Object3D | null = item.pivotNode; a; a = a.parent) ancestors.add(a);
+    const ok = (o: THREE.Object3D) => o !== item.target && !ancestors.has(o) && !isRuntimeObject(o);
+
+    if (!cfg.followers) {
+      return this._touching(item, span)
+        .filter((c) => c.score !== null && ok(c.obj) && !this._heldBy(item, c.obj))
+        .map((c) => c.obj);
+    }
+    const order = nodeOrder(root);
+    const out: THREE.Object3D[] = [];
+    for (const ref of cfg.followers) {
+      const obj = resolveNode(order, ref);
+      if (!obj || !ok(obj) || out.includes(obj)) continue;
+      const other = this._heldBy(item, obj);
+      if (other) {
+        const key = `${ref.node}#${ref.nodeIndex ?? ''}`;
+        if (!item.warned.has(key)) {
+          item.warned.add(key);
+          console.warn(
+            `[Owlnest] « ${ref.node} » est déjà animé par « ${other.cfg.label || other.cfg.entity || other.cfg.id} » : `
+            + `ignoré comme suiveur de « ${cfg.label || cfg.entity || cfg.id} ».`,
+          );
+        }
+        continue;
+      }
+      out.push(obj);
+    }
+    return out;
+  }
+
+  private _configureExtend(item: LiveMesh, cfg: OwlnestPart) {
+    this._toRest(item);
+    let ext = item.ext && item.ext.key === '' ? item.ext : this._extendState(item, new Set(), '');
+    let span = this._spanOf(ext, cfg);
+    // Pendant la construction, les cibles des autres ouvrants ne sont pas
+    // encore toutes connues : les suiveurs attendent la fin (voir `build`).
+    const objs = this._built ? this._followerObjects(item, cfg, span) : [];
+    // Un groupe se mesure sans ses suiveurs ; une maille, elle, ne les compte jamais.
+    const key = (item.target as THREE.Mesh).isMesh ? '' : objs.map((o) => o.uuid).join(',');
+    if (key !== ext.key) {
+      ext = this._extendState(item, new Set(objs), key);
+      span = this._spanOf(ext, cfg);
+    }
+    item.ext = ext;
+    item.extSpan = span;
+
+    for (const obj of objs) {
+      obj.updateMatrix();
+      const inside = (() => {
+        for (let a = obj.parent; a; a = a.parent) if (a === item.pivotNode) return true;
+        return false;
+      })();
+      item.followers.push({
+        obj, claim: `n:${obj.uuid}`,
+        local: obj.matrix.clone(), autoUpdate: obj.matrixAutoUpdate,
+        parentRest: obj.parent ? this._toModel(obj.parent) : new THREE.Matrix4(),
+        inside,
+        tint: inside ? null : new PartTint(obj, cfg.id),
+      });
+      obj.matrixAutoUpdate = false;
+    }
+    item.pivotNode.matrixAutoUpdate = false;
+  }
+
+  /** Rend aux suiveurs leur pose et leurs matériaux. */
+  private _releaseFollowers(item: LiveMesh) {
+    for (const f of item.followers) {
+      f.tint?.restore();
+      f.obj.matrixAutoUpdate = f.autoUpdate;
+      f.obj.matrix.copy(f.local);
+      f.obj.matrixWorldNeedsUpdate = true;
+    }
+    item.followers = [];
+  }
+
+  /**
+   * Valeurs détectées d'un déroulant et suiveurs possibles, pour l'éditeur.
+   *
+   * La mesure se fait au repos, sur l'ouvrant monté quel que soit son
+   * mouvement actuel ; il est ensuite remis dans sa pose.
+   */
+  extendInfo(id: string): ExtendInfo | null {
+    const item = this.items.find((i) => i.cfg.id === id);
+    if (!item || !this._root) return null;
+    this._toRest(item);
+    const ext = this._extendState(item, new Set(), '');
+    const span = this._spanOf(ext, item.cfg);
+    const ranked = this._touching(item, span);
+    this._configure(item, item.cfg);
+    const free = (o: THREE.Object3D) => !this._heldBy(item, o);
+    return {
+      axis: ext.frame.axis,
+      tilt: ext.frame.tilt,
+      length: Math.abs(span.far - span.anchor),
+      suggested: ranked.filter((c) => c.score !== null && free(c.obj)).map((c) => refOf(c.obj)),
+      candidates: ranked.slice(0, 60).map((c) => ({ ...refOf(c.obj), touching: c.score !== null })),
+    };
   }
 
   /** Position d'un ouvrant, pour l'aperçu de l'éditeur. */
