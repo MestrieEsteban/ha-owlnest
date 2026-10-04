@@ -245,6 +245,15 @@ export type SlideDirection = 'down' | 'up' | 'start' | 'end';
  * la maille et un triangle lui appartenant. L'analyse en composantes connexes
  * a lieu dans l'éditeur, jamais sur la tablette.
  */
+/** Une piece secondaire d'un ouvrant, designee par un clic. */
+export interface PartPiece {
+  mesh: string;
+  meshIndex?: number;
+  triangle: number;
+  /** Ce que montrait le clic, pour nommer la ligne dans la liste. */
+  label?: string;
+}
+
 export interface OwlnestPart {
   id: string;
   entity: string;
@@ -269,6 +278,17 @@ export interface OwlnestPart {
   node?: string;
   /** Rang du nœud dans le graphe tel que chargé : départage les homonymes. */
   nodeIndex?: number;
+  /**
+   * Pieces choisies a la main qui bougent avec l'ouvrant.
+   *
+   * Un modeleur ne soude pas la poignee au vantail et ne les groupe pas : sur
+   * un export plat, rien ne les relie. La geometrie seule ne tranche pas de
+   * facon fiable — un clic, si.
+   *
+   * Chaque piece se designe comme l'ouvrant lui-meme : la maille, son rang, et
+   * un triangle d'amorce qui suffit a retrouver la composante entiere.
+   */
+  extra?: PartPiece[];
   /**
    * Emmener les pieces contenues dans le volume de l'ouvrant.
    *

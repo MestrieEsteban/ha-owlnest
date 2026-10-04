@@ -753,3 +753,95 @@ test('un nœud introuvable est signalé comme manquant', () => {
   assert.equal(res.ok, 0);
   assert.equal(res.missing.length, 1);
 });
+
+// ── Pièces choisies à la main ───────────────────────────────────────────────
+
+/**
+ * Modèle plat, comme un export réel : la porte dans une maille, la poignée
+ * dans une autre qui en contient aussi une deuxième, loin de là.
+ *
+ * C'est la structure qui met en échec toute détection par parenté : rien, dans
+ * le graphe, ne relie la poignée à sa porte.
+ */
+function modelAvecPoignees() {
+  const root = model();
+  const a = boxGeom([35, 0, 0], [10, 10, 4]);        // poignée de la porte
+  const b = boxGeom([500, 0, 0], [10, 10, 4]);       // poignée d'ailleurs
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([...a.p, ...b.p]), 3));
+  g.setIndex([...a.idx, ...b.idx.map((i) => i + 8)]);
+  const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial());
+  mesh.name = 'Poignees';
+  root.add(mesh);
+  return root;
+}
+
+const POIGNEE = { mesh: 'Poignees', meshIndex: 1, triangle: 0 };
+
+function positionPoignee(root) {
+  root.updateMatrixWorld(true);
+  let found = null;
+  root.traverse((o) => { if (!found && o.name.startsWith('Poignees#')) found = o; });
+  return found ? found.getWorldPosition(new THREE.Vector3()) : null;
+}
+
+test('une pièce choisie à la main suit l’ouvrant', () => {
+  const root = modelAvecPoignees();
+  const c = new PartController();
+  c.build(root, [{ ...DOOR, extra: [POIGNEE] }]);
+
+  const ferme = positionPoignee(root);
+  assert.ok(ferme, 'la poignée est détachée et montée sous le pivot');
+  openFully(c, root);
+  const ouvert = positionPoignee(root);
+  assert.ok(ferme.distanceTo(ouvert) > 1, 'elle se déplace avec la porte');
+});
+
+test('sans pièce choisie, rien ne suit', () => {
+  const root = modelAvecPoignees();
+  const c = new PartController();
+  c.build(root, [DOOR]);
+  assert.equal(positionPoignee(root), null);
+});
+
+test('la pièce voisine de la même maille reste en place', () => {
+  // Les deux poignées partagent une maille : seule celle qui est désignée
+  // doit bouger, sinon l'autre traverserait le logement.
+  const root = modelAvecPoignees();
+  const c = new PartController();
+  c.build(root, [{ ...DOOR, extra: [POIGNEE] }]);
+  const autre = new THREE.Box3().setFromObject(root.children[1]);
+  openFully(c, root);
+  root.updateMatrixWorld(true);
+  const apres = new THREE.Box3().setFromObject(root.children[1]);
+  assert.ok(autre.min.distanceTo(apres.min) < 1e-6, 'la maille source ne bouge pas');
+});
+
+test('démonter rend la pièce à sa maille d’origine', () => {
+  const root = modelAvecPoignees();
+  const avant = root.children[1].geometry.getIndex().array.slice();
+  const c = new PartController();
+  c.build(root, [{ ...DOOR, extra: [POIGNEE] }]);
+  c.dispose(root);
+  assert.deepEqual(Array.from(root.children[1].geometry.getIndex().array), Array.from(avant));
+  assert.equal(positionPoignee(root), null);
+});
+
+test('une pièce introuvable est ignorée sans casser le montage', () => {
+  // Le modèle a pu changer depuis l'enregistrement de la scène.
+  const root = modelAvecPoignees();
+  const c = new PartController();
+  const res = c.build(root, [{ ...DOOR, extra: [{ mesh: 'Disparue', triangle: 0 }] }]);
+  assert.equal(res.ok, 1);
+  assert.equal(res.missing.length, 0);
+});
+
+test('la pièce de l’ouvrant lui-même n’est pas reprise deux fois', () => {
+  // L'extraire une seconde fois casserait la géométrie du vantail.
+  const root = modelAvecPoignees();
+  const c = new PartController();
+  const res = c.build(root, [{ ...DOOR, extra: [{ mesh: 'MaisonHA', meshIndex: 0, triangle: 0 }] }]);
+  assert.equal(res.ok, 1);
+  const leaf = animated(root);
+  assert.ok(leaf, 'le vantail est monté normalement');
+});

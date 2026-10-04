@@ -3903,20 +3903,84 @@ export class EditPanel {
     // Sur un export plat, une poignee n'est ni soudee au vantail ni groupee
     // avec lui : seule sa place dans le volume de l'ouvrant dit qu'elle doit
     // suivre. L'option existe parce que le critere peut se tromper.
+    // Les pieces qui suivent l'ouvrant, choisies au clic.
+    const extraTitle = document.createElement('div');
+    extraTitle.textContent = t('partExtra');
+    extraTitle.title = t('partExtraHint');
+    extraTitle.style.cssText = 'font-size:11px;color:#cbd5e1;margin:14px 0 5px;';
+
+    const extraList = document.createElement('div');
+    extraList.style.cssText = 'display:flex;flex-direction:column;gap:3px;margin-bottom:5px;';
+
+    const fillExtra = () => {
+      extraList.textContent = '';
+      const pieces = draft.extra ?? [];
+      if (!pieces.length) {
+        const vide = document.createElement('div');
+        vide.textContent = t('partExtraEmpty');
+        vide.style.cssText = 'font-size:10px;color:#64748b;';
+        extraList.appendChild(vide);
+        return;
+      }
+      pieces.forEach((piece, i) => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:10px;color:#94a3b8;background:rgba(255,255,255,0.04);border-radius:4px;padding:3px 6px;';
+        const name = document.createElement('span');
+        name.textContent = piece.label || `${piece.mesh} · ${piece.triangle}`;
+        name.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        const drop = document.createElement('button');
+        drop.textContent = '\u2715';
+        drop.title = t('partExtraDrop');
+        drop.style.cssText = 'background:none;border:none;color:#94a3b8;cursor:pointer;font-size:11px;padding:0 2px;';
+        drop.addEventListener('click', () => {
+          draft.extra = (draft.extra ?? []).filter((_, j) => j !== i);
+          if (!draft.extra.length) draft.extra = undefined;
+          fillExtra();
+          apply();
+        });
+        row.append(name, drop);
+        extraList.appendChild(row);
+      });
+    };
+
+    const extraAdd = document.createElement('button');
+    extraAdd.textContent = t('partExtraAdd');
+    extraAdd.style.cssText = 'width:100%;background:rgba(125,209,252,0.12);border:1px solid rgba(125,209,252,0.3);color:#7dd3fc;border-radius:5px;padding:5px;font-size:10px;cursor:pointer;margin-bottom:10px;';
+    extraAdd.addEventListener('click', () => {
+      if (!this.onStartPartPicking) return;
+      this.showStatusBar?.(t('partExtraPick'));
+      this.onStartPartPicking((hit) => {
+        this.hideStatusBar?.();
+        // La piece de l'ouvrant lui-meme n'a rien a faire dans la liste : elle
+        // bouge deja, et l'extraire deux fois casserait la geometrie.
+        if (hit.mesh === draft.mesh && hit.triangle === draft.triangle) return;
+        const pieces = draft.extra ?? [];
+        if (pieces.some((p) => p.mesh === hit.mesh && p.triangle === hit.triangle)) return;
+        draft.extra = [...pieces, {
+          mesh: hit.mesh,
+          meshIndex: hit.meshIndex,
+          triangle: hit.triangle,
+          label: `${hit.size.map((v) => v.toFixed(0)).join(' \u00d7 ')} cm`,
+        }];
+        fillExtra();
+        apply();
+      });
+    });
+
     const carryWrap = document.createElement('label');
     carryWrap.style.cssText = 'display:flex;align-items:center;gap:7px;font-size:11px;color:#cbd5e1;cursor:pointer;';
     const carry = document.createElement('input');
     carry.type = 'checkbox';
-    carry.checked = draft.carry !== false;
+    carry.checked = draft.carry === true;
     carry.title = t('partCarryHint');
     const carryCount = document.createElement('div');
     carryCount.style.cssText = 'font-size:10px;color:#64748b;margin:3px 0 12px 22px;';
     const showCarried = () => {
       const n = this.getCarriedCount?.(draft.id) ?? 0;
-      carryCount.textContent = draft.carry === false ? '' : (n ? tn('partCarryCount', n) : t('partCarryNone'));
+      carryCount.textContent = draft.carry !== true ? '' : (n ? tn('partCarryCount', n) : t('partCarryNone'));
     };
     carry.addEventListener('change', () => {
-      draft.carry = carry.checked ? undefined : false;
+      draft.carry = carry.checked ? true : undefined;
       apply();
       showCarried();
     });
@@ -3983,6 +4047,10 @@ export class EditPanel {
     rebuildSpecific();
     field(t('partDuration'), dur);
     body.appendChild(invWrap);
+    body.appendChild(extraTitle);
+    fillExtra();
+    body.appendChild(extraList);
+    body.appendChild(extraAdd);
     body.appendChild(carryWrap);
     body.appendChild(carryCount);
     body.appendChild(tintBox);
