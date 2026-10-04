@@ -260,10 +260,33 @@ export interface OwlnestPart {
   meshIndex?: number;
   /** Triangle d'amorce : suffit à réidentifier la pièce entière. */
   triangle: number;
+  /**
+   * Nœud du modèle animé en entier — un objet ou un groupe Blender, avec tout
+   * son contenu — à la place de la pièce désignée par `mesh` et `triangle`.
+   * Ceux-ci restent enregistrés : c'est le clic d'origine, qui permet de
+   * revenir à la pièce seule.
+   */
+  node?: string;
+  /** Rang du nœud dans le graphe tel que chargé : départage les homonymes. */
+  nodeIndex?: number;
   label?: string;
   motion: PartMotion;
+  /**
+   * Axe de rotation d'un battant. Absent : vertical, comme une porte.
+   * Horizontal : abattant (lave-vaisselle, four, fenêtre à soufflet) ; `hinge`
+   * désigne alors le bas (`start`) ou le haut (`end`), selon la verticale du
+   * modèle.
+   */
+  swingAxis?: 'vertical' | 'horizontal';
   /** Côté des gonds, pour un battant. */
   hinge?: 'start' | 'end';
+  /**
+   * Côté du mur vers lequel s'ouvre un battant.
+   *
+   * Le modèle ne dit pas où est l'intérieur : on ne peut qu'inverser le sens,
+   * et l'aperçu montre lequel est le bon.
+   */
+  swingSide?: 'front' | 'back';
   /** Ouverture d'un battant, en degrés. */
   angle?: number;
   /** Sens de retrait d'un coulissant. */
@@ -282,6 +305,12 @@ export interface OwlnestPart {
   invert?: boolean;
   /** Durée de l'animation, en secondes. */
   duration?: number;
+  /**
+   * Teinte de l'objet fermé, puis ouvert (`#rrggbb`). Absente : aucune teinte
+   * dans cet état. Entre les deux, la teinte suit la position animée.
+   */
+  closedColor?: string;
+  openColor?: string;
 }
 
 export interface OwlnestScene {

@@ -15,6 +15,10 @@ import { detectionLabel, resolveLevel } from '../quality';
 import type { TapAction } from '../entities/descriptors';
 import type { QualityLevel } from '../quality';
 import type { AnchorKind, OwlnestPart } from '../types';
+import {
+  filterOutline, ancestorsOf, locatePart, revealRanks, outlineRows, centredScrollTop, PIECE_ROW,
+  type ModelOutline, type OutlineRow,
+} from '../model-outline';
 
 /** Ce que la carte renvoie quand l'utilisateur clique une pièce du modèle. */
 export interface PickedPart {
@@ -25,6 +29,24 @@ export interface PickedPart {
   size: [number, number, number];
   guess: 'door' | 'window' | 'other';
   triangles: number;
+  /** Renseigné quand le clic tombe sur la pièce détachée d'un ouvrant existant. */
+  partId?: string;
+}
+
+/**
+ * Ce qu'il faut surligner dans la vue. Les champs sont essayés dans l'ordre :
+ * l'ouvrant monté, le nœud par son rang, la pièce d'une maille.
+ */
+export interface PartHighlightTarget {
+  part?: string;
+  node?: number;
+  mesh?: number;
+  triangle?: number;
+}
+
+export interface PartHighlightRequest {
+  hover: PartHighlightTarget | null;
+  selected: PartHighlightTarget | null;
 }
 
 const MOTION_LABEL: Record<string, () => string> = {
@@ -288,6 +310,10 @@ export class EditPanel {
     private onConfigurePart?: (cfg: OwlnestPart) => boolean,
     /** Envergure du modèle : les distances d'orbite s'y expriment. */
     private getModelSpan?: () => number,
+    /** Arborescence du modèle chargé, pour choisir l'objet d'un ouvrant. */
+    private getModelOutline?: () => ModelOutline | null,
+    /** Surligne dans la vue ce que l'arborescence survole et sélectionne. */
+    private onHighlightPart?: (req: PartHighlightRequest) => void,
   ) {}
 
   // ── Card undo/redo ────────────────────────────────────────────────────────
@@ -470,6 +496,7 @@ export class EditPanel {
   }
 
   hideToolbar() {
+    this._closePartModal?.();
     this._panel?.remove();
     this._panel = null;
     this.hud.querySelector('#editor-hint-bar')?.remove();
@@ -3337,6 +3364,13 @@ export class EditPanel {
   // ── Ouvrants ──────────────────────────────────────────────────────────────
 
   private _partsBody: HTMLElement | null = null;
+  /** Ferme le formulaire d'ouvrant affiché, en conservant ses réglages. */
+  private _closePartModal: (() => void) | null = null;
+  /** Ouvrant affiché dans le formulaire, et fermeture sans rien enregistrer. */
+  private _partModalId: string | null = null;
+  private _discardPartModal: (() => void) | null = null;
+  /** Dernière position du formulaire, reprise à la prochaine ouverture. */
+  private _partModalPos: { left: number; top: number } | null = null;
 
   /**
    * Sections de réglages ouvertes.
@@ -3353,9 +3387,17 @@ export class EditPanel {
     this.showStatusBar?.(t('partPickHint'));
     this.onStartPartPicking((hit) => {
       this.hideStatusBar?.();
-      const existing = (this.getParts?.() ?? []).find(
-        (p) => p.mesh === hit.mesh && p.triangle === hit.triangle,
-      );
+      // Un clic sur n'importe quelle pièce d'un objet déjà animé rouvre son ouvrant.
+      const outline = this.getModelOutline?.();
+      const hitNode = outline?.byRank.find((n) => n.meshRank === hit.meshIndex);
+      const around = hitNode && outline
+        ? new Set([hitNode.rank, ...ancestorsOf(outline, hitNode.rank)])
+        : new Set<number>();
+      const parts = this.getParts?.() ?? [];
+      const existing = (hit.partId ? parts.find((p) => p.id === hit.partId) : undefined)
+        ?? parts.find((p) => !p.node && p.mesh === hit.mesh && p.triangle === hit.triangle)
+        ?? parts.find((p) => !!p.node && p.nodeIndex !== undefined && around.has(p.nodeIndex)
+          && outline?.byRank[p.nodeIndex]?.name === p.node);
       if (existing) { this._openPartModal(existing, hit); return; }
       this._openPartModal({
         id: `part_${Date.now()}`,
@@ -3421,13 +3463,32 @@ export class EditPanel {
       }
 
       const del = document.createElement('button');
-      del.style.cssText = 'background:none;border:none;color:rgba(248,113,113,0.5);cursor:pointer;font-size:13px;padding:2px 4px;flex-shrink:0;';
-      del.textContent = '×';
+      const delIdle = 'background:none;border:1px solid transparent;border-radius:6px;color:rgba(248,113,113,0.5);cursor:pointer;font-size:11px;font-family:inherit;padding:2px 6px;flex-shrink:0;white-space:nowrap;transition:all .15s;';
+      del.style.cssText = delIdle;
+      del.textContent = '✕';
       del.title = t('partDelete');
+      const disarm = () => {
+        del.dataset.confirm = '';
+        del.textContent = '✕';
+        del.title = t('partDelete');
+        del.style.cssText = delIdle;
+      };
       del.addEventListener('click', (e) => {
         e.stopPropagation();
-        const next = (this.getParts?.() ?? []).filter((p) => p.id !== part.id);
-        this.saveParts?.(next).then(() => this._fillPartsList(pane));
+        if (del.dataset.confirm === '1') {
+          // Le formulaire encore ouvert réenregistrerait l'ouvrant en se fermant.
+          if (this._partModalId === part.id) this._discardPartModal?.();
+          const next = (this.getParts?.() ?? []).filter((p) => p.id !== part.id);
+          this.saveParts?.(next).then(() => this._fillPartsList(pane));
+          return;
+        }
+        del.dataset.confirm = '1';
+        del.textContent = t('anchorBtnConfirm');
+        del.title = t('partDeleteConfirm');
+        del.style.background = 'rgba(239,68,68,0.35)';
+        del.style.borderColor = 'rgba(239,68,68,0.65)';
+        del.style.color = '#f87171';
+        setTimeout(() => { if (del.dataset.confirm === '1') disarm(); }, 3000);
       });
       row.appendChild(del);
 
@@ -3443,8 +3504,14 @@ export class EditPanel {
    * si les gonds sont du bon côté est de voir le vantail bouger.
    */
   private _openPartModal(part: OwlnestPart, hit: PickedPart | null) {
+    this._closePartModal?.();
     document.getElementById('owlnest-part-modal')?.remove();
     const draft: OwlnestPart = JSON.parse(JSON.stringify(part));
+    this._pieceTris = hit?.triangles ?? null;
+    // Les réglages s'appliquent en direct : « Annuler » doit pouvoir revenir à
+    // l'état d'avant, ou retirer l'ouvrant s'il vient d'être créé.
+    const original: OwlnestPart = JSON.parse(JSON.stringify(part));
+    const isNew = !(this.getParts?.() ?? []).some((p) => p.id === part.id);
 
     const inputStyle = 'width:100%;box-sizing:border-box;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#e2e8f0;padding:5px 8px;font-size:11px;outline:none;font-family:inherit;';
     const lblStyle = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;display:block;';
@@ -3458,7 +3525,9 @@ export class EditPanel {
      * qu'il le soit.
      */
     let saveTimer: ReturnType<typeof setTimeout> | null = null;
+    let closed = false;
     const apply = () => {
+      if (closed) return;
       if (!this.onConfigurePart?.({ ...draft })) {
         void this._commitPart(draft, false);
       }
@@ -3467,10 +3536,13 @@ export class EditPanel {
       refreshReadout();
     };
 
+    // Non modal (`show()`, pas `showModal()`) : le modèle doit rester
+    // manipulable derrière, pour viser la pièce qu'on est en train de régler.
     const dialog = document.createElement('dialog');
     dialog.id = 'owlnest-part-modal';
     dialog.style.cssText = [
-      'position:fixed', 'top:50%', 'left:50%', 'transform:translate(-50%,-50%)',
+      'position:fixed', 'inset:auto', 'margin:0', 'z-index:9999',
+      'top:50%', 'left:50%', 'transform:translate(-50%,-50%)',
       'width:min(420px,94vw)', 'max-height:86vh',
       'background:rgba(6,10,22,0.97)', 'backdrop-filter:blur(20px)',
       'border:1px solid rgba(255,255,255,0.1)', 'border-radius:14px',
@@ -3478,25 +3550,71 @@ export class EditPanel {
       'color:#e2e8f0', 'font-family:var(--primary-font-family,sans-serif)',
       'display:flex', 'flex-direction:column', 'overflow:hidden',
     ].join(';');
-    dialog.addEventListener('keydown', (e) => e.stopPropagation());
+    dialog.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Escape') { e.preventDefault(); void cancel(); }
+    });
 
     const hdr = document.createElement('div');
-    hdr.style.cssText = 'display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.08);flex-shrink:0;gap:8px;';
+    hdr.style.cssText = 'display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.08);flex-shrink:0;gap:8px;cursor:move;user-select:none;touch-action:none;';
+
+    const placeAt = (left: number, top: number) => {
+      const r = dialog.getBoundingClientRect();
+      // On garde au moins l'en-tête à l'écran, sinon plus moyen de le rattraper.
+      const maxLeft = window.innerWidth - Math.min(r.width, 80);
+      const maxTop = window.innerHeight - hdr.offsetHeight;
+      const x = Math.max(Math.min(r.width, 80) - r.width, Math.min(left, maxLeft));
+      const y = Math.max(0, Math.min(top, maxTop));
+      dialog.style.transform = 'none';
+      dialog.style.left = `${x}px`;
+      dialog.style.top = `${y}px`;
+      this._partModalPos = { left: x, top: y };
+    };
+    let drag: { dx: number; dy: number; id: number } | null = null;
+    hdr.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      const r = dialog.getBoundingClientRect();
+      drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, id: e.pointerId };
+      hdr.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+    hdr.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      placeAt(e.clientX - drag.dx, e.clientY - drag.dy);
+    });
+    const endDrag = (e: PointerEvent) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      drag = null;
+      hdr.releasePointerCapture(e.pointerId);
+    };
+    hdr.addEventListener('pointerup', endDrag);
+    hdr.addEventListener('pointercancel', endDrag);
     const title = document.createElement('div');
     title.style.cssText = 'font-size:12px;font-weight:700;flex:1;';
     title.textContent = t('partTitle');
     hdr.appendChild(title);
+    let dimsEl: HTMLElement | null = null;
     if (hit) {
       const dims = document.createElement('div');
       dims.style.cssText = 'font-size:9px;color:#64748b;font-variant-numeric:tabular-nums;';
       dims.textContent = `${hit.size.map((v) => v.toFixed(0)).join(' × ')} cm`;
+      if (draft.node) dims.style.display = 'none';
       hdr.appendChild(dims);
+      dimsEl = dims;
     }
     dialog.appendChild(hdr);
 
     const body = document.createElement('div');
     body.style.cssText = 'padding:14px 16px;overflow-y:auto;flex:1;min-height:0;';
     dialog.appendChild(body);
+
+    // ── Objet du modèle ───────────────────────────────────────────────────
+    // Les cotes du clic ne décrivent plus rien une fois un autre objet choisi.
+    const objectSection = this._partObjectSection(draft, inputStyle, () => {
+      if (dimsEl) dimsEl.style.display = draft.node ? 'none' : '';
+      apply();
+    });
+    if (objectSection) body.appendChild(objectSection.el);
 
     const field = (label: string, control: HTMLElement, into: HTMLElement = body) => {
       const wrap = document.createElement('div');
@@ -3509,9 +3627,32 @@ export class EditPanel {
       return wrap;
     };
 
+    // ── Nom ───────────────────────────────────────────────────────────────
+    // Laissé vide, la liste retombe sur le nom de l'entité : on le montre en
+    // filigrane pour que ce repli soit visible.
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.style.cssText = inputStyle;
+    nameInput.value = draft.label ?? '';
+    const refreshName = () => {
+      const friendly = this.getHass()?.states[draft.entity]?.attributes?.friendly_name;
+      const fallback = (typeof friendly === 'string' && friendly) || draft.entity || t('partTitle');
+      nameInput.placeholder = fallback;
+      title.textContent = draft.label || fallback;
+    };
+    nameInput.addEventListener('input', () => {
+      draft.label = nameInput.value.trim() || undefined;
+      refreshName();
+      apply();
+    });
+    // En tête du formulaire, au-dessus de la section « Objet ».
+    body.prepend(field(t('partName'), nameInput));
+    refreshName();
+
     // ── Entité ────────────────────────────────────────────────────────────
     const { wrap: entityWrap } = this._entityField(draft.entity, inputStyle, (id) => {
       draft.entity = id;
+      refreshName();
       // L'entité change : les états proposés ne sont plus les mêmes.
       draft.openWhen = undefined;
       rebuildStates();
@@ -3647,9 +3788,29 @@ export class EditPanel {
     const rebuildSpecific = () => {
       specific.innerHTML = '';
       if (draft.motion === 'swing') {
+        const horizontal = draft.swingAxis === 'horizontal';
+        const axis = document.createElement('select');
+        axis.style.cssText = inputStyle + SELECT_STYLE;
+        for (const [v, lab] of [
+          ['vertical', t('partSwingVertical')], ['horizontal', t('partSwingHorizontal')],
+        ] as const) {
+          const o = document.createElement('option');
+          o.value = v; o.textContent = lab;
+          axis.appendChild(styleOption(o));
+        }
+        axis.value = horizontal ? 'horizontal' : 'vertical';
+        axis.addEventListener('change', () => {
+          draft.swingAxis = axis.value === 'horizontal' ? 'horizontal' : undefined;
+          rebuildSpecific();
+          apply();
+        });
+        field(t('partSwingAxis'), axis, specific);
         const hinge = document.createElement('select');
         hinge.style.cssText = inputStyle + SELECT_STYLE;
-        for (const [v, lab] of [['start', t('partHingeStart')], ['end', t('partHingeEnd')]] as const) {
+        const hingeLabels = horizontal
+          ? [['start', t('partHingeBottom')], ['end', t('partHingeTop')]] as const
+          : [['start', t('partHingeStart')], ['end', t('partHingeEnd')]] as const;
+        for (const [v, lab] of hingeLabels) {
           const o = document.createElement('option');
           o.value = v; o.textContent = lab;
           hinge.appendChild(styleOption(o));
@@ -3660,6 +3821,19 @@ export class EditPanel {
           apply();
         });
         field(t('partHinge'), hinge, specific);
+        const side = document.createElement('select');
+        side.style.cssText = inputStyle + SELECT_STYLE;
+        for (const [v, lab] of [['front', t('partSwingFront')], ['back', t('partSwingBack')]] as const) {
+          const o = document.createElement('option');
+          o.value = v; o.textContent = lab;
+          side.appendChild(styleOption(o));
+        }
+        side.value = draft.swingSide ?? 'front';
+        side.addEventListener('change', () => {
+          draft.swingSide = side.value === 'back' ? 'back' : undefined;
+          apply();
+        });
+        field(t('partSwingSide'), side, specific);
         slider(specific, t('partAngle'), 15, 170, 5, draft.angle ?? 90,
           (v) => `${v}°`, (v) => { draft.angle = v; });
       } else {
@@ -3723,11 +3897,68 @@ export class EditPanel {
     });
     invWrap.append(inv, document.createTextNode(t('partInvert')));
 
-    // Ordre d'affichage : réglages du mouvement, puis durée, inversion, aperçu.
+    // ── Teinte par état ───────────────────────────────────────────────────
+    // Même contrôle que la couleur d'une ancre ; le bouton revient au défaut,
+    // qui est ici l'absence de teinte.
+    const tintBox = document.createElement('div');
+    let tintHover = false;
+    const tintFocused = () => {
+      const a = document.activeElement;
+      return a instanceof HTMLInputElement && a.type === 'color' && tintBox.contains(a);
+    };
+    tintBox.addEventListener('pointerenter', () => { tintHover = true; objectSection?.mute(true); });
+    tintBox.addEventListener('pointerleave', () => {
+      tintHover = false;
+      if (!tintFocused()) objectSection?.mute(false);
+    });
+    const colorRow = (key: 'closedColor' | 'openColor', label: string, hint: string, fallback: string) => {
+      const colorWrap = document.createElement('div');
+      colorWrap.style.cssText = 'display:flex;gap:6px;align-items:center;';
+      const colorInput = document.createElement('input');
+      colorInput.type = 'color';
+      colorInput.value = draft[key] ?? fallback;
+      const noneBtn = document.createElement('button');
+      noneBtn.textContent = t('partColorNone');
+      const paint = () => {
+        const on = !!draft[key];
+        colorInput.style.cssText = `width:38px;height:28px;padding:0;border:1px solid rgba(255,255,255,0.1);border-radius:6px;background:transparent;cursor:pointer;opacity:${on ? 1 : 0.35};`;
+        noneBtn.style.cssText = [
+          'flex:1', 'border-radius:6px', 'font-size:10px', 'padding:6px', 'cursor:pointer', 'font-family:inherit',
+          on ? 'background:rgba(255,255,255,0.04)' : 'background:rgba(255,255,255,0.1)',
+          on ? 'border:1px solid rgba(255,255,255,0.1)' : 'border:1px solid rgba(255,255,255,0.25)',
+          on ? 'color:#94a3b8' : 'color:#e2e8f0',
+        ].join(';');
+      };
+      const set = (value: string | undefined) => {
+        if (draft[key] === value) return;
+        draft[key] = value;
+        paint();
+        apply();
+      };
+      // Rouvrir le sélecteur sur la couleur déjà affichée ne déclenche pas
+      // `input` : le clic suffit donc à activer la teinte.
+      colorInput.addEventListener('click', () => set(colorInput.value));
+      colorInput.addEventListener('input', () => set(colorInput.value));
+      colorInput.addEventListener('blur', () => { if (!tintHover) objectSection?.mute(false); });
+      noneBtn.addEventListener('click', (e) => { e.preventDefault(); set(undefined); });
+      paint();
+      colorWrap.append(colorInput, noneBtn);
+      field(label, colorWrap, tintBox).style.marginBottom = '4px';
+      const note = document.createElement('div');
+      note.style.cssText = 'font-size:9px;color:#475569;line-height:1.5;margin-bottom:12px;';
+      note.textContent = hint;
+      tintBox.appendChild(note);
+    };
+    colorRow('closedColor', t('partColorClosed'), t('partColorClosedHint'), '#22c55e');
+    colorRow('openColor', t('partColorOpen'), t('partColorOpenHint'), '#f59e0b');
+
+    // Ordre d'affichage : réglages du mouvement, puis durée, inversion,
+    // teintes et aperçu — l'aperçu juste dessous montre le fondu.
     rebuildSpecific();
     field(t('partDuration'), dur);
     body.appendChild(invWrap);
-    field(t('partPreview'), previewBox);
+    body.appendChild(tintBox);
+    field(t('partPreview'), previewBox, tintBox);
 
     // ── Pied ──────────────────────────────────────────────────────────────
     const foot = document.createElement('div');
@@ -3746,21 +3977,49 @@ export class EditPanel {
     };
     const close = () => {
       if (saveTimer) clearTimeout(saveTimer);
+      objectSection?.dispose();
       preview(0);
+      if (this._closePartModal === flushAndClose) this._closePartModal = null;
+      if (this._discardPartModal === close) { this._discardPartModal = null; this._partModalId = null; }
+      closed = true;
       dialog.close();
       dialog.remove();
     };
+    const cancel = async () => {
+      close();
+      if (isNew) {
+        const next = (this.getParts?.() ?? []).filter((p) => p.id !== original.id);
+        await this.saveParts?.(next);
+        if (this._partsBody) this._fillPartsList(this._partsBody);
+      } else {
+        this.onConfigurePart?.({ ...original });
+        await this._commitPart(original, true);
+      }
+    };
+    // Ouvrir un autre ouvrant pendant que celui-ci est affiché : on garde les
+    // réglages déjà visibles à l'écran plutôt que de les perdre en silence.
+    const flushAndClose = () => {
+      close();
+      void this._commitPart(draft, true);
+    };
+    this._closePartModal = flushAndClose;
+    this._discardPartModal = close;
+    this._partModalId = draft.id;
+
+    const cancelBtn = mkBtn(t('btnCancel'), false);
+    cancelBtn.addEventListener('click', () => { void cancel(); });
     const ok = mkBtn(t('ruleModalSave'), true);
     ok.addEventListener('click', async () => {
       await this._commitPart(draft, true);
       close();
     });
-    foot.appendChild(ok);
+    foot.append(cancelBtn, ok);
     dialog.appendChild(foot);
 
     document.body.appendChild(dialog);
-    dialog.showModal();
-    dialog.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
+    dialog.show();
+    if (this._partModalPos) placeAt(this._partModalPos.left, this._partModalPos.top);
+    objectSection?.reveal();
 
     // La pièce doit exister côté carte pour que l'aperçu et les réglages en
     // direct aient une cible.
@@ -3768,6 +4027,313 @@ export class EditPanel {
     rebuildStates();
     refreshReadout();
   }
+
+  /** Section « Objet » repliée ou non, d'un formulaire à l'autre. */
+  private _partObjectOpen = true;
+
+  /**
+   * Choix de l'objet animé, façon « Outliner » de Blender.
+   *
+   * L'arborescence est celle du modèle tel que chargé ; la pièce cliquée y
+   * figure comme une feuille sous sa maille. Survoler une ligne teinte l'objet
+   * dans la vue, la sélectionner en fait l'ouvrant — la carte le remonte en
+   * direct, sans recharger le modèle.
+   *
+   * Toutes les lignes sont calculées, mais seule la fenêtre visible est
+   * dessinée : un modèle à des milliers de nœuds reste fluide, et aucun objet
+   * n'est hors d'atteinte.
+   */
+  private _partObjectSection(
+    draft: OwlnestPart,
+    inputStyle: string,
+    onChange: () => void,
+  ): { el: HTMLElement; dispose: () => void; reveal: () => void; mute: (on: boolean) => void } | null {
+    const outline = this.getModelOutline?.();
+    if (!outline || outline.byRank.length === 0) return null;
+    const PIECE = PIECE_ROW;
+    const ROW_H = 21;
+    const VIEW_H = 220;
+    const OVERSCAN = 8;
+
+    const { seed } = locatePart(outline, draft);
+    const selectedRank = (): number | null => locatePart(outline, draft).selected;
+
+    const expanded = new Set<number>(revealRanks(outline, { selected: selectedRank(), seed }));
+    const reveal = (rank: number) => { for (const a of ancestorsOf(outline, rank)) expanded.add(a); };
+    /** Replis demandés pendant un filtrage, qui sinon déplie d'office. */
+    let collapsed = new Set<number>();
+    let query = '';
+
+    // ── Surlignage ──────────────────────────────────────────────────────
+    const pieceTarget = (): PartHighlightTarget => ({
+      part: draft.node ? undefined : draft.id,
+      mesh: seed?.meshRank, triangle: draft.triangle,
+    });
+    const selectedTarget = (): PartHighlightTarget => {
+      const r = selectedRank();
+      return { part: draft.id, node: r ?? undefined, mesh: seed?.meshRank, triangle: draft.triangle };
+    };
+    let hover: PartHighlightTarget | null = null;
+    let muted = false;
+    const highlight = () => this.onHighlightPart?.(
+      muted ? { hover: null, selected: null } : { hover, selected: selectedTarget() },
+    );
+
+    // ── Structure ───────────────────────────────────────────────────────
+    const box = document.createElement('details');
+    box.open = this._partObjectOpen;
+    box.style.cssText = 'margin-bottom:12px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;background:rgba(255,255,255,0.02);';
+    const head = document.createElement('summary');
+    head.style.cssText = 'cursor:pointer;list-style:none;display:flex;align-items:center;gap:6px;padding:7px 9px;user-select:none;';
+    const chevron = document.createElement('span');
+    chevron.textContent = '▸';
+    chevron.style.cssText = 'font-size:8px;color:#475569;transition:transform .15s;display:inline-block;';
+    const label = document.createElement('span');
+    label.style.cssText = 'font-size:9px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:.06em;flex-shrink:0;';
+    label.textContent = t('partObject');
+    const summary = document.createElement('span');
+    summary.style.cssText = 'flex:1;min-width:0;text-align:right;font-size:10px;color:#fdba74;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    head.append(chevron, label, summary);
+    box.appendChild(head);
+    const paintHead = () => { chevron.style.transform = box.open ? 'rotate(90deg)' : 'none'; };
+    box.addEventListener('toggle', () => { this._partObjectOpen = box.open; paintHead(); });
+    paintHead();
+
+    const inner = document.createElement('div');
+    inner.style.cssText = 'padding:0 9px 9px;';
+    box.appendChild(inner);
+
+    const bar = document.createElement('div');
+    bar.style.cssText = 'display:flex;gap:6px;margin-bottom:6px;';
+    const filter = document.createElement('input');
+    filter.type = 'search';
+    filter.placeholder = t('partObjectFilter');
+    filter.style.cssText = inputStyle + 'flex:1;width:auto;';
+    const parentBtn = document.createElement('button');
+    parentBtn.textContent = '↑';
+    parentBtn.title = t('partObjectParent');
+    parentBtn.style.cssText = 'flex-shrink:0;width:28px;border-radius:6px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:#cbd5e1;cursor:pointer;font-size:12px;font-family:inherit;';
+    bar.append(filter, parentBtn);
+    inner.appendChild(bar);
+
+    // Hauteur fixée, pas plafonnée : la fenêtre à dessiner se déduit de
+    // `clientHeight`, qui doit valoir quelque chose avant le premier dessin.
+    const tree = document.createElement('div');
+    tree.style.cssText = `position:relative;height:${VIEW_H}px;overflow-y:auto;border-radius:6px;background:rgba(0,0,0,0.25);font-size:11px;`;
+    const spacer = document.createElement('div');
+    spacer.style.cssText = 'position:relative;';
+    tree.appendChild(spacer);
+    inner.appendChild(tree);
+
+    const hint = document.createElement('div');
+    hint.style.cssText = 'font-size:9px;color:#64748b;line-height:1.5;margin-top:5px;';
+    hint.textContent = t('partObjectHint');
+    inner.appendChild(hint);
+
+    // ── Sélection ───────────────────────────────────────────────────────
+    const select = (rank: number) => {
+      if (rank === PIECE) { draft.node = undefined; draft.nodeIndex = undefined; }
+      else {
+        const n = outline.byRank[rank];
+        draft.node = n.name;
+        draft.nodeIndex = n.rank;
+      }
+      rebuild();
+      onChange();
+      highlight();
+    };
+    parentBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const r = selectedRank();
+      const target = r === null ? seed : outline.byRank[r].parent;
+      if (!target) return;
+      reveal(target.rank);
+      select(target.rank);
+      pendingReveal = true;
+      tryReveal();
+    });
+
+    const trisLabel = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)} k` : String(n));
+
+    const row = (
+      rank: number, depth: number, name: string, icon: string, tris: number,
+      toggle: 'open' | 'closed' | null, dim: boolean, title: string, sel: boolean,
+    ) => {
+      const el = document.createElement('div');
+      el.dataset.rank = String(rank);
+      el.title = title;
+      el.style.cssText = [
+        'position:absolute', 'left:0', 'right:0',
+        'display:flex', 'align-items:center', 'gap:4px', `height:${ROW_H}px`, 'cursor:pointer',
+        `padding:0 6px 0 ${4 + depth * 12}px`, 'white-space:nowrap',
+        sel ? 'background:rgba(255,140,26,0.22)' : '',
+        sel ? 'box-shadow:inset 2px 0 0 #ff8c1a' : '',
+        `color:${sel ? '#ffd9b0' : dim ? '#64748b' : '#cbd5e1'}`,
+      ].filter(Boolean).join(';');
+      const tg = document.createElement('span');
+      tg.dataset.toggle = String(rank);
+      tg.textContent = toggle === 'open' ? '▾' : toggle === 'closed' ? '▸' : '';
+      tg.style.cssText = 'width:12px;flex-shrink:0;text-align:center;font-size:9px;color:#64748b;';
+      const ic = document.createElement('span');
+      ic.textContent = icon;
+      ic.style.cssText = `width:13px;flex-shrink:0;text-align:center;font-size:10px;color:${rank === PIECE ? '#fdba74' : '#7dd3fc'};`;
+      const nm = document.createElement('span');
+      nm.textContent = name;
+      nm.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;';
+      const tr = document.createElement('span');
+      tr.textContent = tris ? trisLabel(tris) : '';
+      tr.style.cssText = 'flex-shrink:0;font-size:9px;color:#475569;font-variant-numeric:tabular-nums;';
+      el.append(tg, ic, nm, tr);
+      return el;
+    };
+
+    let rows: OutlineRow[] = [];
+    let f = filterOutline(outline, '');
+    let current: number | null = null;
+
+    /** Dessine les seules lignes visibles, placées à leur hauteur dans la liste. */
+    const paint = () => {
+      const view = tree.clientHeight || VIEW_H;
+      const first = Math.max(0, Math.floor(tree.scrollTop / ROW_H) - OVERSCAN);
+      const last = Math.min(rows.length, Math.ceil((tree.scrollTop + view) / ROW_H) + OVERSCAN);
+      const frag = document.createDocumentFragment();
+      for (let i = first; i < last; i++) {
+        const { rank, node, depth, hasKids, open } = rows[i];
+        const toggle = hasKids ? (open ? 'open' : 'closed') : null;
+        // La pièce cliquée, feuille virtuelle sous sa maille.
+        const el = node
+          ? row(rank, depth, node.name, node.meshRank >= 0 ? '△' : '▣', node.tris, toggle,
+            !!f.visible && !f.matches.has(rank),
+            node.material ? `${node.name} · ${node.material}` : node.name, current === rank)
+          : row(PIECE, depth, t('partObjectPiece'), '◆', this._pieceTris ?? 0,
+            null, false, t('partObjectPieceHint'), current === null);
+        el.style.top = `${i * ROW_H}px`;
+        frag.appendChild(el);
+      }
+      if (rows.length === 0) {
+        const empty = document.createElement('div');
+        empty.style.cssText = 'padding:8px 10px;color:#64748b;font-size:10px;';
+        empty.textContent = t('partObjectNone');
+        frag.appendChild(empty);
+      }
+      spacer.replaceChildren(frag);
+    };
+
+    /** Recalcule la liste — dépliage, filtre ou sélection ont changé. */
+    const rebuild = () => {
+      f = filterOutline(outline, query);
+      for (const r of collapsed) f.expand.delete(r);
+      const effective = new Set([...expanded].filter((r) => !collapsed.has(r)));
+      rows = outlineRows(outline, effective, f, seed);
+      current = selectedRank();
+      spacer.style.height = `${rows.length * ROW_H}px`;
+
+      const n = current !== null ? outline.byRank[current] : null;
+      summary.textContent = n ? `${n.name} · ${trisLabel(n.tris)}` : `${t('partObjectPiece')}${seed ? ` · ${seed.name}` : ''}`;
+      parentBtn.disabled = n ? !n.parent : !seed;
+      parentBtn.style.opacity = parentBtn.disabled ? '0.35' : '1';
+      paint();
+    };
+
+    /**
+     * Amène la sélection au centre de la liste.
+     *
+     * Rien ne se mesure tant que la liste n'est pas affichée : formulaire pas
+     * encore ouvert, ou section repliée. La demande reste alors en attente et
+     * se rejoue à l'ouverture de la section.
+     */
+    let pendingReveal = true;
+    const tryReveal = () => {
+      if (!pendingReveal || !box.open || !tree.isConnected || tree.clientHeight === 0) return;
+      pendingReveal = false;
+      const idx = rows.findIndex((r) => r.rank === (current ?? PIECE));
+      if (idx < 0) return;
+      tree.scrollTop = centredScrollTop(idx, ROW_H, tree.clientHeight, rows.length);
+      paint();
+    };
+    box.addEventListener('toggle', () => { if (box.open) requestAnimationFrame(tryReveal); });
+
+    let paintQueued = false;
+    tree.addEventListener('scroll', () => {
+      if (paintQueued) return;
+      paintQueued = true;
+      requestAnimationFrame(() => { paintQueued = false; paint(); });
+    });
+
+    // ── Évènements, délégués au conteneur ───────────────────────────────
+    const rankAt = (e: Event): number | null => {
+      const el = (e.target as HTMLElement).closest<HTMLElement>('[data-rank]');
+      return el ? Number(el.dataset.rank) : null;
+    };
+    tree.addEventListener('click', (e) => {
+      const tg = (e.target as HTMLElement).closest<HTMLElement>('[data-toggle]');
+      if (tg && tg.textContent) {
+        const r = Number(tg.dataset.toggle);
+        const isOpen = rows.find((x) => x.rank === r)?.open ?? false;
+        if (isOpen) { expanded.delete(r); collapsed.add(r); } else { expanded.add(r); collapsed.delete(r); }
+        rebuild();
+        return;
+      }
+      const r = rankAt(e);
+      if (r !== null) select(r);
+    });
+    tree.addEventListener('mouseover', (e) => {
+      const r = rankAt(e);
+      const next = r === null ? null : r === PIECE ? pieceTarget() : { node: r };
+      if (JSON.stringify(next) === JSON.stringify(hover)) return;
+      hover = next;
+      highlight();
+    });
+    tree.addEventListener('mouseleave', () => { hover = null; highlight(); });
+
+    let filterTimer: ReturnType<typeof setTimeout> | null = null;
+    filter.addEventListener('input', () => {
+      if (filterTimer) clearTimeout(filterTimer);
+      filterTimer = setTimeout(() => {
+        query = filter.value;
+        collapsed = new Set();
+        tree.scrollTop = 0;
+        rebuild();
+      }, 80);
+    });
+    // Le formulaire intercepte Échap pour « Annuler » : dans le champ, Échap
+    // vide d'abord le filtre.
+    filter.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && filter.value) {
+        e.preventDefault();
+        e.stopPropagation();
+        filter.value = '';
+        query = '';
+        collapsed = new Set();
+        rebuild();
+        pendingReveal = true;
+        tryReveal();
+      }
+    });
+
+    rebuild();
+    highlight();
+
+    return {
+      el: box,
+      dispose: () => {
+        if (filterTimer) clearTimeout(filterTimer);
+        this.onHighlightPart?.({ hover: null, selected: null });
+      },
+      // Appelé une fois le formulaire affiché ; l'image suivante rattrape un
+      // affichage encore en cours de mise en page.
+      reveal: () => { tryReveal(); requestAnimationFrame(tryReveal); },
+      // Le surlignage masquerait la teinte qu'on est en train de régler.
+      mute: (on: boolean) => {
+        if (on === muted) return;
+        muted = on;
+        highlight();
+      },
+    };
+  }
+
+  /** Taille de la pièce cliquée, reprise du dernier clic pour l'arborescence. */
+  private _pieceTris: number | null = null;
 
   /** Enregistre le brouillon. `refreshList` évite de redessiner à chaque réglage. */
   private async _commitPart(draft: OwlnestPart, refreshList: boolean) {
