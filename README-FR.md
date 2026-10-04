@@ -61,7 +61,7 @@ J'ai voulu autre chose des lumières 3D temps réel, un éditeur visuel, de la m
 | 🏠 | **Scène 3D interactive** | Chargez n'importe quel modèle GLB/GLTF et naviguez librement avec la souris ou le tactile |
 | 💡 | **Lumières synchronisées** | Vos entités `light.*` pilotent de vraies lumières 3D — couleur, intensité, transitions fluides |
 | 📍 | **Ancres interactives** | Tap pour allumer/éteindre, appui long pour les détails. Compatible : lumières, capteurs, volets, climat, media players |
-| 🚪 | **Ouvrants animés** | Portes, fenêtres, volets et portes d'électroménager pivotent ou coulissent, stores et rideaux se déroulent, selon l'état de leur entité |
+| 🚪 | **Ouvrants animés** | Portes, fenêtres, volets et portes d'électroménager pivotent ou coulissent, stores et rideaux se déroulent, et les animations du GLB (NLA de Blender) se jouent, selon l'état de leur entité |
 | 👁️ | **Voir à travers les murs** | Le mur qui bouche la vue s'efface pendant que vous tournez autour, et se reforme derrière |
 | 📐 | **N'importe quelle unité** | Mètres, centimètres, pouces : distances, lumières et météo se déduisent de la taille du modèle |
 | 🎥 | **Vues caméra** | Sauvegardez des points de vue nommés et naviguez entre eux avec une transition animée |
@@ -246,7 +246,7 @@ Configurez cela dans les propriétés de l'ancre → **Visible si** dans l'édit
 
 ### Ouvrants
 
-Les ouvrants sont des pièces de votre modèle (portes, fenêtres, volets, porte de lave-vaisselle ou de four) qui bougent quand une entité Home Assistant s'ouvre ou se ferme. Le fichier du modèle n'est pas modifié : la pièce est détachée et animée dans la carte.
+Les ouvrants sont des pièces de votre modèle (portes, fenêtres, volets, porte de lave-vaisselle ou de four, fauteuil inclinable) qui bougent quand une entité Home Assistant s'ouvre ou se ferme. Le fichier du modèle n'est pas modifié : pivoter, coulisser et se dérouler détachent la pièce dans la carte ; **Joue les animations du modèle** pose les nœuds déjà enregistrés dans le GLB.
 
 #### Ajouter un ouvrant
 
@@ -266,7 +266,7 @@ L'arborescence **Objet** liste les objets et groupes du modèle, comme l'outline
 |---|---|
 | **Nom** | Affiché dans la liste des ouvrants et l'en-tête du panneau |
 | **Entité** | Pilote le mouvement. Les entités `cover` suivent `current_position` ; `cover`, `valve`, `lock`, `binary_sensor`, `switch`, `light`, `input_boolean`, `fan` et `group` sont lues comme ouvert/fermé |
-| **Mouvement** | **Pivote** (porte, fenêtre à battant), **Coulisse** (volet roulant, baie) ou **Se déroule** (store banne, store, rideau — voir plus bas) |
+| **Mouvement** | **Pivote** (porte, fenêtre à battant), **Coulisse** (volet roulant, baie), **Se déroule** (store banne, store, rideau — voir plus bas) ou **Joue les animations du modèle** (pistes NLA de Blender dans le GLB — voir plus bas) |
 | **Rotation** | Battants uniquement. **Verticale** pour une porte, **Horizontale** pour un lave-vaisselle, un four ou une fenêtre à soufflet |
 | **Côté des gonds** | L'arête qui porte les gonds : un côté / l'autre, ou **En bas** / **En haut** pour une rotation horizontale |
 | **S'ouvre vers** | Le côté du mur vers lequel pivote le vantail. Le modèle ne sait pas où est l'intérieur : vérifiez à l'aperçu et inversez si besoin |
@@ -297,6 +297,20 @@ Un `cover` qui rapporte `current_position` s'affiche à cette position. Un `cove
 > **Exemple** : dans un modèle où chaque store est fait de `motor` (coffre), `tela` (toile) et `extremo` (barre de charge, enfant de la toile), choisissez `tela` puis **Se déroule**. L'inclinaison est détectée et `extremo` est proposé comme suiveur. Seule la toile se replie : la barre remonte jusqu'au coffre.
 
 > **Astuce** : le gond est placé sur l'arête de la boîte englobante de la pièce, pas sur l'origine de l'objet dans Blender.
+
+#### Animations du modèle (NLA de Blender)
+
+Si le GLB contient des animations glTF (option **NLA Tracks** à l'export Blender), un ouvrant peut **jouer ces animations** au lieu de pivoter, coulisser ou se dérouler. La position de l'entité parcourt la piste : 0 % est la première image clé, 100 % la dernière, et 40 % reste à 40 % du chemin — comme un volet. Choisissez une ou plusieurs animations ; elles avancent toutes ensemble.
+
+Ce mouvement ne détache rien : les pistes posent les nœuds qu'elles animent déjà. L'arborescence Objet et les pièces emmenées par l'ouvrant sont masquées ; le surlignage et la teinte prennent le parent commun de ces nœuds (le canapé, pas toute la maison). La durée reprend celle de l'animation pour la jouer à la vitesse de Blender ; vous pouvez encore la changer.
+
+On peut poser plusieurs de ces ouvrants sur le même objet (un `cover` pour l'inclinaison droite, un autre pour la gauche). Un clic ne rouvre un ouvrant que s'il tombe sur un nœud que cet ouvrant anime vraiment — pas le canapé entier.
+
+Si deux ouvrants reçoivent des animations qui bougent le même nœud, c'est le dernier posé à chaque image qui l'emporte. Préférez des ensembles de pistes disjoints.
+
+Exportez depuis Blender avec **Animation → NLA Tracks**. Les actions qui commencent à l'image 1 (et non 0) sont gérées. three.js assainit les noms (`tela.001` → `tela001`).
+
+> **Exemple** : un fauteuil inclinable exporté en `Reclinar_Der`, `Reclinar_Izq`, `Cabezal_Der`, `Cabezal_Izq`. Liez le `cover` de droite à `Reclinar_Der` et `Cabezal_Der` : les deux mécanismes suivent la position de ce volet. Un second ouvrant avec le `cover` de gauche et les deux pistes `*_Izq` laisse le côté droit tranquille.
 
 ---
 

@@ -236,7 +236,7 @@ export interface RenderingConfig {
  * Battant (porte, fenêtre), coulissant (volet, baie, porte de garage) ou
  * déroulant (store banne, rideau) : ce dernier s'écrase vers une arête fixe.
  */
-export type PartMotion = 'swing' | 'slide' | 'extend';
+export type PartMotion = 'swing' | 'slide' | 'extend' | 'animation';
 
 /**
  * Axe d'écrasement d'un déroulant, relatif au mur qui le porte.
@@ -363,6 +363,13 @@ export interface OwlnestPart {
    * vide : aucun.
    */
   followers?: PartNodeRef[];
+  /**
+   * Animations du fichier (pistes NLA de Blender) posées par l'entité : fermé
+   * à leur première image clé, ouvert à la dernière. Toutes avancent ensemble.
+   * `mesh`, `triangle` et `node` ne servent alors qu'à rouvrir l'ouvrant d'un
+   * clic : rien n'est détaché.
+   */
+  clips?: string[];
   /**
    * États qui signifient « ouvert ».
    *

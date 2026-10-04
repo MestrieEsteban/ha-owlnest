@@ -19,6 +19,7 @@ import {
 import { stampOrder, nodeOrder, resolveNode, meshRankOf, rankOf } from './model-outline';
 import { describeEntity } from './entities/descriptors';
 import { PartTint, untinted } from './part-tint';
+import { ClipRig, commonAncestor } from './parts-clips';
 
 // ── Lecture de l'état ─────────────────────────────────────────────
 
@@ -133,6 +134,29 @@ interface LiveMesh {
   /** Suiveurs refusés déjà signalés, pour ne pas inonder la console à chaque réglage. */
   warned: Set<string>;
 }
+
+/**
+ * Un ouvrant animé par les animations du fichier.
+ *
+ * Rien n'est détaché ni déplacé dans le graphe : les animations posent leurs
+ * nœuds là où ils sont, et la pose de repos se rend au démontage.
+ */
+interface LiveClips {
+  cfg: OwlnestPart;
+  rig: ClipRig;
+  /** Ce qu'on surligne et qu'on teinte : l'ancêtre commun des nœuds animés. */
+  target: THREE.Object3D | null;
+  tint: PartTint | null;
+  /** Animations liées, pour savoir quand relier. */
+  key: string;
+  current: number;
+  goal: number;
+}
+
+const clipsKey = (cfg: OwlnestPart) => (cfg.clips ?? []).join('\n');
+
+/** Ce qui avance vers une fraction d'ouverture, quel que soit le mouvement. */
+type Moving = { cfg: OwlnestPart; current: number; goal: number };
 
 /**
  * Plus petite échelle appliquée à un déroulant.
@@ -292,6 +316,7 @@ export function resolveMesh(
 
 export class PartController {
   private items: LiveMesh[] = [];
+  private anims: LiveClips[] = [];
   private _built = false;
   /**
    * Verticale du modèle. Sans elle, un coulissant se rabat sur son propre plus
@@ -305,7 +330,7 @@ export class PartController {
     for (const item of this.items) this._configure(item, item.cfg);
   }
 
-  get count() { return this.items.length; }
+  get count() { return this.items.length + this.anims.length; }
   get built() { return this._built; }
 
   /**
@@ -326,8 +351,10 @@ export class PartController {
     const meshes = meshOrder(root);
     const nodes = nodeOrder(root);
     const resolved: { cfg: OwlnestPart; mount: () => LiveMesh | null }[] = [];
+    const animated: OwlnestPart[] = [];
     const claimed = new Set<string>();
     for (const cfg of configs) {
+      if (cfg.motion === 'animation') { animated.push(cfg); continue; }
       const mount = this._resolve(cfg, meshes, nodes, claimed);
       if (mount) resolved.push({ cfg, mount });
       else missing.push(cfg);
@@ -345,7 +372,72 @@ export class PartController {
     // Les suiveurs se lient une fois toutes les cibles montées : une cible
     // l'emporte sur un suiveur, quel que soit l'ordre des ouvrants.
     for (const item of this.items) if (item.cfg.motion === 'extend') this._configure(item, item.cfg);
-    return { ok: this.items.length, missing };
+    // Les animations en dernier : les autres ouvrants se mesurent au repos.
+    let ok = this.items.length;
+    for (const cfg of animated) {
+      const anim = this._mountClips(cfg);
+      this.anims.push(anim);
+      // Monté quand même : l'éditeur doit pouvoir choisir une autre animation.
+      if (anim.rig.missing.length) missing.push(cfg);
+      else ok++;
+    }
+    return { ok, missing };
+  }
+
+  private _mountClips(cfg: OwlnestPart): LiveClips {
+    const root = this._root;
+    const rig = new ClipRig(root ?? new THREE.Group(), root?.animations ?? [], cfg.clips ?? []);
+    const target = root ? commonAncestor(rig.nodes, root) : null;
+    return {
+      cfg, rig, target, tint: target ? new PartTint(target, cfg.id) : null,
+      key: clipsKey(cfg), current: 0, goal: 0,
+    };
+  }
+
+  private _unmountClips(anim: LiveClips) {
+    anim.tint?.restore();
+    anim.rig.restore();
+  }
+
+  private _placeClips(anim: LiveClips) {
+    anim.rig.set(anim.current);
+    anim.tint?.apply(anim.cfg.closedColor, anim.cfg.openColor, anim.current);
+  }
+
+  private _configureClips(anim: LiveClips, cfg: OwlnestPart) {
+    anim.cfg = cfg;
+    if (anim.key !== clipsKey(cfg)) {
+      this._unmountClips(anim);
+      const next = this._mountClips(cfg);
+      anim.rig = next.rig;
+      anim.target = next.target;
+      anim.tint = next.tint;
+      anim.key = next.key;
+    }
+    this._placeClips(anim);
+  }
+
+  /** Monte un ouvrant à pièce ou à nœud sur le modèle tel qu'il est, à côté des autres. */
+  private _mountNow(cfg: OwlnestPart): LiveMesh | null {
+    const root = this._root;
+    if (!root) return null;
+    const claimed = new Set(this.items.flatMap((o) => [o.claim, ...o.followers.map((f) => f.claim)]));
+    const mount = this._resolve(cfg, meshOrder(root), nodeOrder(root), claimed);
+    return mount ? mount() : null;
+  }
+
+  /**
+   * Ouvrant à animations dont une piste pose celui-ci.
+   *
+   * On ne remonte pas jusqu'à l'ancêtre teinté : deux ouvrants d'un même
+   * canapé partagent ce parent, et le premier volerait tous les clics.
+   */
+  animatedOwnerOf(obj: THREE.Object3D): string | null {
+    for (let a: THREE.Object3D | null = obj; a; a = a.parent) {
+      const anim = this.anims.find((x) => x.rig.nodes.includes(a));
+      if (anim) return anim.cfg.id;
+    }
+    return null;
   }
 
   private _root: THREE.Object3D | null = null;
@@ -610,12 +702,15 @@ export class PartController {
 
   /** L'ouvrant est-il monté sur la cible que décrit cette configuration ? */
   hasTarget(cfg: OwlnestPart): boolean {
+    if (this.anims.some((a) => a.cfg.id === cfg.id)) return true;
     const item = this.items.find((i) => i.cfg.id === cfg.id);
     return !!item && item.key === partTargetKey(cfg);
   }
 
-  /** Objet désigné par un ouvrant monté : la pièce détachée ou le nœud. */
+  /** Objet désigné par un ouvrant monté : la pièce détachée, le nœud, ou ce qu'animent ses animations. */
   objectOf(id: string): THREE.Object3D | null {
+    const anim = this.anims.find((a) => a.cfg.id === id);
+    if (anim) return anim.target;
     return this.items.find((i) => i.cfg.id === id)?.target ?? null;
   }
 
@@ -719,8 +814,34 @@ export class PartController {
    * si sa nouvelle cible est introuvable.
    */
   configure(cfg: OwlnestPart): boolean {
+    const at = this.anims.findIndex((a) => a.cfg.id === cfg.id);
+    if (at >= 0) {
+      const anim = this.anims[at];
+      if (cfg.motion === 'animation') { this._configureClips(anim, cfg); return true; }
+      // Retour à un mouvement de pièce : la pose de repos d'abord, c'est sur
+      // elle que la pièce se mesure.
+      this._unmountClips(anim);
+      this.anims.splice(at, 1);
+      const item = this._mountNow(cfg);
+      if (!item) return false;
+      item.current = anim.current;
+      item.goal = anim.goal;
+      this._place(item);
+      this.items.push(item);
+      return true;
+    }
     const item = this.items.find((i) => i.cfg.id === cfg.id);
     if (!item) return false;
+    if (cfg.motion === 'animation') {
+      this._unmount(item);
+      this.items.splice(this.items.indexOf(item), 1);
+      const anim = this._mountClips(cfg);
+      anim.current = item.current;
+      anim.goal = item.goal;
+      this._placeClips(anim);
+      this.anims.push(anim);
+      return true;
+    }
     // Un changement de cible, mais aussi de pieces entrainees : les attacher
     // demande d'extraire de la geometrie, ce que la reconfiguration ne fait pas.
     if (item.key !== partTargetKey(cfg) || item.carryKey !== partCarryKey(cfg)) {
@@ -733,7 +854,7 @@ export class PartController {
   /** Applique les états courants. Retourne `true` si une cible a changé. */
   applyStates(states: Record<string, { state: string; attributes?: Record<string, unknown> } | undefined>): boolean {
     let changed = false;
-    for (const item of this.items) {
+    for (const item of [...this.items, ...this.anims] as Moving[]) {
       const e = states[item.cfg.entity];
       let f = openFraction(item.cfg.entity, e?.state, e?.attributes, item.cfg.openWhen);
       if (item.cfg.invert) f = 1 - f;
@@ -751,19 +872,22 @@ export class PartController {
    */
   update(dt: number): boolean {
     let moving = false;
-    for (const item of this.items) {
-      const diff = item.goal - item.current;
-      if (Math.abs(diff) < 1e-4) {
-        if (item.current !== item.goal) { item.current = item.goal; this._place(item); }
-        continue;
-      }
-      const duration = Math.max(0.05, item.cfg.duration ?? 1.2);
-      const step = dt / duration;
-      item.current += Math.sign(diff) * Math.min(Math.abs(diff), step);
-      this._place(item);
-      moving = true;
-    }
+    for (const item of this.items) if (this._advance(item, dt, () => this._place(item))) moving = true;
+    for (const anim of this.anims) if (this._advance(anim, dt, () => this._placeClips(anim))) moving = true;
     return moving;
+  }
+
+  private _advance(item: Moving, dt: number, place: () => void): boolean {
+    const diff = item.goal - item.current;
+    if (Math.abs(diff) < 1e-4) {
+      if (item.current !== item.goal) { item.current = item.goal; place(); }
+      return false;
+    }
+    const duration = Math.max(0.05, item.cfg.duration ?? 1.2);
+    const step = dt / duration;
+    item.current += Math.sign(diff) * Math.min(Math.abs(diff), step);
+    place();
+    return true;
   }
 
   private _place(item: LiveMesh) {
@@ -1087,11 +1211,13 @@ export class PartController {
 
   /** Position d'un ouvrant, pour l'aperçu de l'éditeur. */
   preview(id: string, fraction: number) {
-    const item = this.items.find((i) => i.cfg.id === id);
+    const item: Moving | undefined = this.items.find((i) => i.cfg.id === id) ?? this.anims.find((a) => a.cfg.id === id);
     if (item) item.goal = Math.min(1, Math.max(0, fraction));
   }
 
   boxOf(id: string): THREE.Box3 | null {
+    const anim = this.anims.find((a) => a.cfg.id === id);
+    if (anim) return anim.target ? new THREE.Box3().setFromObject(anim.target) : null;
     const item = this.items.find((i) => i.cfg.id === id);
     if (!item) return null;
     return new THREE.Box3().setFromObject(item.pivotNode);
@@ -1105,6 +1231,9 @@ export class PartController {
    * nœud peut contenir le pivot d'une pièce détachée avant lui.
    */
   dispose(root?: THREE.Object3D) {
+    // Montées en dernier, rendues en premier.
+    for (let i = this.anims.length - 1; i >= 0; i--) this._unmountClips(this.anims[i]);
+    this.anims = [];
     for (let i = this.items.length - 1; i >= 0; i--) this._unmount(this.items[i]);
     this.items = [];
     this._built = false;
