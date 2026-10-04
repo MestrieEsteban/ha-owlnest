@@ -269,6 +269,16 @@ export interface OwlnestPart {
   node?: string;
   /** Rang du nœud dans le graphe tel que chargé : départage les homonymes. */
   nodeIndex?: number;
+  /**
+   * Emmener les pieces contenues dans le volume de l'ouvrant.
+   *
+   * Une poignee n'est ni soudee au vantail ni groupee avec lui : sur un export
+   * plat, rien dans le graphe ne les relie. La contenance le dit a leur place.
+   * Absent vaut `true` ; `false` ne fait bouger que la piece designee.
+   */
+  carry?: boolean;
+  /** Noms de pieces que l'utilisateur a retirees de l'entrainement. */
+  carryExclude?: string[];
   label?: string;
   motion: PartMotion;
   /**

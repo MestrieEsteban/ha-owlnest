@@ -4,7 +4,7 @@ import { CARD_DEFAULT_ACCENT, CARD_TYPE_LABELS, CARDS_ENABLED } from '../cards/t
 import type { AnchorEditor, EditorTool } from '../editor';
 import type { OwlnestRule } from '../rules/types';
 import { normalizeRule } from '../rules/types';
-import { t, setLang } from '../i18n';
+import { t, tn, setLang } from '../i18n';
 import { openEntityPicker } from '../entities/picker';
 import { deleteScene, summarizeScenes } from '../scene';
 import { PARTS_ENABLED } from '../parts';
@@ -314,6 +314,8 @@ export class EditPanel {
     private getModelOutline?: () => ModelOutline | null,
     /** Surligne dans la vue ce que l'arborescence survole et sélectionne. */
     private onHighlightPart?: (req: PartHighlightRequest) => void,
+    /** Nombre de pièces que l'ouvrant emmène, au dernier montage. */
+    private getCarriedCount?: (id: string) => number,
   ) {}
 
   // ── Card undo/redo ────────────────────────────────────────────────────────
@@ -3897,6 +3899,30 @@ export class EditPanel {
     });
     invWrap.append(inv, document.createTextNode(t('partInvert')));
 
+    // ── Pieces emmenees ───────────────────────────────────────────────────
+    // Sur un export plat, une poignee n'est ni soudee au vantail ni groupee
+    // avec lui : seule sa place dans le volume de l'ouvrant dit qu'elle doit
+    // suivre. L'option existe parce que le critere peut se tromper.
+    const carryWrap = document.createElement('label');
+    carryWrap.style.cssText = 'display:flex;align-items:center;gap:7px;font-size:11px;color:#cbd5e1;cursor:pointer;';
+    const carry = document.createElement('input');
+    carry.type = 'checkbox';
+    carry.checked = draft.carry !== false;
+    carry.title = t('partCarryHint');
+    const carryCount = document.createElement('div');
+    carryCount.style.cssText = 'font-size:10px;color:#64748b;margin:3px 0 12px 22px;';
+    const showCarried = () => {
+      const n = this.getCarriedCount?.(draft.id) ?? 0;
+      carryCount.textContent = draft.carry === false ? '' : (n ? tn('partCarryCount', n) : t('partCarryNone'));
+    };
+    carry.addEventListener('change', () => {
+      draft.carry = carry.checked ? undefined : false;
+      apply();
+      showCarried();
+    });
+    carryWrap.append(carry, document.createTextNode(t('partCarry')));
+    showCarried();
+
     // ── Teinte par état ───────────────────────────────────────────────────
     // Même contrôle que la couleur d'une ancre ; le bouton revient au défaut,
     // qui est ici l'absence de teinte.
@@ -3957,6 +3983,8 @@ export class EditPanel {
     rebuildSpecific();
     field(t('partDuration'), dur);
     body.appendChild(invWrap);
+    body.appendChild(carryWrap);
+    body.appendChild(carryCount);
     body.appendChild(tintBox);
     field(t('partPreview'), previewBox, tintBox);
 

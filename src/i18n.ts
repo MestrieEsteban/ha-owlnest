@@ -48,6 +48,10 @@ const STRINGS = {
     partTravel:     'Travel',
     partDuration:   'Duration (seconds)',
     partInvert:     'Reverse: open in Home Assistant shows as closed',
+    partCarry:      'Carry the pieces inside it',
+    partCarryHint:  'A handle is rarely attached to its door in the model. Whatever sits inside the opening moves with it; the frame, which sticks out, stays.',
+    partCarryCount: (n: number) => `${n} piece${n !== 1 ? 's' : ''} carried`,
+    partCarryNone:  'Nothing inside to carry',
     partPreview:    'Preview',
     partPreviewNote:'Moves the opening on screen only — your house is not touched.',
     partColorClosed: 'Closed colour',
@@ -649,6 +653,10 @@ const STRINGS = {
     partTravel:     'Course',
     partDuration:   'Durée (secondes)',
     partInvert:     "Inverser : ouvert dans Home Assistant s'affiche fermé",
+    partCarry:      'Emmener les pièces contenues',
+    partCarryHint:  'Une poignée est rarement rattachée à sa porte dans le modèle. Ce qui tient dans le volume de l\'ouvrant le suit ; le dormant, qui dépasse, reste en place.',
+    partCarryCount: (n: number) => `${n} pièce${n !== 1 ? 's' : ''} emmenée${n !== 1 ? 's' : ''}`,
+    partCarryNone:  'Rien à emmener à l\'intérieur',
     partPreview:    'Aperçu',
     partPreviewNote:"Déplace l'ouvrant à l'écran seulement — ta maison n'est pas touchée.",
     partColorClosed: 'Couleur fermé',
@@ -1218,6 +1226,6 @@ export function t(key: StringKey): string {
 }
 
 // For string keys that map to a function (pluralization helpers)
-export function tn(key: 'anchors_n' | 'cards_n' | 'rules_n' | 'pickCount' | 'pickAddN', n: number): string {
+export function tn(key: 'anchors_n' | 'cards_n' | 'rules_n' | 'pickCount' | 'pickAddN' | 'partCarryCount', n: number): string {
   return (STRINGS[_lang][key] as (n: number) => string)(n);
 }
