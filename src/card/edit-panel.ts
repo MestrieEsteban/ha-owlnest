@@ -1079,6 +1079,8 @@ export class EditPanel {
 
       const body = document.createElement('div');
       body.style.cssText = 'padding:2px 2px 12px;';
+
+
       box.appendChild(body);
 
       // `toggle` ne sert qu'à l'apparence : il se déclenche aussi quand le
@@ -3533,6 +3535,9 @@ export class EditPanel {
      */
     let saveTimer: ReturnType<typeof setTimeout> | null = null;
     let closed = false;
+    // Rempli une fois les sections construites, plus bas.
+    let refreshDigests: () => void = () => {};
+
     const apply = () => {
       if (closed) return;
       if (!this.onConfigurePart?.({ ...draft })) {
@@ -3541,6 +3546,7 @@ export class EditPanel {
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(() => { void this._commitPart(draft, false); }, 600);
       refreshReadout();
+      refreshDigests();
     };
 
     // Non modal (`show()`, pas `showModal()`) : le modèle doit rester
@@ -3624,7 +3630,78 @@ export class EditPanel {
       apply();
       if (draft.motion === 'extend') { redetect(false); rebuildSpecific(); }
     });
-    if (objectSection) body.appendChild(objectSection.el);
+
+    /**
+     * Section repliable, avec un resume a droite quand elle est fermee.
+     *
+     * Onze reglages a plat ne s'apprennent pas : on ne sait pas lesquels vont
+     * ensemble, ni lesquels on peut ignorer. Quatre questions, si — ce qui
+     * bouge, comment, quand, et de quelle couleur.
+     *
+     * Le resume evite le defaut des sections repliees : devoir tout ouvrir
+     * pour retrouver un reglage. Ferme, chaque bandeau dit deja l'essentiel.
+     */
+    const section = (key: string, label: string, openByDefault: boolean) => {
+      const box = document.createElement('details');
+      box.open = this._partFold[key] ?? openByDefault;
+      box.style.cssText = 'margin-bottom:10px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;background:rgba(255,255,255,0.02);';
+
+      const head = document.createElement('summary');
+      head.style.cssText = 'cursor:pointer;list-style:none;display:flex;align-items:center;gap:6px;padding:7px 9px;user-select:none;';
+      const chevron = document.createElement('span');
+      chevron.textContent = '\u25b8';
+      chevron.style.cssText = 'font-size:8px;color:#475569;transition:transform .15s;display:inline-block;';
+      const name = document.createElement('span');
+      name.style.cssText = 'font-size:9px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:.06em;flex-shrink:0;';
+      name.textContent = label;
+      const digest = document.createElement('span');
+      digest.style.cssText = 'flex:1;min-width:0;text-align:right;font-size:10px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+      head.append(chevron, name, digest);
+      box.appendChild(head);
+
+      const inner = document.createElement('div');
+      inner.style.cssText = 'padding:0 9px 9px;';
+      box.appendChild(inner);
+
+      const paint = () => { chevron.style.transform = box.open ? 'rotate(90deg)' : 'none'; };
+      box.addEventListener('toggle', () => { this._partFold[key] = box.open; paint(); });
+      paint();
+
+      body.appendChild(box);
+      return { inner, digest };
+    };
+
+    const secWhat = section('what', t('partSecWhat'), true);
+    const secMotion = section('motion', t('partSecMotion'), true);
+    const secEntity = section('entity', t('partSecEntity'), true);
+    const secLook = section('look', t('partSecLook'), false);
+    if (objectSection) secWhat.inner.appendChild(objectSection.el);
+
+    /**
+     * Ce que chaque section affiche quand elle est fermee.
+     *
+     * On montre ce qui distingue cet ouvrant des autres, pas le nom du reglage.
+     */
+    refreshDigests = () => {
+      const extras = draft.extra?.length ?? 0;
+      const object = draft.node ?? t('partSecPiece');
+      secWhat.digest.textContent = extras ? `${object} + ${extras}` : object;
+
+      const motion = draft.motion === 'swing' ? t('partSwing')
+        : draft.motion === 'slide' ? t('partSlide') : t('partExtend');
+      const detail = draft.motion === 'swing' ? `${draft.angle ?? 90}\u00b0`
+        : draft.motion === 'slide' ? `${Math.round((draft.travel ?? 1) * 100)} %` : '';
+      secMotion.digest.textContent = [motion.split(' (')[0], detail, `${draft.duration ?? 1.2} s`]
+        .filter(Boolean).join(' \u00b7 ');
+
+      secEntity.digest.textContent = draft.entity || t('partSecNoEntity');
+
+      const colours = [draft.closedColor, draft.openColor].filter(Boolean) as string[];
+      secLook.digest.textContent = colours.length ? colours.join(' \u2192 ') : t('partSecNoColour');
+    };
+
+    // Les bandeaux doivent parler des l'ouverture, pas au premier reglage.
+    refreshDigests();
 
     const field = (label: string, control: HTMLElement, into: HTMLElement = body) => {
       const wrap = document.createElement('div');
@@ -3656,7 +3733,7 @@ export class EditPanel {
       apply();
     });
     // En tête du formulaire, au-dessus de la section « Objet ».
-    body.prepend(field(t('partName'), nameInput));
+    secWhat.inner.prepend(field(t('partName'), nameInput, secWhat.inner));
     refreshName();
 
     // ── Entité ────────────────────────────────────────────────────────────
@@ -3668,17 +3745,17 @@ export class EditPanel {
       rebuildStates();
       apply();
     });
-    field(t('partEntity'), entityWrap);
+    field(t('partEntity'), entityWrap, secEntity.inner);
 
     // ── Ce que la carte lit de cette entité ───────────────────────────────
     // Sans ça, une entité mal interprétée ressemble à une panne : on montre
     // l'état courant et la conclusion qu'en tire la carte.
     const readout = document.createElement('div');
     readout.style.cssText = 'background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:7px;padding:7px 9px;margin-bottom:12px;font-size:10px;line-height:1.6;';
-    body.appendChild(readout);
+    secEntity.inner.appendChild(readout);
 
     const statesBox = document.createElement('div');
-    body.appendChild(statesBox);
+    secEntity.inner.appendChild(statesBox);
 
     const currentFraction = (): { state: string | undefined; frac: number } => {
       const st = this.getHass()?.states[draft.entity];
@@ -3768,10 +3845,10 @@ export class EditPanel {
       motionSel.appendChild(styleOption(o));
     }
     motionSel.value = draft.motion;
-    field(t('partMotion'), motionSel);
+    field(t('partMotion'), motionSel, secMotion.inner);
 
     const specific = document.createElement('div');
-    body.appendChild(specific);
+    secMotion.inner.appendChild(specific);
 
     const slider = (
       into: HTMLElement, label: string,
@@ -4223,15 +4300,15 @@ export class EditPanel {
     // Ordre d'affichage : réglages du mouvement, puis durée, inversion,
     // teintes et aperçu — l'aperçu juste dessous montre le fondu.
     rebuildSpecific();
-    field(t('partDuration'), dur);
-    body.appendChild(invWrap);
-    body.appendChild(extraTitle);
+    field(t('partDuration'), dur, secMotion.inner);
+    secMotion.inner.appendChild(invWrap);
+    secWhat.inner.appendChild(extraTitle);
     fillExtra();
-    body.appendChild(extraList);
-    body.appendChild(extraAdd);
-    body.appendChild(carryWrap);
-    body.appendChild(carryCount);
-    body.appendChild(tintBox);
+    secWhat.inner.appendChild(extraList);
+    secWhat.inner.appendChild(extraAdd);
+    secWhat.inner.appendChild(carryWrap);
+    secWhat.inner.appendChild(carryCount);
+    secLook.inner.appendChild(tintBox);
     field(t('partPreview'), previewBox, tintBox);
 
     // ── Pied ──────────────────────────────────────────────────────────────
@@ -4304,6 +4381,8 @@ export class EditPanel {
 
   /** Section « Objet » repliée ou non, d'un formulaire à l'autre. */
   private _partObjectOpen = true;
+  /** Sections depliees de la fenetre d'ouvrant, retenues entre deux ouvertures. */
+  private _partFold: Record<string, boolean> = {};
 
   /**
    * Choix de l'objet animé, façon « Outliner » de Blender.
