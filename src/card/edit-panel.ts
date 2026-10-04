@@ -5,6 +5,7 @@ import type { AnchorEditor, EditorTool } from '../editor';
 import type { OwlnestRule } from '../rules/types';
 import { normalizeRule } from '../rules/types';
 import { t, tn, setLang } from '../i18n';
+import { makeDraggable, type WindowPos } from './draggable';
 import { openEntityPicker } from '../entities/picker';
 import { deleteScene, summarizeScenes } from '../scene';
 import { PARTS_ENABLED } from '../parts';
@@ -3379,7 +3380,9 @@ export class EditPanel {
   private _partModalId: string | null = null;
   private _discardPartModal: (() => void) | null = null;
   /** Dernière position du formulaire, reprise à la prochaine ouverture. */
-  private _partModalPos: { left: number; top: number } | null = null;
+  private _partModalPos: WindowPos | null = null;
+  /** Derniere position de la fenetre de regle, dans cette session de page. */
+  private _ruleModalPos: WindowPos | null = null;
 
   /**
    * Sections de réglages ouvertes.
@@ -3569,39 +3572,12 @@ export class EditPanel {
     });
 
     const hdr = document.createElement('div');
-    hdr.style.cssText = 'display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.08);flex-shrink:0;gap:8px;cursor:move;user-select:none;touch-action:none;';
+    hdr.style.cssText = 'display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.08);flex-shrink:0;gap:8px;';
 
-    const placeAt = (left: number, top: number) => {
-      const r = dialog.getBoundingClientRect();
-      // On garde au moins l'en-tête à l'écran, sinon plus moyen de le rattraper.
-      const maxLeft = window.innerWidth - Math.min(r.width, 80);
-      const maxTop = window.innerHeight - hdr.offsetHeight;
-      const x = Math.max(Math.min(r.width, 80) - r.width, Math.min(left, maxLeft));
-      const y = Math.max(0, Math.min(top, maxTop));
-      dialog.style.transform = 'none';
-      dialog.style.left = `${x}px`;
-      dialog.style.top = `${y}px`;
-      this._partModalPos = { left: x, top: y };
-    };
-    let drag: { dx: number; dy: number; id: number } | null = null;
-    hdr.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0) return;
-      const r = dialog.getBoundingClientRect();
-      drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, id: e.pointerId };
-      hdr.setPointerCapture(e.pointerId);
-      e.preventDefault();
+    makeDraggable(dialog, hdr, {
+      get: () => this._partModalPos,
+      set: (pos) => { this._partModalPos = pos; },
     });
-    hdr.addEventListener('pointermove', (e) => {
-      if (!drag || e.pointerId !== drag.id) return;
-      placeAt(e.clientX - drag.dx, e.clientY - drag.dy);
-    });
-    const endDrag = (e: PointerEvent) => {
-      if (!drag || e.pointerId !== drag.id) return;
-      drag = null;
-      hdr.releasePointerCapture(e.pointerId);
-    };
-    hdr.addEventListener('pointerup', endDrag);
-    hdr.addEventListener('pointercancel', endDrag);
     const title = document.createElement('div');
     title.style.cssText = 'font-size:12px;font-weight:700;flex:1;';
     title.textContent = t('partTitle');
@@ -4369,7 +4345,6 @@ export class EditPanel {
 
     document.body.appendChild(dialog);
     dialog.show();
-    if (this._partModalPos) placeAt(this._partModalPos.left, this._partModalPos.top);
     objectSection?.reveal();
 
     // La pièce doit exister côté carte pour que l'aperçu et les réglages en
@@ -4756,6 +4731,10 @@ export class EditPanel {
     hdrEl.appendChild(hdrTitle);
     hdrEl.appendChild(closeBtn);
     dialog.appendChild(hdrEl);
+    makeDraggable(dialog, hdrEl, {
+      get: () => this._ruleModalPos,
+      set: (pos) => { this._ruleModalPos = pos; },
+    });
 
     // Body
     const bodyEl = document.createElement('div');

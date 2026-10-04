@@ -20,6 +20,7 @@ import {
   loadRegistry, areaOf, deviceOf, floorOf, isTechnical, displayName,
   type Registry,
 } from './registry';
+import { makeDraggable, type WindowPos } from '../card/draggable';
 
 export type GroupMode = 'area' | 'device' | 'domain';
 
@@ -90,6 +91,13 @@ const CSS = {
     'font-family:inherit', 'white-space:nowrap',
   ].join(';'),
 };
+
+/**
+ * Position du selecteur, retenue le temps de la page.
+ *
+ * On le rouvre a chaque ancre : le replacer a chaque fois serait penible.
+ */
+let pickerPos: WindowPos | null = null;
 
 export function openEntityPicker(opts: PickerOptions): () => void {
   const { container, hass, placed = new Set(), onPick, onPickNone, onCancel } = opts;
@@ -177,6 +185,12 @@ export function openEntityPicker(opts: PickerOptions): () => void {
   footer.append(hint, actions);
 
   panel.append(header, list, footer);
+  // L'en-tete porte le champ de recherche : `makeDraggable` laisse les
+  // controles tranquilles et ne tire la fenetre que par ses zones vides.
+  makeDraggable(panel, header, {
+    get: () => pickerPos,
+    set: (pos) => { pickerPos = pos; },
+  });
   // Détaché de la carte : une modale doit être dans le document pour rejoindre
   // le top layer. `container` n'est conservé que pour la compatibilité d'appel.
   void container;
