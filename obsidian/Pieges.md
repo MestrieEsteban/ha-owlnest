@@ -38,6 +38,27 @@ Voir `src/model-errors.ts`. Le `Ctrl+Maj+R` **ne suffit pas** ici : le recharge
 > [!warning] Le piège du piège
 > Le même mécanisme frappe ailleurs : la carte elle-même reste en cache après une mise à jour HACS, d'où l'étape de rafraîchissement forcé du README. Voir [[Chantiers ouverts]].
 
+### L'animation qui ne finit jamais
+
+Signalement #3 : une ancre « groupe d'entités » avec **deux entrées ou plus** ouvre sa roue, les pastilles « grandissent depuis le centre » en boucle, et au mieux une seule reste visible.
+
+Cause : `ClusterOverlay.update()` reconstruisait le menu entier, et il est appelé depuis `_updateOverlayStates()`, c'est-à-dire **à chaque poussee d'état de Home Assistant**. Chaque pastille naît en `scale(0)` puis grandit via `setTimeout(…, idx * 35)` : la reconstruction les renvoyait à zéro avant la fin.
+
+> [!tip] Le détail qui désigne la cause
+> « Avec deux entités ou plus ». La pastille d'indice 0 a un délai **nul** : elle réapparaît immédiatement, les suivantes jamais. Un bug qui dépend du **rang** dans une liste pointe un délai indexé, pas une erreur de rendu.
+
+Correction : rafraîchir sur place (couleur, valeur, halo, étiquette) et ne reconstruire que si le **nombre** d'entrées change. `transform` et `opacity` ne sont plus touchés hors construction — ce sont eux qui portent l'animation.
+
+Deux pièges dans la correction elle-même :
+
+- L'icône ne peut pas s'écrire dans `el.innerHTML` : l'étiquette en est un enfant et serait effacée. D'où un nœud `content` dédié.
+- Les gestionnaires de clic ne doivent plus **capturer** `item`, sinon un rafraîchissement laisserait un clic déclencher l'action précédente. Ils lisent `entry.item`, réécrit à chaque passage.
+
+Vérifié par A/B dans `dev/anchors-harness.html`, qui subit 34 poussées d'état en 400 ms : **0/3 pastilles ouvertes avant correction, 3/3 après**.
+
+> [!warning] Sélecteur trompeur
+> Le banc cherchait `div[style*="border-radius:50%"]` et ne trouvait rien : le navigateur **normalise** l'attribut en `border-radius: 50%`, avec une espace. Lire `el.style.borderRadius`, jamais la chaîne de style.
+
 ### La donnée perdue en silence
 
 Trois fois le même schéma : une liste blanche de champs qui n'a pas suivi l'ajout de nouveaux champs.
