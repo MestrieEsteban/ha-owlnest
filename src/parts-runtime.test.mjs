@@ -845,3 +845,40 @@ test('la pièce de l’ouvrant lui-même n’est pas reprise deux fois', () => {
   const leaf = animated(root);
   assert.ok(leaf, 'le vantail est monté normalement');
 });
+
+test('ajouter une pièce en direct la fait suivre sans enregistrer', () => {
+  // Le symptôme signalé : la pièce s'ajoutait à la configuration mais restait
+  // en place, parce que `configure` reconfigure sans remonter.
+  const root = modelAvecPoignees();
+  const c = new PartController();
+  c.build(root, [DOOR]);
+  assert.equal(positionPoignee(root), null, 'rien ne suit au départ');
+
+  assert.equal(c.configure({ ...DOOR, extra: [POIGNEE] }), true);
+  const ferme = positionPoignee(root);
+  assert.ok(ferme, 'la pièce est attachée dès la configuration');
+
+  openFully(c, root);
+  assert.ok(ferme.distanceTo(positionPoignee(root)) > 1, 'et elle suit le mouvement');
+});
+
+test('retirer une pièce en direct la remet en place', () => {
+  const root = modelAvecPoignees();
+  const c = new PartController();
+  c.build(root, [{ ...DOOR, extra: [POIGNEE] }]);
+  assert.ok(positionPoignee(root), 'elle est attachée');
+
+  assert.equal(c.configure({ ...DOOR }), true);
+  assert.equal(positionPoignee(root), null, 'elle est rendue à sa maille');
+});
+
+test('un réglage ordinaire ne remonte pas l’ouvrant', () => {
+  // Le remontage coûte une extraction de géométrie : il ne doit avoir lieu
+  // que lorsque les pièces changent, pas à chaque mouvement de curseur.
+  const root = modelAvecPoignees();
+  const c = new PartController();
+  c.build(root, [{ ...DOOR, extra: [POIGNEE] }]);
+  const avant = animated(root);
+  c.configure({ ...DOOR, extra: [POIGNEE], angle: 45 });
+  assert.equal(animated(root), avant, 'le même nœud animé est conservé');
+});
