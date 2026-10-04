@@ -1152,6 +1152,18 @@ export type StringKey = keyof typeof STRINGS['en'];
 
 let _lang: Lang = 'en';
 
+/**
+ * Langue de la carte d'apres l'etiquette du frontend Home Assistant.
+ *
+ * On ne garde que la sous-etiquette primaire : `fr-FR`, `fr-CA` et `FR` menent
+ * tous au francais. Toute langue que la carte ne traduit pas retombe sur
+ * l'anglais, qui reste la langue par defaut du projet.
+ */
+export function langFromLocale(locale?: string | null): Lang {
+  const primary = String(locale ?? '').trim().toLowerCase().split(/[-_]/)[0];
+  return primary === 'fr' ? 'fr' : 'en';
+}
+
 export function setLang(lang: Lang): void { _lang = lang; }
 export function getLang(): Lang { return _lang; }
 

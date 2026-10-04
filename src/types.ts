@@ -69,6 +69,15 @@ export interface Hass {
    * Absents sur les versions plus anciennes : voir entities/registry.ts, qui
    * bascule alors sur les commandes WebSocket équivalentes.
    */
+  /**
+   * Langue du frontend, telle que Home Assistant l'expose.
+   *
+   * `language` est une etiquette BCP 47 (`fr`, `fr-FR`, `pt-BR`). `locale` est
+   * la forme structuree des versions recentes ; on lit les deux, la premiere
+   * presente gagne.
+   */
+  language?: string;
+  locale?: { language?: string };
   areas?: Record<string, unknown>;
   devices?: Record<string, unknown>;
   entities?: Record<string, unknown>;

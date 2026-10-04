@@ -28,6 +28,7 @@ const ENTRIES = [
   'src/lights.ts',
   'src/scale.ts',
   'src/model-errors.ts',
+  'src/i18n.ts',
 ];
 
 /**

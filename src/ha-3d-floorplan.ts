@@ -11,7 +11,7 @@ import { AnchorOverlay, SensorOverlay, ClusterOverlay, LabelOverlay, CameraOverl
 import type { ClusterItem } from './overlay';
 import { AnchorEditor } from './editor';
 import { loadScene, saveScene, listScenes, sceneToEffectiveConfig, buildSceneFromEditor, normalizeViews } from './scene';
-import { setLang, t } from './i18n';
+import { setLang, langFromLocale, t } from './i18n';
 import { qualityFromConfig, qualityKey, profileFor } from './quality';
 import { describeEntity, fallbackIcon } from './entities/descriptors';
 import './card-editor';
@@ -70,6 +70,8 @@ class Ha3dFloorplan extends HTMLElement {
   // Scene backend
   private _scene: OwlnestScene | null = null;
   private _sceneLoading = false;
+  /** Une scene a impose sa langue : ne plus suivre celle de Home Assistant. */
+  private _langFromScene = false;
 
   private renderer: THREE.WebGLRenderer | null = null;
   private scene: THREE.Scene | null = null;
@@ -246,6 +248,14 @@ class Ha3dFloorplan extends HTMLElement {
     this._hass = hass;
     this._editor?.setHass(hass);
 
+    // Tant qu'aucune scene n'a choisi de langue, on suit celle du frontend :
+    // sans cela un utilisateur francophone lirait l'anglais jusqu'a decouvrir
+    // un reglage qu'il ne soupconne pas. Un choix explicite prime ensuite, et
+    // `_langFromScene` l'empeche d'etre ecrase a la poussee d'etat suivante.
+    if (!this._langFromScene) {
+      setLang(langFromLocale(hass.language ?? hass.locale?.language));
+    }
+
     // If scene_id is configured and scene hasn't been fetched yet, do it now.
     // _loadModel() is deferred until scene data is available.
     const activeSceneId = this._getActiveSceneId();
@@ -297,7 +307,10 @@ class Ha3dFloorplan extends HTMLElement {
       .then((scene) => {
         this._scene = scene;
         this._sceneLoading = false;
-        if (scene.settings?.language) setLang(scene.settings.language);
+        if (scene.settings?.language) {
+          this._langFromScene = true;
+          setLang(scene.settings.language);
+        }
         this._loadModel();
       })
       .catch((err) => {
@@ -1079,7 +1092,10 @@ class Ha3dFloorplan extends HTMLElement {
           anchors: [], camera_views: [], cards: [], rules: [],
         };
         this._scene = { ...this._scene, settings: { ...this._scene.settings, ...s } };
-        if (s.language) setLang(s.language);
+        if (s.language) {
+          this._langFromScene = true;
+          setLang(s.language);
+        }
         if (reloadScene) {
           // scene_id was changed — store in localStorage and fully reload
           const newId = (s as Record<string, unknown>)['scene_id'] as string | undefined;
