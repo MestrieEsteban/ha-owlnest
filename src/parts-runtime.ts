@@ -327,7 +327,10 @@ export class PartController {
     mesh.add(pivotNode);
     pivotNode.add(object);
 
-    const releaseCarried = this._bringAlong(pivotNode, object, mesh, cfg);
+    // Les pièces entraînées sont montées plus bas, une fois le vantail placé :
+    // `_configure` déplace le pivot sur le gond et ne compense que `object`.
+    // Attachées avant, elles encaisseraient ce décalage sans correction.
+    let releaseCarried: () => void = () => {};
 
     const item: LiveMesh = {
       cfg, pivotNode, object, target: object, tint: new PartTint(object, cfg.id),
@@ -343,6 +346,9 @@ export class PartController {
       span: 0, axis: 'x', sign: 1, rest: 0, current: 0, goal: 0,
     };
     this._configure(item, cfg);
+    // Le vantail porte les pièces : elles suivent ainsi tout changement de côté
+    // de gonds, qui replace `object` sans toucher au reste.
+    releaseCarried = this._bringAlong(object, object, mesh, cfg);
     return item;
   }
 
@@ -385,8 +391,15 @@ export class PartController {
     return out;
   }
 
+  /**
+   * Monte sous `carrier` les pieces qui doivent suivre l'ouvrant.
+   *
+   * `carrier` est le vantail lui-meme, et non le pivot : c'est lui que
+   * `_configure` replace a chaque changement de cote de gonds, et les pieces
+   * doivent rester solidaires de la piece visible, pas du point de rotation.
+   */
   private _bringAlong(
-    pivotNode: THREE.Group,
+    carrier: THREE.Object3D,
     object: THREE.Object3D,
     host: THREE.Object3D,
     cfg: OwlnestPart,
@@ -416,7 +429,7 @@ export class PartController {
       detached.userData.owlnestPartId = cfg.id;
       detached.material = untinted(piece.mesh.material);
       // `attach` et non `add` : la position a l'ecran ne doit pas bouger.
-      pivotNode.attach(detached);
+      carrier.attach(detached);
       return { source: piece.mesh, part: piece.part, saved, detached };
     });
     this.carried.set(cfg.id, found.map((piece) => piece.name));
@@ -454,7 +467,7 @@ export class PartController {
     host.add(pivotNode);
     pivotNode.add(holder);
     holder.add(node);
-    const releaseCarried = this._bringAlong(pivotNode, node, node, cfg);
+    let releaseCarried: () => void = () => {};
     // Le support se trouve en `origin` quand l'ouvrant est fermé : le nœud
     // recule d'autant. Valable parce que le support n'a ni rotation ni échelle.
     node.position.sub(origin);
@@ -473,6 +486,7 @@ export class PartController {
       span: 0, axis: 'x', sign: 1, rest: 0, current: 0, goal: 0,
     };
     this._configure(item, cfg);
+    releaseCarried = this._bringAlong(node, node, node, cfg);
     return item;
   }
 

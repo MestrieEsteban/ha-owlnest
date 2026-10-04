@@ -882,3 +882,57 @@ test('un réglage ordinaire ne remonte pas l’ouvrant', () => {
   c.configure({ ...DOOR, extra: [POIGNEE], angle: 45 });
   assert.equal(animated(root), avant, 'le même nœud animé est conservé');
 });
+
+test('la pièce ne bouge pas d’un pouce au montage', () => {
+  // Le défaut signalé : elle suivait bien le mouvement, mais partait loin de la
+  // porte. `_configure` déplace le pivot sur le gond et ne compense que le
+  // vantail ; une pièce montée sur le pivot encaissait ce décalage.
+  //
+  // On mesure la boîte englobante et non la position de l'objet : c'est ce que
+  // l'œil voit, et l'origine d'une pièce détachée n'est pas son centre.
+  const root = modelAvecPoignees();
+  const c = new PartController();
+  c.build(root, [{ ...DOOR, extra: [POIGNEE] }]);
+  root.updateMatrixWorld(true);
+
+  let piece = null;
+  root.traverse((o) => { if (!piece && o.name.startsWith('Poignees#')) piece = o; });
+  const centre = new THREE.Box3().setFromObject(piece).getCenter(new THREE.Vector3());
+
+  // La poignée désignée est modélisée centrée en (35, 0, 0).
+  assert.ok(centre.distanceTo(new THREE.Vector3(35, 0, 0)) < 1e-6,
+    `centre attendu (35, 0, 0), obtenu (${centre.toArray().map((v) => v.toFixed(2)).join(', ')})`);
+});
+
+test('la pièce reste solidaire du vantail pendant toute l’ouverture', () => {
+  const root = modelAvecPoignees();
+  const c = new PartController();
+  c.build(root, [{ ...DOOR, extra: [POIGNEE] }]);
+
+  const ecart = () => {
+    root.updateMatrixWorld(true);
+    const leaf = animated(root).children[0];
+    return leaf.getWorldPosition(new THREE.Vector3()).distanceTo(positionPoignee(root));
+  };
+  const ferme = ecart();
+  c.preview('p1', 0.5);
+  for (let i = 0; i < 100 && c.update(0.1); i++);
+  const mi = ecart();
+  openFully(c, root);
+  const ouvert = ecart();
+
+  assert.ok(Math.abs(ferme - mi) < 1e-3, `écart constant à mi-course (${ferme} vs ${mi})`);
+  assert.ok(Math.abs(ferme - ouvert) < 1e-3, `écart constant ouvert (${ferme} vs ${ouvert})`);
+});
+
+test('changer le côté des gonds n’éloigne pas la pièce', () => {
+  // Le côté des gonds replace `object` : une pièce montée sur le pivot
+  // deriverait a chaque bascule.
+  const root = modelAvecPoignees();
+  const c = new PartController();
+  c.build(root, [{ ...DOOR, extra: [POIGNEE] }]);
+  const avant = positionPoignee(root).clone();
+  c.configure({ ...DOOR, extra: [POIGNEE], hinge: 'end' });
+  const apres = positionPoignee(root);
+  assert.ok(avant.distanceTo(apres) < 1e-3, `la pièce reste en place (${avant.distanceTo(apres)})`);
+});

@@ -23635,7 +23635,9 @@ class P0 {
     i.userData.owlnestPartId = n.id, i.material = Vd(e.material);
     const l = new ut();
     l.userData.owlnestPartId = n.id, e.add(l), l.add(i);
-    const c = this._bringAlong(l, i, e, n), d = {
+    let c = () => {
+    };
+    const d = {
       cfg: n,
       pivotNode: l,
       object: i,
@@ -23657,7 +23659,7 @@ class P0 {
       current: 0,
       goal: 0
     };
-    return this._configure(d, n), d;
+    return this._configure(d, n), c = this._bringAlong(i, i, e, n), d;
   }
   /**
    * Emmene les pieces contenues dans le volume de l'ouvrant.
@@ -23691,6 +23693,13 @@ class P0 {
     }
     return i;
   }
+  /**
+   * Monte sous `carrier` les pieces qui doivent suivre l'ouvrant.
+   *
+   * `carrier` est le vantail lui-meme, et non le pivot : c'est lui que
+   * `_configure` replace a chaque changement de cote de gonds, et les pieces
+   * doivent rester solidaires de la piece visible, pas du point de rotation.
+   */
   _bringAlong(e, t, n, i) {
     if (this.carried.set(i.id, []), !this._root) return () => {
     };
@@ -23730,7 +23739,8 @@ class P0 {
     l.userData.owlnestPartId = t.id;
     const c = new ut();
     c.userData.owlnestPartId = t.id, n.add(l), l.add(c), c.add(e);
-    const d = this._bringAlong(l, e, e, t);
+    let d = () => {
+    };
     e.position.sub(o);
     const h = {
       cfg: t,
@@ -23754,7 +23764,7 @@ class P0 {
       current: 0,
       goal: 0
     };
-    return this._configure(h, t), h;
+    return this._configure(h, t), d = this._bringAlong(e, e, e, t), h;
   }
   /** Défait le montage d'un ouvrant. */
   _unmount(e) {
