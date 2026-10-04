@@ -297,6 +297,29 @@ test('changer de côté de gonds ne demande plus de reconstruction', () => {
   assert.ok(a * b < 0, 'les deux côtés ouvrent en sens opposés');
 });
 
+test('swingSide inverse le sens d’ouverture, quel que soit le côté des gonds', () => {
+  const root = model();
+  const c = new PartController();
+  c.build(root, [DOOR]);
+  const open = (cfg) => {
+    c.configure(cfg);
+    c.preview('p1', 0);
+    let guard = 0;
+    while (c.update(0.1) && guard++ < 100);
+    c.preview('p1', 1);
+    guard = 0;
+    while (c.update(0.1) && guard++ < 100);
+    return animated(root).rotation.z;
+  };
+
+  for (const hinge of ['start', 'end']) {
+    const front = open({ ...DOOR, hinge });
+    const back = open({ ...DOOR, hinge, swingSide: 'back' });
+    assert.ok(Math.abs(Math.abs(front) - Math.PI / 2) < 1e-6, 'l’angle est conservé');
+    assert.ok(Math.abs(front + back) < 1e-6, `gonds ${hinge} : les deux côtés s’opposent`);
+  }
+});
+
 test('le gond reste immobile après un changement de côté', () => {
   const root = model();
   const c = new PartController();
@@ -312,6 +335,182 @@ test('le gond reste immobile après un changement de côté', () => {
   const opened = node.localToWorld(new THREE.Vector3(0, 0, 0));
 
   assert.ok(closed.distanceTo(opened) < 1e-6, 'le pivot ne se déplace jamais');
+});
+
+// ── Abattant ────────────────────────────────────────────────────────────────
+
+const FLAP = { ...DOOR, swingAxis: 'horizontal' };
+
+function openFully(c, root) {
+  c.preview('p1', 0);
+  let guard = 0;
+  while (c.update(0.1) && guard++ < 100);
+  c.preview('p1', 1);
+  guard = 0;
+  while (c.update(0.1) && guard++ < 100);
+  root.updateMatrixWorld(true);
+  return animated(root);
+}
+
+test('un abattant pivote autour de l’axe horizontal du vantail', () => {
+  const root = model();
+  const c = new PartController();
+  c.build(root, [FLAP]);
+  const node = openFully(c, root);
+  // Vantail 90 × 6 × 200, hauteur en Z : l'axe horizontal est X.
+  assert.ok(Math.abs(Math.abs(node.rotation.x) - Math.PI / 2) < 1e-6, 'l’angle est respecté');
+  assert.equal(node.rotation.z, 0, 'pas de rotation verticale');
+});
+
+test('un abattant ouvert en bas se rabat sans quitter son arête basse', () => {
+  const root = model();
+  const c = new PartController();
+  c.build(root, [FLAP]);
+  root.updateMatrixWorld(true);
+  const closed = c.boxOf('p1');
+  openFully(c, root);
+  const opened = c.boxOf('p1');
+
+  // À plat, seule la demi-épaisseur (3) dépasse sous le gond.
+  assert.ok(Math.abs(opened.min.z - (closed.min.z - 3)) < 1e-3, 'le bas reste au niveau du gond');
+  assert.ok(opened.max.z < closed.min.z + 10, 'le vantail est rabattu à plat, au ras du bas');
+  assert.ok(Math.abs(opened.max.x - closed.max.x) < 1e-3 && Math.abs(opened.min.x - closed.min.x) < 1e-3,
+    'la largeur ne bouge pas : l’axe court le long du vantail');
+});
+
+test('un abattant ouvert en haut se relève sous son arête haute', () => {
+  const root = model();
+  const c = new PartController();
+  c.build(root, [{ ...FLAP, hinge: 'end' }]);
+  root.updateMatrixWorld(true);
+  const closed = c.boxOf('p1');
+  openFully(c, root);
+  const opened = c.boxOf('p1');
+  assert.ok(opened.min.z > closed.max.z - 10, 'le vantail est relevé à plat, au ras du haut');
+});
+
+test('le gond d’un abattant reste immobile', () => {
+  for (const hinge of ['start', 'end']) {
+    const root = model();
+    const c = new PartController();
+    c.build(root, [{ ...FLAP, hinge }]);
+    root.updateMatrixWorld(true);
+    const node = animated(root);
+    const closed = node.localToWorld(new THREE.Vector3(0, 0, 0));
+    openFully(c, root);
+    const opened = node.localToWorld(new THREE.Vector3(0, 0, 0));
+    assert.ok(closed.distanceTo(opened) < 1e-6, `gonds ${hinge} : le pivot ne se déplace jamais`);
+    assert.ok(Math.abs(closed.z - (hinge === 'start' ? -100 : 100)) < 1e-6,
+      'le pivot est sur l’arête basse ou haute');
+  }
+});
+
+test('swingSide inverse aussi le sens d’un abattant', () => {
+  const root = model();
+  const c = new PartController();
+  c.build(root, [FLAP]);
+  const front = openFully(c, root).rotation.x;
+  c.configure({ ...FLAP, swingSide: 'back' });
+  const back = openFully(c, root).rotation.x;
+  assert.ok(Math.abs(front + back) < 1e-6);
+});
+
+test('changer d’axe se fait sans reconstruction', () => {
+  const root = model();
+  const c = new PartController();
+  c.build(root, [DOOR]);
+  const leaf = animated(root).children[0];
+  const geometryBefore = leaf.geometry;
+  const trisBefore = root.children[0].geometry.getIndex().count;
+
+  assert.equal(c.configure({ ...FLAP, angle: 60 }), true);
+  let node = openFully(c, root);
+  assert.ok(Math.abs(Math.abs(node.rotation.x) - Math.PI / 3) < 1e-6, 'l’abattant prend l’angle demandé');
+  assert.equal(node.rotation.z, 0);
+
+  c.configure(DOOR);
+  node = openFully(c, root);
+  assert.equal(node.rotation.x, 0, 'retour à une porte : plus de rotation horizontale');
+  assert.ok(Math.abs(Math.abs(node.rotation.z) - Math.PI / 2) < 1e-6);
+  assert.equal(leaf.geometry, geometryBefore, 'la géométrie n’est pas retouchée');
+  assert.equal(root.children[0].geometry.getIndex().count, trisBefore);
+});
+
+test('l’abattant suit la verticale du modèle, pas le plus grand axe', () => {
+  // Un four plus large que haut : 90 de large en X, 60 de haut en Z. Sans la
+  // verticale du modèle, l'axe de rotation serait pris sur la hauteur.
+  const oven = boxGeom([0, 0, 0], [90, 6, 60]);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(oven.p), 3));
+  g.setIndex(oven.idx);
+  const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial());
+  mesh.name = 'MaisonHA';
+  const root = new THREE.Group();
+  root.add(mesh);
+
+  const c = new PartController();
+  c.setVertical(2);
+  c.build(root, [FLAP]);
+  root.updateMatrixWorld(true);
+  const node = animated(root);
+  const pivot = node.localToWorld(new THREE.Vector3(0, 0, 0));
+  assert.ok(Math.abs(pivot.z + 30) < 1e-6, 'le gond est sur l’arête basse');
+  openFully(c, root);
+  assert.ok(Math.abs(Math.abs(node.rotation.x) - Math.PI / 2) < 1e-6, 'rotation autour de X, l’horizontale');
+});
+
+/**
+ * Géométrie Z-up redressée par une rotation de nœud, comme un export qui
+ * corrige son orientation au lieu de réécrire ses sommets : le monde est Y-up,
+ * la maille reste Z-up. La carte déduit la verticale du monde (Y).
+ */
+function rotatedModel(angle = -Math.PI / 2) {
+  const root = model();
+  root.children[0].rotation.x = angle;
+  root.updateMatrixWorld(true);
+  return root;
+}
+
+test('régression : un abattant sur maille tournée ne retombe pas sur une porte', () => {
+  const root = rotatedModel();
+  const c = new PartController();
+  c.setVertical(1);
+  c.build(root, [FLAP]);
+  const node = openFully(c, root);
+  // Sans conversion, la verticale du monde (Y) tombait sur l'épaisseur locale
+  // du vantail et l'abattant pivotait comme une porte, autour de Z.
+  assert.equal(node.rotation.z, 0, 'pas de rotation autour de l’axe vertical local');
+  assert.ok(Math.abs(Math.abs(node.rotation.x) - Math.PI / 2) < 1e-6);
+});
+
+test('sur maille tournée, « en bas » reste le bas du monde', () => {
+  for (const [angle, label] of [[-Math.PI / 2, 'Z local vers le haut'], [Math.PI / 2, 'Z local vers le bas']]) {
+    for (const hinge of ['start', 'end']) {
+      const root = rotatedModel(angle);
+      const c = new PartController();
+      c.setVertical(1);
+      c.build(root, [{ ...FLAP, hinge }]);
+      root.updateMatrixWorld(true);
+      const closed = c.boxOf('p1');
+      const pivot = animated(root).localToWorld(new THREE.Vector3(0, 0, 0));
+      const expected = hinge === 'start' ? closed.min.y : closed.max.y;
+      assert.ok(Math.abs(pivot.y - expected) < 1e-6, `${label}, gonds ${hinge} : pivot sur la bonne arête`);
+    }
+  }
+});
+
+test('sur maille tournée, un volet descend vers le bas du monde', () => {
+  for (const angle of [-Math.PI / 2, Math.PI / 2]) {
+    const root = rotatedModel(angle);
+    const c = new PartController();
+    c.setVertical(1);
+    c.build(root, [{ ...DOOR, motion: 'slide', slide: 'down', travel: 1 }]);
+    root.updateMatrixWorld(true);
+    const closed = c.boxOf('p1');
+    openFully(c, root);
+    const opened = c.boxOf('p1');
+    assert.ok(Math.abs((closed.min.y - opened.min.y) - 200) < 1e-3, 'il descend de sa hauteur');
+  }
 });
 
 test('configure sur un ouvrant absent ne fait rien et le signale', () => {
@@ -344,4 +543,213 @@ test('dispose retire les pièces détachées', () => {
   c.dispose(root);
   assert.equal(root.children[0].children.length, 0);
   assert.equal(c.count, 0);
+});
+
+test('dispose rend ses triangles à la maille', () => {
+  const root = model();
+  const mesh = root.children[0];
+  const before = Array.from(mesh.geometry.getIndex().array);
+  const c = new PartController();
+  c.build(root, [DOOR]);
+  assert.notDeepEqual(Array.from(mesh.geometry.getIndex().array), before);
+  c.dispose(root);
+  assert.deepEqual(Array.from(mesh.geometry.getIndex().array), before);
+});
+
+test('deux ouvrants d’une même maille détachent chacun leur pièce', () => {
+  const root = model();
+  const c = new PartController();
+  // Triangle 12 : le premier du mur, dans la géométrie d'origine.
+  const res = c.build(root, [DOOR, { ...DOOR, id: 'p2', triangle: 12 }]);
+  assert.equal(res.ok, 2);
+  const size = c.boxOf('p2').getSize(new THREE.Vector3());
+  assert.ok(Math.abs(size.x - 400) < 1e-6, 'le second ouvrant est bien le mur');
+});
+
+// ── Ouvrant sur un nœud entier ──────────────────────────────────────────────
+
+/**
+ * Export Blender typique : chaque objet porte un quart de tour en X et une
+ * échelle de 0,01 (géométrie Z-up en centimètres, monde Y-up en mètres). La
+ * porte est un groupe de deux mailles — un objet à deux matériaux.
+ */
+function blenderModel() {
+  const scene = new THREE.Group();
+  const door = new THREE.Group();
+  door.name = 'puerta_terraza';
+  door.position.set(1, 0, -2);
+  door.quaternion.setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2);
+  door.scale.setScalar(0.01);
+  // Hauteur le long de -Z local, qui devient +Y dans le monde.
+  for (const [i, c] of [[0, [45, 3, -100]], [1, [45, 3, -150]]]) {
+    const b = boxGeom(c, i === 0 ? [90, 6, 200] : [20, 8, 10]);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(b.p), 3));
+    g.setIndex(b.idx);
+    const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial());
+    m.name = `puerta_terraza_${i + 1}`;
+    door.add(m);
+  }
+  const wall = new THREE.Mesh(new THREE.BoxGeometry(4, 2.5, 0.2), new THREE.MeshBasicMaterial());
+  wall.name = 'wall_1';
+  wall.position.set(4, 1.25, -2);
+  scene.add(wall, door);
+  scene.updateMatrixWorld(true);
+  return { scene, door };
+}
+
+const NODE_DOOR = {
+  id: 'n1', entity: 'binary_sensor.porte', mesh: 'puerta_terraza_1', meshIndex: 1, triangle: 0,
+  node: 'puerta_terraza', nodeIndex: 1,
+  motion: 'swing', hinge: 'start', angle: 90, duration: 1,
+};
+
+function worldVertices(obj) {
+  obj.updateWorldMatrix(true, true);
+  const out = [];
+  obj.traverse((o) => {
+    if (!o.isMesh) return;
+    const p = o.geometry.getAttribute('position');
+    for (let i = 0; i < p.count; i++) out.push(new THREE.Vector3().fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld));
+  });
+  return out;
+}
+
+function settle(c, id, f) {
+  c.preview(id, f);
+  let guard = 0;
+  while (c.update(0.1) && guard++ < 100);
+}
+
+test('un nœud entier se monte sans bouger à l’écran', () => {
+  const { scene, door } = blenderModel();
+  const before = worldVertices(door);
+  const c = new PartController();
+  c.setVertical(1);
+  const res = c.build(scene, [NODE_DOOR]);
+  assert.equal(res.ok, 1);
+  assert.notEqual(door.parent, scene, 'le nœud est passé sous son pivot');
+  const after = worldVertices(door);
+  assert.equal(after.length, before.length, 'les deux mailles du groupe suivent');
+  for (let i = 0; i < before.length; i++) assert.ok(after[i].distanceTo(before[i]) < 1e-9);
+});
+
+test('un nœud tourné pivote autour de la verticale du monde, gond immobile', () => {
+  const { scene, door } = blenderModel();
+  const before = worldVertices(door);
+  const c = new PartController();
+  c.setVertical(1);
+  c.build(scene, [NODE_DOOR]);
+  const pivot = c.objectOf('n1').parent.parent;
+  const seat = pivot.getWorldPosition(new THREE.Vector3());
+
+  settle(c, 'n1', 1);
+  scene.updateMatrixWorld(true);
+  const after = worldVertices(door);
+  assert.ok(pivot.getWorldPosition(new THREE.Vector3()).distanceTo(seat) < 1e-9, 'le pivot ne bouge pas');
+  assert.ok(Math.abs(Math.abs(pivot.rotation.y) - Math.PI / 2) < 1e-9, 'rotation autour de Y, la verticale du monde');
+  let moved = 0;
+  for (let i = 0; i < before.length; i++) {
+    assert.ok(Math.abs(after[i].y - before[i].y) < 1e-9, 'la hauteur ne change pas');
+    const r0 = Math.hypot(before[i].x - seat.x, before[i].z - seat.z);
+    const r1 = Math.hypot(after[i].x - seat.x, after[i].z - seat.z);
+    assert.ok(Math.abs(r0 - r1) < 1e-9, 'chaque point tourne autour du gond');
+    if (after[i].distanceTo(before[i]) > 0.1) moved++;
+  }
+  assert.ok(moved > 0, 'la porte s’est ouverte');
+  // Le gond est sur une arête verticale de la porte, pas en son milieu.
+  const box = new THREE.Box3().setFromPoints(before);
+  assert.ok(Math.abs(seat.x - box.min.x) < 1e-9 || Math.abs(seat.x - box.max.x) < 1e-9);
+});
+
+test('un nœud en abattant se rabat autour de son arête basse', () => {
+  const { scene, door } = blenderModel();
+  const closed = new THREE.Box3().setFromPoints(worldVertices(door));
+  const c = new PartController();
+  c.setVertical(1);
+  c.build(scene, [{ ...NODE_DOOR, swingAxis: 'horizontal' }]);
+  settle(c, 'n1', 1);
+  const open = new THREE.Box3().setFromPoints(worldVertices(door));
+  assert.ok(open.max.y - open.min.y < 0.1, 'couché à l’horizontale');
+  assert.ok(Math.abs(open.min.y - closed.min.y) < 0.05, 'resté au ras de son arête basse');
+});
+
+test('un nœud coulisse vers le bas du monde', () => {
+  const { scene, door } = blenderModel();
+  const closed = new THREE.Box3().setFromPoints(worldVertices(door));
+  const c = new PartController();
+  c.setVertical(1);
+  c.build(scene, [{ ...NODE_DOOR, motion: 'slide', slide: 'down', travel: 1 }]);
+  settle(c, 'n1', 1);
+  const open = new THREE.Box3().setFromPoints(worldVertices(door));
+  assert.ok(Math.abs((closed.min.y - open.min.y) - 2) < 1e-6, 'il descend de sa hauteur, 2 m');
+});
+
+test('dispose remet le nœud à sa place, transformation comprise', () => {
+  const { scene, door } = blenderModel();
+  const position = door.position.clone();
+  const c = new PartController();
+  c.setVertical(1);
+  c.build(scene, [NODE_DOOR]);
+  settle(c, 'n1', 1);
+  c.dispose(scene);
+  assert.equal(door.parent, scene);
+  assert.equal(scene.children.indexOf(door), 1, 'même rang parmi ses frères');
+  assert.equal(scene.children.length, 2, 'aucun pivot oublié');
+  assert.ok(door.position.distanceTo(position) < 1e-12);
+});
+
+test('les rangs survivent au montage : l’éditeur vise toujours le même nœud', () => {
+  const { scene, door } = blenderModel();
+  const meshesBefore = meshOrder(scene).map((m) => m.name);
+  const c = new PartController();
+  c.build(scene, [NODE_DOOR]);
+  assert.deepEqual(meshOrder(scene).map((m) => m.name), meshesBefore);
+  assert.equal(c.objectOf('n1'), door);
+});
+
+test('deux ouvrants sur le même nœud : le second est signalé', () => {
+  const { scene } = blenderModel();
+  const c = new PartController();
+  const res = c.build(scene, [NODE_DOOR, { ...NODE_DOOR, id: 'n2' }]);
+  assert.equal(res.ok, 1);
+  assert.equal(res.missing[0].id, 'n2');
+});
+
+test('configure change de cible en direct, dans les deux sens', () => {
+  const { scene, door } = blenderModel();
+  const mesh = door.children[0];
+  const pristine = Array.from(mesh.geometry.getIndex().array);
+  const piece = { ...NODE_DOOR, node: undefined, nodeIndex: undefined };
+  const c = new PartController();
+  c.setVertical(1);
+  c.build(scene, [piece]);
+  assert.ok(c.hasTarget(piece));
+  assert.notDeepEqual(Array.from(mesh.geometry.getIndex().array), pristine, 'pièce détachée');
+
+  assert.equal(c.configure(NODE_DOOR), true);
+  assert.ok(c.hasTarget(NODE_DOOR));
+  assert.equal(c.objectOf('n1'), door);
+  assert.deepEqual(Array.from(mesh.geometry.getIndex().array), pristine, 'la pièce est rendue à sa maille');
+
+  assert.equal(c.configure(piece), true);
+  assert.equal(door.parent, scene, 'le nœud est revenu sous la scène');
+  assert.equal(c.count, 1);
+});
+
+test('une nouvelle cible introuvable laisse l’ancienne en place', () => {
+  const { scene, door } = blenderModel();
+  const c = new PartController();
+  c.build(scene, [NODE_DOOR]);
+  assert.equal(c.configure({ ...NODE_DOOR, node: 'inexistant', nodeIndex: 99 }), false);
+  assert.equal(c.objectOf('n1'), door);
+  assert.equal(c.count, 1);
+});
+
+test('un nœud introuvable est signalé comme manquant', () => {
+  const { scene } = blenderModel();
+  const c = new PartController();
+  const res = c.build(scene, [{ ...NODE_DOOR, node: 'fantome', nodeIndex: 7 }]);
+  assert.equal(res.ok, 0);
+  assert.equal(res.missing.length, 1);
 });

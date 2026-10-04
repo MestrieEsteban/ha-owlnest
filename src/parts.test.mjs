@@ -2,8 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import {
-  buildPartIndex, partFrame, hingePivot, extractPart, removeTriangles, guessPart, verticalAxis,
+  buildPartIndex, partFrame, hingePivot, extractPart, removeTriangles, restoreTriangles, guessPart, verticalAxis,
 } from './parts.mjs';
+
+/** Triangles réellement dessinés : un triangle retiré devient dégénéré. */
+function drawn(mesh) {
+  const idx = mesh.geometry.getIndex();
+  let n = 0;
+  for (let t = 0; t < idx.count / 3; t++) {
+    const a = idx.getX(t * 3), b = idx.getX(t * 3 + 1), c = idx.getX(t * 3 + 2);
+    if (a !== b || b !== c) n++;
+  }
+  return n;
+}
 
 /** Géométrie indexée à partir de sommets bruts et d'une liste de triangles. */
 function geom(positions, indices) {
@@ -148,11 +159,11 @@ test('extractPart détache la pièce et la retire de la maille d’origine', () 
   const door = index.parts.find((p) => p.box.max.x <= 100);
   assert.ok(door, 'la porte doit être trouvée');
 
-  const before = mesh.geometry.getIndex().count / 3;
+  const before = drawn(mesh);
   const { mesh: detached } = extractPart(mesh, door);
 
   assert.equal(detached.geometry.getAttribute('position').count, door.tris.length * 3);
-  assert.equal(mesh.geometry.getIndex().count / 3, before - door.tris.length,
+  assert.equal(drawn(mesh), before - door.tris.length,
     'les triangles détachés ne doivent plus être rendus deux fois');
   assert.equal(detached.parent, mesh, 'la pièce hérite de la transformation de son maillage');
 });
@@ -192,9 +203,49 @@ test('une rotation autour du gond garde le vantail dans l’embrasure', () => {
 
 test('removeTriangles conserve exactement les autres triangles', () => {
   const mesh = twoBoxMesh();
-  const total = mesh.geometry.getIndex().count / 3;
+  const total = drawn(mesh);
+  const before = Array.from(mesh.geometry.getIndex().array);
   removeTriangles(mesh, [0, 5, 9]);
-  assert.equal(mesh.geometry.getIndex().count / 3, total - 3);
+  assert.equal(drawn(mesh), total - 3);
+  const after = mesh.geometry.getIndex().array;
+  for (let t = 0; t < total; t++) {
+    if ([0, 5, 9].includes(t)) continue;
+    assert.deepEqual([...after.slice(t * 3, t * 3 + 3)], before.slice(t * 3, t * 3 + 3));
+  }
+});
+
+test('removeTriangles ne renumérote pas : un second retrait vise les bons triangles', () => {
+  // Régression : l'index était compacté, et le second ouvrant d'une même
+  // maille lisait les triangles décalés de son voisin.
+  const mesh = twoBoxMesh();
+  const index = buildPartIndex(mesh.geometry);
+  const door = index.parts.find((p) => p.box.max.x <= 100);
+  const wall = index.parts.find((p) => p.box.min.x > 100);
+  extractPart(mesh, door);
+  const { mesh: second } = extractPart(mesh, wall);
+  second.geometry.computeBoundingBox();
+  const size = second.geometry.boundingBox.getSize(new THREE.Vector3());
+  assert.ok(Math.abs(size.x - 400) < 1e-6, 'le mur extrait en second est bien le mur');
+  assert.equal(drawn(mesh), 0);
+});
+
+test('restoreTriangles rend exactement la géométrie d’origine', () => {
+  const mesh = twoBoxMesh();
+  const before = Array.from(mesh.geometry.getIndex().array);
+  const saved = removeTriangles(mesh, [1, 7, 20]);
+  restoreTriangles(mesh, [1, 7, 20], saved);
+  assert.deepEqual(Array.from(mesh.geometry.getIndex().array), before);
+});
+
+test('removeTriangles fabrique un index pour une géométrie non indexée', () => {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(18), 3));
+  const mesh = new THREE.Mesh(g);
+  const saved = removeTriangles(mesh, [1]);
+  assert.ok(g.getIndex(), 'un index est créé');
+  assert.deepEqual(Array.from(saved), [3, 4, 5]);
+  restoreTriangles(mesh, [1], saved);
+  assert.deepEqual(Array.from(g.getIndex().array), [0, 1, 2, 3, 4, 5]);
 });
 
 // ── Reconnaissance ──────────────────────────────────────────────────────────

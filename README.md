@@ -61,6 +61,7 @@ I wanted something different: real-time 3D lights, a visual editor, weather effe
 | 🏠 | **Interactive 3D scene** | Load any GLB/GLTF model and navigate freely with mouse or touch |
 | 💡 | **Synchronized lights** | Your `light.*` entities drive real 3D lights — color, brightness, smooth transitions |
 | 📍 | **Interactive anchors** | Tap to toggle, long-press for details. Supports lights, sensors, covers, climate, media players |
+| 🚪 | **Animated openings** | Doors, windows, shutters and appliance doors swing or slide with their entity's state |
 | 👁️ | **See through walls** | Whatever stands between you and the rooms fades out as you orbit, and comes back behind you |
 | 📐 | **Any unit** | Metres, centimetres, inches: distances, lights and weather all derive from the model's own size |
 | 🎥 | **Camera views** | Save named viewpoints and fly between them with smooth transitions |
@@ -238,6 +239,43 @@ Configure this in anchor properties → **Visible if** in the editor.
 | `icon` | Custom MDI icon (e.g. `mdi:thermometer`) |
 | `precision` | Decimal places for sensors (e.g. `0` → "18", `1` → "17.6") |
 | `lightIntensity` | Light intensity multiplier (default: 1) |
+
+---
+
+### Openings
+
+Openings are pieces of your model (doors, windows, shutters, a dishwasher or oven door) that move when a Home Assistant entity opens or closes. Nothing is changed in the model file: the piece is detached and animated in the card.
+
+#### Adding an opening
+
+1. Edit mode → **Openings** tab → **+ Opening**
+2. Click the door, window or shutter on the model
+3. Configure it in the panel that opens, use **Preview** to check the movement, then save the scene
+
+The panel is a floating window: drag it by its header to see the model behind it, and keep orbiting while it is open. **Cancel** (or **Escape**) discards your changes, or removes an opening you just created. Opening another opening keeps the settings of the current one; leaving edit mode closes the panel.
+
+#### Choosing what moves
+
+The **Object** tree lists the model's objects and groups, like Blender's outliner. Hover a row to highlight it in the view, click it to make it the moving piece: a group moves with everything inside it. The piece you clicked is revealed and selected when the panel opens; **Clicked piece** goes back to just that fragment of the mesh. Use the filter to search by name.
+
+#### Options
+
+| Option | Description |
+|---|---|
+| **Name** | Shown in the Openings list and the panel header |
+| **Entity** | Drives the movement. `cover` entities follow `current_position`; `cover`, `valve`, `lock`, `binary_sensor`, `switch`, `light`, `input_boolean`, `fan` and `group` are read as open/closed |
+| **Movement** | **Swings** (door, casement window) or **Slides** (roller shutter, sliding door) |
+| **Rotation** | Swings only. **Vertical** for a door, **Horizontal** for a dishwasher/oven door or a top-hung window |
+| **Hinge side** | Which edge carries the hinges: one side / the other, or **Bottom** / **Top** for a horizontal rotation |
+| **Opens towards** | Which side of the wall the leaf swings to. The model doesn't know where "inside" is, so preview and flip if needed |
+| **Opening angle** / **Retracts towards** / **Travel** | Amplitude and direction of the movement |
+| **Duration** | Animation length, in seconds |
+| **Reverse** | For entities where "open" in Home Assistant means closed on screen |
+| **Closed colour** / **Open colour** | Optional tint of the object in each state (**None** to disable). In between, the tint follows the movement |
+
+To remove an opening, click its delete button in the Openings list, then click again within 3 seconds to confirm.
+
+> **Tip**: The hinge is placed on the edge of the piece's bounding box, not on the object's origin in Blender.
 
 ---
 
