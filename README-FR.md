@@ -61,7 +61,7 @@ J'ai voulu autre chose des lumières 3D temps réel, un éditeur visuel, de la m
 | 🏠 | **Scène 3D interactive** | Chargez n'importe quel modèle GLB/GLTF et naviguez librement avec la souris ou le tactile |
 | 💡 | **Lumières synchronisées** | Vos entités `light.*` pilotent de vraies lumières 3D — couleur, intensité, transitions fluides |
 | 📍 | **Ancres interactives** | Tap pour allumer/éteindre, appui long pour les détails. Compatible : lumières, capteurs, volets, climat, media players |
-| 🚪 | **Ouvrants animés** | Portes, fenêtres, volets et portes d'électroménager pivotent ou coulissent selon l'état de leur entité |
+| 🚪 | **Ouvrants animés** | Portes, fenêtres, volets et portes d'électroménager pivotent ou coulissent, stores et rideaux se déroulent, selon l'état de leur entité |
 | 👁️ | **Voir à travers les murs** | Le mur qui bouche la vue s'efface pendant que vous tournez autour, et se reforme derrière |
 | 📐 | **N'importe quelle unité** | Mètres, centimètres, pouces : distances, lumières et météo se déduisent de la taille du modèle |
 | 🎥 | **Vues caméra** | Sauvegardez des points de vue nommés et naviguez entre eux avec une transition animée |
@@ -266,7 +266,7 @@ L'arborescence **Objet** liste les objets et groupes du modèle, comme l'outline
 |---|---|
 | **Nom** | Affiché dans la liste des ouvrants et l'en-tête du panneau |
 | **Entité** | Pilote le mouvement. Les entités `cover` suivent `current_position` ; `cover`, `valve`, `lock`, `binary_sensor`, `switch`, `light`, `input_boolean`, `fan` et `group` sont lues comme ouvert/fermé |
-| **Mouvement** | **Pivote** (porte, fenêtre à battant) ou **Coulisse** (volet roulant, baie) |
+| **Mouvement** | **Pivote** (porte, fenêtre à battant), **Coulisse** (volet roulant, baie) ou **Se déroule** (store banne, store, rideau — voir plus bas) |
 | **Rotation** | Battants uniquement. **Verticale** pour une porte, **Horizontale** pour un lave-vaisselle, un four ou une fenêtre à soufflet |
 | **Côté des gonds** | L'arête qui porte les gonds : un côté / l'autre, ou **En bas** / **En haut** pour une rotation horizontale |
 | **S'ouvre vers** | Le côté du mur vers lequel pivote le vantail. Le modèle ne sait pas où est l'intérieur : vérifiez à l'aperçu et inversez si besoin |
@@ -276,6 +276,25 @@ L'arborescence **Objet** liste les objets et groupes du modèle, comme l'outline
 | **Couleur fermé** / **Couleur ouvert** | Teinte facultative de l'objet dans chaque état (**Aucune** pour désactiver). Entre les deux, la teinte suit le mouvement |
 
 Pour supprimer un ouvrant, cliquez son bouton de suppression dans la liste, puis cliquez à nouveau dans les 3 secondes pour confirmer.
+
+#### Stores bannes, stores et rideaux (Se déroule)
+
+Un ouvrant **Se déroule** replie l'objet choisi le long d'une direction, vers une arête fixe. Le modèle le montre **grand ouvert** ; en se fermant, il se replie vers l'arête fixe. Pour un store banne, choisissez seulement la **toile** dans l'arborescence « Objet », pas le coffre ni les bras : ce sont des objets séparés, ils ne sont donc pas écrasés.
+
+En passant à **Se déroule**, Owlnest mesure la toile : son arête horizontale le long du mur, la direction qui descend en s'en éloignant, et son inclinaison. Tout reste modifiable, et **↺ Détecter à nouveau** revient aux valeurs mesurées.
+
+| Option | Description |
+|---|---|
+| **Se replie le long de** | **Sortant du mur** (store banne, incliné selon l'inclinaison), **La verticale** (store, rideau qui se relève) ou **Le mur** (rideau qui se tire de côté). L'axe détecté est signalé |
+| **Inclinaison sous l'horizontale** | Axe sortant du mur uniquement. 0° sort à plat, 90° descend le long du mur. Par défaut, celle de la toile |
+| **Arête fixe** | L'arête qui ne bouge pas : contre le mur / en haut / à un bout par défaut, ou l'arête opposée |
+| **Taille ouvert** / **Taille fermé** | Taille le long de l'axe à 100 % et à 0 %, par rapport au modèle. Par défaut 100 % et 0 %. Quelques pour cent une fois fermé laissent voir un liseré de toile |
+| **Fermé à** | **0 %** pour un `cover` standard (100 % = grand ouvert). **100 %** pour un volet qui rapporte l'inverse. C'est le même réglage que **Inverser** |
+| **Suit l'arête mobile** | Objets qui se déplacent avec l'arête libre sans être étirés, comme la barre de charge d'un store. Ceux qui touchent cette arête sont suggérés d'office (★). Ils sont surlignés en bleu dans la vue et prennent aussi la teinte d'état |
+
+Un `cover` qui rapporte `current_position` s'affiche à cette position. Un `cover` sans position s'affiche grand ouvert ou fermé.
+
+> **Exemple** : dans un modèle où chaque store est fait de `motor` (coffre), `tela` (toile) et `extremo` (barre de charge, enfant de la toile), choisissez `tela` puis **Se déroule**. L'inclinaison est détectée et `extremo` est proposé comme suiveur. Seule la toile se replie : la barre remonte jusqu'au coffre.
 
 > **Astuce** : le gond est placé sur l'arête de la boîte englobante de la pièce, pas sur l'origine de l'objet dans Blender.
 
