@@ -23,6 +23,7 @@ import { SceneCardRenderer } from './cards/renderer';
 import { PanelGizmo } from './panels/gizmo';
 import type { SceneCard, SceneCardType } from './cards/types';
 import { PartController, meshOrder, partTargetKey } from './parts-runtime';
+import { clipInfos } from './parts-clips';
 import { stampOrder, nodeOrder } from './model-outline';
 import { PartHighlight, type HighlightSource, type HighlightSlot } from './part-highlight';
 import { modelScale } from './scale';
@@ -1142,6 +1143,7 @@ class Ha3dFloorplan extends HTMLElement {
       (req) => { this._highlightReq = req; this._applyHighlight(); },
       (id) => this._parts.carried.get(id)?.length ?? 0,
       (id) => this._parts.extendInfo(id),
+      () => clipInfos(this._modelRoot?.animations ?? []),
     );
 
     this._editPanel.onTestRule = (rule) => this.runRuleNow(rule);
@@ -1650,6 +1652,9 @@ class Ha3dFloorplan extends HTMLElement {
       ],
       guess: guessPart(part.box, unitToCm),
       triangles: part.tris.length,
+      // Un objet posé par des animations n'est pas détaché : c'est son
+      // ouvrant qui le réclame.
+      partId: this._parts.animatedOwnerOf(mesh) ?? undefined,
     });
     return true;
   }

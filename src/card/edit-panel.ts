@@ -12,6 +12,7 @@ import { PARTS_ENABLED } from '../parts';
 import type { SceneSummary } from '../scene';
 import { describeEntity, knownStates, stateLabel } from '../entities/descriptors';
 import { openFraction, hasOpenSemantics, type ExtendInfo } from '../parts-runtime';
+import type { ClipInfo } from '../parts-clips';
 import { detectionLabel, resolveLevel } from '../quality';
 import type { TapAction } from '../entities/descriptors';
 import type { QualityLevel } from '../quality';
@@ -56,6 +57,7 @@ const MOTION_LABEL: Record<string, () => string> = {
   swing: () => t('partSwing'),
   slide: () => t('partSlide'),
   extend: () => t('partExtend'),
+  animation: () => t('partAnimation'),
 };
 
 /**
@@ -322,6 +324,8 @@ export class EditPanel {
     private getCarriedCount?: (id: string) => number,
     /** Valeurs détectées d'un déroulant monté, et ses suiveurs possibles. */
     private getExtendInfo?: (id: string) => ExtendInfo | null,
+    /** Animations enregistrées dans le modèle (pistes NLA de Blender). */
+    private getClips?: () => ClipInfo[],
   ) {}
 
   // ── Card undo/redo ────────────────────────────────────────────────────────
@@ -3406,10 +3410,14 @@ export class EditPanel {
         ? new Set([hitNode.rank, ...ancestorsOf(outline, hitNode.rank)])
         : new Set<number>();
       const parts = this.getParts?.() ?? [];
+      // Une animation ne se déduit pas de la pièce cliquée : plusieurs
+      // ouvrants peuvent partir du même canapé, chacun avec ses pistes.
       const existing = (hit.partId ? parts.find((p) => p.id === hit.partId) : undefined)
-        ?? parts.find((p) => !p.node && p.mesh === hit.mesh && p.triangle === hit.triangle)
-        ?? parts.find((p) => !!p.node && p.nodeIndex !== undefined && around.has(p.nodeIndex)
-          && outline?.byRank[p.nodeIndex]?.name === p.node);
+        ?? parts.find((p) => p.motion !== 'animation' && !p.node && p.mesh === hit.mesh && p.triangle === hit.triangle)
+        ?? parts.find((p) => p.motion !== 'animation' && !!p.node && p.nodeIndex !== undefined && around.has(p.nodeIndex)
+          && outline?.byRank[p.nodeIndex]?.name === p.node)
+        ?? parts.find((p) => p.motion === 'animation' && !(p.clips?.length)
+          && p.mesh === hit.mesh && p.triangle === hit.triangle);
       if (existing) { this._openPartModal(existing, hit); return; }
       this._openPartModal({
         id: `part_${Date.now()}`,
@@ -3448,7 +3456,7 @@ export class EditPanel {
 
       const icon = document.createElement('span');
       icon.style.cssText = 'font-size:13px;flex-shrink:0;';
-      icon.textContent = part.motion === 'slide' ? '🪟' : part.motion === 'extend' ? '⛱' : '🚪';
+      icon.textContent = part.motion === 'slide' ? '🪟' : part.motion === 'extend' ? '⛱' : part.motion === 'animation' ? '🎞' : '🚪';
       row.appendChild(icon);
 
       const text = document.createElement('div');
@@ -3661,10 +3669,13 @@ export class EditPanel {
     refreshDigests = () => {
       const extras = draft.extra?.length ?? 0;
       const object = draft.node ?? t('partSecPiece');
-      secWhat.digest.textContent = extras ? `${object} + ${extras}` : object;
+      // Une animation désigne elle-même ce qui bouge : ses pistes, pas l'objet cliqué.
+      secWhat.digest.textContent = draft.motion === 'animation' ? (draft.clips ?? []).join(', ')
+        : extras ? `${object} + ${extras}` : object;
 
       const motion = draft.motion === 'swing' ? t('partSwing')
-        : draft.motion === 'slide' ? t('partSlide') : t('partExtend');
+        : draft.motion === 'slide' ? t('partSlide')
+        : draft.motion === 'animation' ? t('partAnimation') : t('partExtend');
       const detail = draft.motion === 'swing' ? `${draft.angle ?? 90}\u00b0`
         : draft.motion === 'slide' ? `${Math.round((draft.travel ?? 1) * 100)} %` : '';
       secMotion.digest.textContent = [motion.split(' (')[0], detail, `${draft.duration ?? 1.2} s`]
@@ -3813,9 +3824,13 @@ export class EditPanel {
     // ── Mouvement ─────────────────────────────────────────────────────────
     const motionSel = document.createElement('select');
     motionSel.style.cssText = inputStyle + SELECT_STYLE;
-    for (const [value, label] of [
+    const clips = this.getClips?.() ?? [];
+    const motions: [OwlnestPart['motion'], string][] = [
       ['swing', t('partSwing')], ['slide', t('partSlide')], ['extend', t('partExtend')],
-    ] as const) {
+    ];
+    // Proposé seulement si le fichier en contient : sinon c'est un choix sans issue.
+    if (clips.length || draft.motion === 'animation') motions.push(['animation', t('partAnimation')]);
+    for (const [value, label] of motions) {
       const o = document.createElement('option');
       o.value = value; o.textContent = label;
       motionSel.appendChild(styleOption(o));
@@ -4011,11 +4026,72 @@ export class EditPanel {
       field(t('partFollowers'), box, specific);
     };
 
+    // ── Animations du fichier ─────────────────────────────────────────────
+    const buildClips = () => {
+      if (!clips.length) {
+        hintLine(specific, t('partAnimationNone'));
+        return;
+      }
+      const chosen = new Set(draft.clips ?? []);
+      const setClips = (next: Set<string>) => {
+        draft.clips = next.size ? [...next] : undefined;
+        // Durée de Blender par défaut : l'animation se joue à sa vitesse d'origine.
+        const longest = Math.max(0, ...clips.filter((c) => next.has(c.name)).map((c) => c.duration));
+        if (longest > 0) {
+          draft.duration = Math.round(longest * 10) / 10;
+          dur.value = String(draft.duration);
+        }
+        rebuildSpecific();
+        apply();
+        objectSection?.refresh();
+      };
+      const chips = document.createElement('div');
+      chips.style.cssText = 'display:flex;flex-wrap:wrap;gap:5px;';
+      const chip = (label: string, on: boolean, missing: boolean, title: string, onClick: () => void) => {
+        const b = document.createElement('button');
+        b.style.cssText = [
+          'padding:3px 8px', 'border-radius:99px', 'font-size:10px', 'cursor:pointer', 'font-family:inherit',
+          missing ? 'background:rgba(251,191,36,0.12)' : on ? 'background:rgba(56,189,248,0.15)' : 'background:rgba(255,255,255,0.05)',
+          missing ? 'color:#fbbf24' : on ? 'color:#7dd3fc' : 'color:#94a3b8',
+          missing ? 'border:1px solid rgba(251,191,36,0.45)' : on ? 'border:1px solid rgba(56,189,248,0.45)' : 'border:1px solid rgba(255,255,255,0.1)',
+        ].join(';');
+        b.textContent = label;
+        b.title = title;
+        b.addEventListener('click', (e) => { e.preventDefault(); onClick(); });
+        chips.appendChild(b);
+      };
+      for (const c of clips) {
+        const on = chosen.has(c.name);
+        chip(`${c.name} · ${c.duration.toFixed(1)} s`, on, false, c.nodes.join(', '), () => {
+          const next = new Set(chosen);
+          if (on) next.delete(c.name); else next.add(c.name);
+          setClips(next);
+        });
+      }
+      // Animation renommée ou supprimée dans Blender : visible, et retirable.
+      for (const name of chosen) {
+        if (clips.some((c) => c.name === name)) continue;
+        chip(`⚠ ${name} ✕`, true, true, t('partAnimationMissing'), () => {
+          const next = new Set(chosen);
+          next.delete(name);
+          setClips(next);
+        });
+      }
+      field(t('partAnimationClips'), chips, specific);
+      hintLine(specific, chosen.size ? t('partAnimationHint') : t('partAnimationPick'));
+    };
+
     const rebuildSpecific = () => {
       specific.innerHTML = '';
       // Pour un déroulant, l'inversion se règle par « Fermé à ».
       invWrap.style.display = draft.motion === 'extend' ? 'none' : '';
-      if (draft.motion === 'extend') {
+      // Les animations désignent elles-mêmes ce qui bouge, et ne détachent rien
+      // qui puisse emmener d'autres pièces.
+      if (objectSection) objectSection.el.style.display = draft.motion === 'animation' ? 'none' : '';
+      carryBox.style.display = draft.motion === 'animation' ? 'none' : '';
+      if (draft.motion === 'animation') {
+        buildClips();
+      } else if (draft.motion === 'extend') {
         buildExtend();
       } else if (draft.motion === 'swing') {
         const horizontal = draft.swingAxis === 'horizontal';
@@ -4090,6 +4166,7 @@ export class EditPanel {
 
     motionSel.addEventListener('change', () => {
       draft.motion = motionSel.value as OwlnestPart['motion'];
+      if (draft.motion !== 'animation') draft.clips = undefined;
       // Monté d'abord en déroulant : la détection lit l'ouvrant tel qu'il est.
       if (draft.motion === 'extend') { apply(); redetect(false); }
       rebuildSpecific();
@@ -4217,6 +4294,7 @@ export class EditPanel {
     });
     carryWrap.append(carry, document.createTextNode(t('partCarry')));
     showCarried();
+    const carryBox = document.createElement('div');
 
     // ── Teinte par état ───────────────────────────────────────────────────
     // Même contrôle que la couleur d'une ancre ; le bouton revient au défaut,
@@ -4278,12 +4356,9 @@ export class EditPanel {
     rebuildSpecific();
     field(t('partDuration'), dur, secMotion.inner);
     secMotion.inner.appendChild(invWrap);
-    secWhat.inner.appendChild(extraTitle);
     fillExtra();
-    secWhat.inner.appendChild(extraList);
-    secWhat.inner.appendChild(extraAdd);
-    secWhat.inner.appendChild(carryWrap);
-    secWhat.inner.appendChild(carryCount);
+    carryBox.append(extraTitle, extraList, extraAdd, carryWrap, carryCount);
+    secWhat.inner.appendChild(carryBox);
     secLook.inner.appendChild(tintBox);
     // L'aperçu reste hors des sections, en bas de la fenêtre : c'est l'outil
     // qu'on utilise pour vérifier chaque réglage, pas un réglage de plus. Rangé
