@@ -64,6 +64,35 @@
   const items = stage.querySelectorAll('div[style*="border-radius:50%"]');
   log.push(['roue : entrées après ouverture', wheel.el.parentElement.querySelectorAll('ha-icon').length]);
 
+  // ── Regression #3 : la roue survit aux poussees d'etat ───────────────
+  // Home Assistant pousse un etat bien plus souvent que ne dure l'animation
+  // d'entree (35 ms par pastille, puis 180 ms de transition). Avant correction,
+  // chaque poussee reconstruisait le menu : les pastilles repartaient de
+  // `scale(0)` sans jamais finir d'apparaitre, sauf la premiere dont le delai
+  // est nul. D'ou le signalement : « only one entity appears while flickering ».
+  let tick = 0;
+  const pulse = setInterval(() => {
+    tick += 1;
+    wheel.update(actions.map((a) => ({
+      domain: '', label: a.label, on: !!a.icon,
+      color: new THREE.Color('#7dd3fc'), icon: a.icon,
+      // La valeur bouge a chaque poussee, comme un capteur reel.
+      value: a.value ? (20 + (tick % 10) / 10).toFixed(1) + ' \u00b0C' : undefined,
+      onShortClick: () => fired.push(a.label),
+      onLongPress: () => fired.push(a.label + ' (long)'),
+    })));
+  }, 12);
+  await new Promise((r) => setTimeout(r, 400));
+  clearInterval(pulse);
+
+  // Le navigateur normalise 'border-radius:50%' en 'border-radius: 50%' dans
+  // l'attribut : on lit la propriete calculee, pas la chaine de style.
+  const pastilles = [...wheel.el.querySelectorAll('div')].filter((d) => d.style.borderRadius === '50%');
+  const visibles = pastilles.filter((e) => e.style.opacity === '1').length;
+  log.push(['roue : poussees d\u2019etat subies', String(tick)]);
+  log.push(['roue : pastilles ouvertes', visibles + ' / ' + pastilles.length]);
+  log.push(['roue : valeur suivie', pastilles[0]?.textContent.trim().slice(0, 12) || '(vide)']);
+
   // ── Navigation ───────────────────────────────────────────────────────────
   const nav = new AnchorOverlay(stage, 'nav', 'Monter à l’étage',
     () => { flew = 'view_etage'; }, () => { flew = 'long'; }, 'mdi:arrow-right-circle');

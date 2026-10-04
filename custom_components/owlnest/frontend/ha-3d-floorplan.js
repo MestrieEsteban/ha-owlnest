@@ -20417,7 +20417,7 @@ const f0 = `<svg viewBox="0 0 24 24" width="16" height="16" xmlns="http://www.w3
 </svg>`;
 class mr {
   constructor(e, t = {}) {
-    this.conditionHidden = !1, this._menu = null, this._backdrop = null, this._items = [], this._container = e, this.el = document.createElement("div"), this.el.style.cssText = [
+    this.conditionHidden = !1, this._menu = null, this._entries = [], this._backdrop = null, this._items = [], this._container = e, this.el = document.createElement("div"), this.el.style.cssText = [
       "position:absolute",
       "transform:translate(-50%,-50%)",
       "width:42px",
@@ -20470,7 +20470,7 @@ class mr {
       this.el.style.boxShadow = `0 0 14px 3px ${n}88, 0 2px 8px rgba(0,0,0,0.5)`, this.el.style.borderColor = `${n}44`;
     } else
       this.el.style.boxShadow = "0 2px 8px rgba(0,0,0,0.5)", this.el.style.borderColor = "rgba(255,255,255,0.18)";
-    this._menu && this._rebuildMenu();
+    this._menu && (e.length === this._entries.length ? this._refreshMenu(e) : this._rebuildMenu());
   }
   updatePosition(e, t) {
     this.el.style.left = `${e}px`, this.el.style.top = `${t}px`;
@@ -20497,22 +20497,66 @@ class mr {
   }
   _closeMenu() {
     var e, t;
-    this.el.style.transform = "translate(-50%,-50%) scale(1)", (e = this._menu) == null || e.remove(), this._menu = null, (t = this._backdrop) == null || t.remove(), this._backdrop = null;
+    this.el.style.transform = "translate(-50%,-50%) scale(1)", (e = this._menu) == null || e.remove(), this._menu = null, this._entries = [], (t = this._backdrop) == null || t.remove(), this._backdrop = null;
   }
   _rebuildMenu() {
     var i;
-    (i = this._menu) == null || i.remove();
+    (i = this._menu) == null || i.remove(), this._entries = [];
     const e = document.createElement("div");
     e.style.cssText = "position:absolute;inset:0;pointer-events:none;z-index:10;";
     const t = this._items.length, n = t <= 3 ? 68 : 80;
     this._items.forEach((r, o) => {
-      const a = o / t * 2 * Math.PI - Math.PI / 2, l = Math.cos(a) * n, c = Math.sin(a) * n;
-      e.appendChild(this._makeMenuItem(r, l, c, o));
+      const a = o / t * 2 * Math.PI - Math.PI / 2, l = Math.cos(a) * n, c = Math.sin(a) * n, d = this._makeMenuItem(r, l, c, o);
+      this._entries.push(d), e.appendChild(d.el);
     }), this.el.appendChild(e), this._menu = e;
   }
+  /**
+   * Reecrit ce qui depend de l'etat, sans toucher a `transform` ni `opacity`.
+   *
+   * Ce sont ces deux proprietes qui portent l'animation d'entree : les laisser
+   * tranquilles est precisement ce qui permet a la roue de finir de s'ouvrir
+   * pendant que les entites changent d'etat.
+   */
+  _refreshMenu(e) {
+    this._entries.forEach((t, n) => {
+      const i = e[n];
+      i && (t.item = i, this._applyItemContent(t));
+    });
+  }
+  /** Couleur, bordure, halo, valeur et libelle — tout ce qui suit l'etat. */
+  _applyItemContent(e) {
+    const { item: t, el: n, content: i, label: r } = e, o = t.on ? `#${t.color.getHexString()}` : "#666";
+    if (n.style.border = `1.5px solid ${t.on ? o + "55" : "rgba(255,255,255,0.12)"}`, n.style.boxShadow = `${t.on ? `0 0 12px 2px ${o}77,` : ""} 0 2px 8px rgba(0,0,0,0.5)`, r.textContent = t.label, t.value !== void 0) {
+      i.innerHTML = "", i.textContent = t.value, i.style.cssText = [
+        "font-size:11px",
+        "font-weight:700",
+        "line-height:1",
+        "font-family:var(--primary-font-family,sans-serif)",
+        `color:${o}`,
+        "pointer-events:none",
+        "text-align:center",
+        "padding:0 2px",
+        "white-space:nowrap"
+      ].join(";");
+      return;
+    }
+    i.style.cssText = "display:flex;align-items:center;justify-content:center;pointer-events:none;", i.innerHTML = ss(t.domain, t.icon);
+    const a = i.querySelector("ha-icon");
+    a && (a.style.color = o);
+    const l = a ? null : i.querySelector("path,circle,rect");
+    l && (l.style.fill = o);
+  }
+  /**
+   * Construit une pastille et son animation d'entree.
+   *
+   * L'icone et la valeur vivent dans un noeud dedie : ecrire directement dans
+   * `el` effacerait l'etiquette, qui en est un enfant. Les gestionnaires lisent
+   * l'action a travers `entry.item`, de sorte qu'un rafraichissement suffise a
+   * les tenir a jour sans les reinstaller.
+   */
   _makeMenuItem(e, t, n, i) {
-    const r = e.on ? `#${e.color.getHexString()}` : "#666", o = `translate(calc(-50% + ${t}px), calc(-50% + ${n}px))`, a = document.createElement("div");
-    if (a.style.cssText = [
+    const r = `translate(calc(-50% + ${t}px), calc(-50% + ${n}px))`, o = document.createElement("div");
+    o.style.cssText = [
       "position:absolute",
       "top:50%",
       "left:50%",
@@ -20530,32 +20574,13 @@ class mr {
       "background:rgba(15,15,25,0.88)",
       "backdrop-filter:blur(6px)",
       "-webkit-backdrop-filter:blur(6px)",
-      `border:1.5px solid ${e.on ? r + "55" : "rgba(255,255,255,0.12)"}`,
-      `box-shadow:${e.on ? `0 0 12px 2px ${r}77,` : ""} 0 2px 8px rgba(0,0,0,0.5)`,
       "user-select:none",
       "-webkit-user-select:none"
-    ].join(";"), e.value !== void 0) {
-      const c = document.createElement("span");
-      c.textContent = e.value, c.style.cssText = [
-        "font-size:11px",
-        "font-weight:700",
-        "line-height:1",
-        "font-family:var(--primary-font-family,sans-serif)",
-        `color:${r}`,
-        "pointer-events:none",
-        "text-align:center",
-        "padding:0 2px",
-        "white-space:nowrap"
-      ].join(";"), a.appendChild(c);
-    } else {
-      a.innerHTML = ss(e.domain, e.icon);
-      const c = a.querySelector("ha-icon");
-      c && (c.style.color = r);
-      const d = c ? null : a.querySelector("path,circle,rect");
-      d && (d.style.fill = r);
-    }
+    ].join(";");
+    const a = document.createElement("div");
+    o.appendChild(a);
     const l = document.createElement("div");
-    return l.textContent = e.label, l.style.cssText = [
+    l.style.cssText = [
       "position:absolute",
       "bottom:calc(100% + 6px)",
       "left:50%",
@@ -20570,17 +20595,19 @@ class mr {
       "pointer-events:none",
       "opacity:0",
       "transition:opacity .15s"
-    ].join(";"), a.appendChild(l), a.addEventListener("mouseenter", () => {
-      a.style.transform = `${o} scale(1.2)`, l.style.opacity = "1";
-    }), a.addEventListener("mouseleave", () => {
-      a.style.transform = `${o} scale(1)`, l.style.opacity = "0";
-    }), a.addEventListener("pointerdown", (c) => c.stopPropagation()), a.addEventListener("touchstart", (c) => c.stopPropagation(), { passive: !0 }), a.addEventListener("click", (c) => {
-      c.stopPropagation(), e.onShortClick(), this._closeMenu();
-    }), a.addEventListener("contextmenu", (c) => {
-      c.preventDefault(), e.onLongPress(), this._closeMenu();
+    ].join(";"), o.appendChild(l);
+    const c = { el: o, content: a, label: l, item: e };
+    return this._applyItemContent(c), o.addEventListener("mouseenter", () => {
+      o.style.transform = `${r} scale(1.2)`, l.style.opacity = "1";
+    }), o.addEventListener("mouseleave", () => {
+      o.style.transform = `${r} scale(1)`, l.style.opacity = "0";
+    }), o.addEventListener("pointerdown", (d) => d.stopPropagation()), o.addEventListener("touchstart", (d) => d.stopPropagation(), { passive: !0 }), o.addEventListener("click", (d) => {
+      d.stopPropagation(), c.item.onShortClick(), this._closeMenu();
+    }), o.addEventListener("contextmenu", (d) => {
+      d.preventDefault(), c.item.onLongPress(), this._closeMenu();
     }), setTimeout(() => {
-      a.style.transform = `${o} scale(1)`, a.style.opacity = "1";
-    }, i * 35), a;
+      o.style.transform = `${r} scale(1)`, o.style.opacity = "1";
+    }, i * 35), c;
   }
 }
 class hd {

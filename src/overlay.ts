@@ -322,6 +322,15 @@ export interface ClusterOptions {
   title?: string;
 }
 
+/** Une pastille du menu radial et ce qu'elle affiche. */
+interface MenuEntry {
+  el: HTMLDivElement;
+  /** Porte l'icone ou la valeur : remplacer le contenu de `el` effacerait l'etiquette. */
+  content: HTMLDivElement;
+  label: HTMLDivElement;
+  item: ClusterItem;
+}
+
 export class ClusterOverlay {
   /**
    * Masquage par condition (`visibleIf`). Inutile pour un regroupement
@@ -331,6 +340,14 @@ export class ClusterOverlay {
   readonly el: HTMLDivElement;
   private _badge: HTMLSpanElement;
   private _menu: HTMLDivElement | null = null;
+  /**
+   * Pastilles du menu ouvert, dans l'ordre de leur construction.
+   *
+   * On garde l'element et l'entree qu'il represente : un rafraichissement
+   * reecrit `item`, et les gestionnaires lisent la valeur a travers cet objet
+   * plutot que par capture, sinon un clic declencherait l'action d'avant.
+   */
+  private _entries: MenuEntry[] = [];
   private _backdrop: HTMLDivElement | null = null;
   private _items: ClusterItem[] = [];
   private _container: HTMLElement;
@@ -398,7 +415,14 @@ export class ClusterOverlay {
       this.el.style.borderColor = 'rgba(255,255,255,0.18)';
     }
 
-    if (this._menu) this._rebuildMenu();
+    // Le menu ouvert se rafraichit sur place. Le reconstruire relancerait
+    // l'animation d'entree de chaque pastille, et Home Assistant pousse un etat
+    // bien plus souvent qu'elle ne dure : les pastilles repartiraient de zero
+    // sans jamais finir d'apparaitre. Voir `_makeMenuItem`.
+    if (this._menu) {
+      if (items.length === this._entries.length) this._refreshMenu(items);
+      else this._rebuildMenu();
+    }
   }
 
   updatePosition(x: number, y: number) {
@@ -444,12 +468,14 @@ export class ClusterOverlay {
     this.el.style.transform = 'translate(-50%,-50%) scale(1)';
     this._menu?.remove();
     this._menu = null;
+    this._entries = [];
     this._backdrop?.remove();
     this._backdrop = null;
   }
 
   private _rebuildMenu() {
     this._menu?.remove();
+    this._entries = [];
 
     const menu = document.createElement('div');
     menu.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:10;';
@@ -461,15 +487,69 @@ export class ClusterOverlay {
       const angle = (i / n) * 2 * Math.PI - Math.PI / 2;
       const ox = Math.cos(angle) * radius;
       const oy = Math.sin(angle) * radius;
-      menu.appendChild(this._makeMenuItem(item, ox, oy, i));
+      const entry = this._makeMenuItem(item, ox, oy, i);
+      this._entries.push(entry);
+      menu.appendChild(entry.el);
     });
 
     this.el.appendChild(menu);
     this._menu = menu;
   }
 
-  private _makeMenuItem(item: ClusterItem, ox: number, oy: number, idx: number): HTMLDivElement {
+  /**
+   * Reecrit ce qui depend de l'etat, sans toucher a `transform` ni `opacity`.
+   *
+   * Ce sont ces deux proprietes qui portent l'animation d'entree : les laisser
+   * tranquilles est precisement ce qui permet a la roue de finir de s'ouvrir
+   * pendant que les entites changent d'etat.
+   */
+  private _refreshMenu(items: ClusterItem[]) {
+    this._entries.forEach((entry, i) => {
+      const item = items[i];
+      if (!item) return;
+      entry.item = item;
+      this._applyItemContent(entry);
+    });
+  }
+
+  /** Couleur, bordure, halo, valeur et libelle — tout ce qui suit l'etat. */
+  private _applyItemContent(entry: MenuEntry) {
+    const { item, el, content, label } = entry;
     const color = item.on ? `#${item.color.getHexString()}` : '#666';
+
+    el.style.border = `1.5px solid ${item.on ? color + '55' : 'rgba(255,255,255,0.12)'}`;
+    el.style.boxShadow = `${item.on ? `0 0 12px 2px ${color}77,` : ''} 0 2px 8px rgba(0,0,0,0.5)`;
+    label.textContent = item.label;
+
+    if (item.value !== undefined) {
+      content.innerHTML = '';
+      content.textContent = item.value;
+      content.style.cssText = [
+        'font-size:11px', 'font-weight:700', 'line-height:1',
+        'font-family:var(--primary-font-family,sans-serif)',
+        `color:${color}`, 'pointer-events:none', 'text-align:center',
+        'padding:0 2px', 'white-space:nowrap',
+      ].join(';');
+      return;
+    }
+
+    content.style.cssText = 'display:flex;align-items:center;justify-content:center;pointer-events:none;';
+    content.innerHTML = renderIconHTML(item.domain, item.icon);
+    const haIcon = content.querySelector('ha-icon') as HTMLElement | null;
+    if (haIcon) haIcon.style.color = color;
+    const path = !haIcon ? (content.querySelector('path,circle,rect') as SVGElement | null) : null;
+    if (path) path.style.fill = color;
+  }
+
+  /**
+   * Construit une pastille et son animation d'entree.
+   *
+   * L'icone et la valeur vivent dans un noeud dedie : ecrire directement dans
+   * `el` effacerait l'etiquette, qui en est un enfant. Les gestionnaires lisent
+   * l'action a travers `entry.item`, de sorte qu'un rafraichissement suffise a
+   * les tenir a jour sans les reinstaller.
+   */
+  private _makeMenuItem(item: ClusterItem, ox: number, oy: number, idx: number): MenuEntry {
     const base = `translate(calc(-50% + ${ox}px), calc(-50% + ${oy}px))`;
 
     const el = document.createElement('div');
@@ -483,31 +563,13 @@ export class ClusterOverlay {
       'cursor:pointer', 'pointer-events:auto',
       'background:rgba(15,15,25,0.88)',
       'backdrop-filter:blur(6px)', '-webkit-backdrop-filter:blur(6px)',
-      `border:1.5px solid ${item.on ? color + '55' : 'rgba(255,255,255,0.12)'}`,
-      `box-shadow:${item.on ? `0 0 12px 2px ${color}77,` : ''} 0 2px 8px rgba(0,0,0,0.5)`,
       'user-select:none', '-webkit-user-select:none',
     ].join(';');
 
-    if (item.value !== undefined) {
-      const val = document.createElement('span');
-      val.textContent = item.value;
-      val.style.cssText = [
-        'font-size:11px', 'font-weight:700', 'line-height:1',
-        'font-family:var(--primary-font-family,sans-serif)',
-        `color:${color}`, 'pointer-events:none', 'text-align:center',
-        'padding:0 2px', 'white-space:nowrap',
-      ].join(';');
-      el.appendChild(val);
-    } else {
-      el.innerHTML = renderIconHTML(item.domain, item.icon);
-      const haIcon = el.querySelector('ha-icon') as HTMLElement | null;
-      if (haIcon) haIcon.style.color = color;
-      const path = !haIcon ? (el.querySelector('path,circle,rect') as SVGElement | null) : null;
-      if (path) path.style.fill = color;
-    }
+    const content = document.createElement('div');
+    el.appendChild(content);
 
     const label = document.createElement('div');
-    label.textContent = item.label;
     label.style.cssText = [
       'position:absolute', 'bottom:calc(100% + 6px)', 'left:50%',
       'transform:translateX(-50%)',
@@ -518,6 +580,9 @@ export class ClusterOverlay {
       'opacity:0', 'transition:opacity .15s',
     ].join(';');
     el.appendChild(label);
+
+    const entry: MenuEntry = { el, content, label, item };
+    this._applyItemContent(entry);
 
     el.addEventListener('mouseenter', () => {
       el.style.transform = `${base} scale(1.2)`;
@@ -531,12 +596,12 @@ export class ClusterOverlay {
     el.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
     el.addEventListener('click', (e) => {
       e.stopPropagation();
-      item.onShortClick();
+      entry.item.onShortClick();
       this._closeMenu();
     });
     el.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      item.onLongPress();
+      entry.item.onLongPress();
       this._closeMenu();
     });
 
@@ -545,7 +610,7 @@ export class ClusterOverlay {
       el.style.opacity = '1';
     }, idx * 35);
 
-    return el;
+    return entry;
   }
 }
 
