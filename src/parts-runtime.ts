@@ -112,6 +112,8 @@ interface LiveMesh {
   restore: () => void;
   /** Cible du montage, pour savoir si un réglage demande de remonter. */
   key: string;
+  /** Signature des pieces entrainees, pour savoir quand remonter. */
+  carryKey: string;
   /** Cible résolue (maille et pièce, ou nœud) : deux ouvrants ne la partagent pas. */
   claim: string;
   /** Amplitude maximale : radians pour un battant, unités pour un coulissant. */
@@ -144,6 +146,20 @@ export function meshOrder(root: THREE.Object3D): THREE.Mesh[] {
 }
 
 /** Ce que désigne un ouvrant : deux configurations égales montent la même chose. */
+/**
+ * Signature de ce qu'un ouvrant emmene avec lui.
+ *
+ * Ajouter une piece ne change pas la cible de l'ouvrant : sans cette seconde
+ * cle, `configure` reconfigurerait en place et la piece, bien enregistree, ne
+ * serait jamais attachee. Il faut remonter.
+ */
+export function partCarryKey(cfg: OwlnestPart): string {
+  const picked = (cfg.extra ?? [])
+    .map((e) => `${e.mesh}#${e.meshIndex ?? ''}:${e.triangle}`)
+    .join('|');
+  return `${cfg.carry === true ? 'auto' : ''};${picked};${(cfg.carryExclude ?? []).join(',')}`;
+}
+
 export function partTargetKey(cfg: OwlnestPart): string {
   return cfg.node
     ? `node:${cfg.node}#${cfg.nodeIndex ?? ''}`
@@ -323,7 +339,7 @@ export class PartController {
         restoreTriangles(mesh, part.tris, saved);
         object.geometry.dispose();
       },
-      key: partTargetKey(cfg), claim: '',
+      key: partTargetKey(cfg), carryKey: partCarryKey(cfg), claim: '',
       span: 0, axis: 'x', sign: 1, rest: 0, current: 0, goal: 0,
     };
     this._configure(item, cfg);
@@ -438,6 +454,7 @@ export class PartController {
     host.add(pivotNode);
     pivotNode.add(holder);
     holder.add(node);
+    const releaseCarried = this._bringAlong(pivotNode, node, node, cfg);
     // Le support se trouve en `origin` quand l'ouvrant est fermé : le nœud
     // recule d'autant. Valable parce que le support n'a ni rotation ni échelle.
     node.position.sub(origin);
@@ -446,12 +463,13 @@ export class PartController {
       cfg, pivotNode, object: holder, target: node, tint: new PartTint(node, cfg.id),
       frame, box, origin,
       restore: () => {
+        releaseCarried();
         node.position.add(origin);
         host.add(node);
         host.children.splice(host.children.indexOf(node), 1);
         host.children.splice(Math.min(slot, host.children.length), 0, node);
       },
-      key: partTargetKey(cfg), claim: '',
+      key: partTargetKey(cfg), carryKey: partCarryKey(cfg), claim: '',
       span: 0, axis: 'x', sign: 1, rest: 0, current: 0, goal: 0,
     };
     this._configure(item, cfg);
@@ -597,7 +615,11 @@ export class PartController {
   configure(cfg: OwlnestPart): boolean {
     const item = this.items.find((i) => i.cfg.id === cfg.id);
     if (!item) return false;
-    if (item.key !== partTargetKey(cfg)) return this._retarget(item, cfg);
+    // Un changement de cible, mais aussi de pieces entrainees : les attacher
+    // demande d'extraire de la geometrie, ce que la reconfiguration ne fait pas.
+    if (item.key !== partTargetKey(cfg) || item.carryKey !== partCarryKey(cfg)) {
+      return this._retarget(item, cfg);
+    }
     this._configure(item, cfg);
     return true;
   }
