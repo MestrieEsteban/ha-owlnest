@@ -75,6 +75,9 @@
       id: 'p1', entity: 'binary_sensor.porte_entree',
       mesh: best.mesh.name, meshIndex: best.meshIndex, triangle: best.triangle,
       motion: 'swing', hinge: 'start', angle: 90, duration: 1,
+      // La detection par contenance est optionnelle : le banc l'exerce, mais
+      // une scene reelle ne l'active que si l'utilisateur la coche.
+      carry: true,
     };
     const ctl = new PartController();
     // On compte les triangles **dessines**, pas la longueur de l'index.

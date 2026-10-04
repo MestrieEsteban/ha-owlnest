@@ -1141,6 +1141,7 @@ class Ha3dFloorplan extends HTMLElement {
       () => (this._modelRoot ? stampOrder(this._modelRoot) : null),
       (req) => { this._highlightReq = req; this._applyHighlight(); },
       (id) => this._parts.carried.get(id)?.length ?? 0,
+      (id) => this._parts.extendInfo(id),
     );
 
     this._editPanel.onTestRule = (rule) => this.runRuleNow(rule);
@@ -1542,10 +1543,16 @@ class Ha3dFloorplan extends HTMLElement {
     this._highlight.clear();
     const root = this._modelRoot;
     if (root) {
-      for (const slot of ['hover', 'selected'] as HighlightSlot[]) {
+      for (const slot of ['hover', 'selected'] as const satisfies readonly HighlightSlot[]) {
         const target = this._highlightReq[slot];
         const src = target ? this._resolveHighlight(root, target) : null;
         if (src) this._highlight.show(slot, [src]);
+      }
+      const followers = this._highlightReq.selected?.followers ?? [];
+      if (followers.length) {
+        const order = nodeOrder(root);
+        const srcs = followers.map((r) => order[r]).filter((o): o is THREE.Object3D => !!o).map((object) => ({ object }));
+        this._highlight.show('follower', srcs);
       }
     }
     this._requestRender();
