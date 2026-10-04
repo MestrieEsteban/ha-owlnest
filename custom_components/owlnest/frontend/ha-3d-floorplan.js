@@ -26985,7 +26985,7 @@ const eo = class eo {
       const Fe = document.createElement("div");
       Fe.style.cssText = "font-size:9px;color:#475569;line-height:1.5;margin-bottom:12px;", Fe.textContent = Me, T.appendChild(Fe);
     };
-    _e("closedColor", _("partColorClosed"), _("partColorClosedHint"), "#22c55e"), _e("openColor", _("partColorOpen"), _("partColorOpenHint"), "#f59e0b"), Q(), A(_("partDuration"), ge, E.inner), E.inner.appendChild(V), S.inner.appendChild(M), K(), S.inner.appendChild(ne), S.inner.appendChild(ce), S.inner.appendChild(de), S.inner.appendChild(le), R.inner.appendChild(T), A(_("partPreview"), ie, T);
+    _e("closedColor", _("partColorClosed"), _("partColorClosedHint"), "#22c55e"), _e("openColor", _("partColorOpen"), _("partColorOpenHint"), "#f59e0b"), Q(), A(_("partDuration"), ge, E.inner), E.inner.appendChild(V), S.inner.appendChild(M), K(), S.inner.appendChild(ne), S.inner.appendChild(ce), S.inner.appendChild(de), S.inner.appendChild(le), R.inner.appendChild(T), A(_("partPreview"), ie);
     const me = document.createElement("div");
     me.style.cssText = "display:flex;gap:8px;padding:12px 16px;border-top:1px solid rgba(255,255,255,0.08);flex-shrink:0;";
     const Ie = (ue, pe) => {
