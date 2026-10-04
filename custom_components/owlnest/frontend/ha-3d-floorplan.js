@@ -21040,7 +21040,7 @@ function il(s, e, t) {
   e.style.cursor = "move", e.style.userSelect = "none", e.style.touchAction = "none";
   const n = (a, l) => {
     const c = s.getBoundingClientRect(), d = Math.min(c.width, Q0), h = Math.max(d - c.width, Math.min(a, window.innerWidth - d)), u = Math.max(0, Math.min(l, window.innerHeight - e.offsetHeight));
-    s.style.transform = "none", s.style.left = `${h}px`, s.style.top = `${u}px`, t == null || t.set({ left: h, top: u });
+    s.style.transform = "none", s.style.margin = "0", s.style.inset = "auto", s.style.left = `${h}px`, s.style.top = `${u}px`, t == null || t.set({ left: h, top: u });
   };
   let i = null;
   e.addEventListener("pointerdown", (a) => {

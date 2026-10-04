@@ -41,7 +41,15 @@ export function makeDraggable(win: HTMLElement, handle: HTMLElement, memory?: Po
     const x = Math.max(edge - r.width, Math.min(left, window.innerWidth - edge));
     const y = Math.max(0, Math.min(top, window.innerHeight - handle.offsetHeight));
     // Le centrage d'origine passe par `transform` : il doit céder la place.
+    //
+    // `margin` et `inset` aussi : la feuille de style du navigateur donne à un
+    // `<dialog>` une marge automatique qui le centre. Tant qu'elle s'applique,
+    // la position demandée et la position obtenue diffèrent — la fenêtre saute
+    // au premier déplacement, puis suit correctement. Les mesures ci-dessus
+    // sont prises avant, donc le passage se fait sans décalage visible.
     win.style.transform = 'none';
+    win.style.margin = '0';
+    win.style.inset = 'auto';
     win.style.left = `${x}px`;
     win.style.top = `${y}px`;
     memory?.set({ left: x, top: y });
