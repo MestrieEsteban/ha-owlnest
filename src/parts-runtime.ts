@@ -9,7 +9,7 @@
  * rapporte — ouvrir une porte à l'écran n'ouvre pas la vraie.
  */
 import * as THREE from 'three';
-import { findCarried } from './part-carry';
+import { findCarried, carryName, type CarryPiece } from './part-carry';
 import type { OwlnestPart } from './types';
 import {
   partIndexOf, extractPart, restoreTriangles, partFrame, hingePivot, axisName,
@@ -311,7 +311,7 @@ export class PartController {
     mesh.add(pivotNode);
     pivotNode.add(object);
 
-    const releaseCarried = this._carry(pivotNode, object, mesh, cfg);
+    const releaseCarried = this._bringAlong(pivotNode, object, mesh, cfg);
 
     const item: LiveMesh = {
       cfg, pivotNode, object, target: object, tint: new PartTint(object, cfg.id),
@@ -341,18 +341,55 @@ export class PartController {
    * rang parmi les frères compte, l'ordre de parcours sert à départager les
    * mailles homonymes.
    */
-  private _carry(
+  /**
+   * Composantes designees a la main par l'utilisateur.
+   *
+   * Meme identification que l'ouvrant : le rang de la maille tranche entre
+   * homonymes, le triangle d'amorce retrouve la composante entiere. Une piece
+   * introuvable est ignoree sans bruit — le modele a pu changer depuis.
+   */
+  private _pickedPieces(cfg: OwlnestPart, host: THREE.Object3D): CarryPiece[] {
+    if (!cfg.extra?.length || !this._root) return [];
+    const order = meshOrder(this._root);
+    const out: CarryPiece[] = [];
+    const seen = new Set<string>();
+
+    for (const ref of cfg.extra) {
+      const mesh = resolveMesh(order, ref);
+      if (!mesh || mesh === host) continue;
+      const index = partIndexOf(mesh);
+      const id = index.ofTriangle[ref.triangle];
+      const part = id >= 0 ? index.parts[id] : undefined;
+      if (!part) continue;
+      const name = carryName(mesh, part);
+      if (seen.has(name)) continue;
+      seen.add(name);
+      out.push({ mesh, part, box: part.box.clone().applyMatrix4(mesh.matrixWorld), name });
+    }
+    return out;
+  }
+
+  private _bringAlong(
     pivotNode: THREE.Group,
     object: THREE.Object3D,
     host: THREE.Object3D,
     cfg: OwlnestPart,
   ): () => void {
     this.carried.set(cfg.id, []);
-    if (cfg.carry === false || !this._root) return () => {};
+    if (!this._root) return () => {};
 
     this._root.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(object);
-    const found = findCarried(this._root, box, host, cfg.carryExclude ?? []);
+    const found = this._pickedPieces(cfg, host);
+
+    // La detection par contenance ne vient qu'en complement, et sur demande :
+    // elle se trompe des que le modele ne separe pas proprement ses pieces.
+    if (cfg.carry === true) {
+      const box = new THREE.Box3().setFromObject(object);
+      const deja = new Set(found.map((f) => f.name));
+      for (const piece of findCarried(this._root, box, host, cfg.carryExclude ?? [])) {
+        if (!deja.has(piece.name)) found.push(piece);
+      }
+    }
     if (!found.length) return () => {};
 
     // Chaque piece est detachee de sa maille comme l'est le vantail : une
