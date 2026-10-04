@@ -4285,7 +4285,10 @@ export class EditPanel {
     secWhat.inner.appendChild(carryWrap);
     secWhat.inner.appendChild(carryCount);
     secLook.inner.appendChild(tintBox);
-    field(t('partPreview'), previewBox, tintBox);
+    // L'aperçu reste hors des sections, en bas de la fenêtre : c'est l'outil
+    // qu'on utilise pour vérifier chaque réglage, pas un réglage de plus. Rangé
+    // dans les couleurs, il disparaissait avec elles.
+    field(t('partPreview'), previewBox);
 
     // ── Pied ──────────────────────────────────────────────────────────────
     const foot = document.createElement('div');
