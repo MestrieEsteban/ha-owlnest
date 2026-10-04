@@ -9,6 +9,7 @@
  * rapporte — ouvrir une porte à l'écran n'ouvre pas la vraie.
  */
 import * as THREE from 'three';
+import { findCarried } from './part-carry';
 import type { OwlnestPart } from './types';
 import {
   partIndexOf, extractPart, restoreTriangles, partFrame, hingePivot, axisName,
@@ -256,6 +257,9 @@ export class PartController {
 
   private _root: THREE.Object3D | null = null;
 
+  /** Pieces emmenees par ouvrant, au dernier montage. Lu par l'editeur. */
+  readonly carried = new Map<string, string[]>();
+
   /**
    * Trouve la cible d'une configuration et prépare son montage.
    *
@@ -307,10 +311,15 @@ export class PartController {
     mesh.add(pivotNode);
     pivotNode.add(object);
 
+    const releaseCarried = this._carry(pivotNode, object, mesh, cfg);
+
     const item: LiveMesh = {
       cfg, pivotNode, object, target: object, tint: new PartTint(object, cfg.id),
       frame, box: part.box, origin: pivot,
       restore: () => {
+        // Les pieces emmenees rentrent avant la geometrie : elles vivent sous
+        // le pivot, que la remise en place de la maille va faire disparaitre.
+        releaseCarried();
         restoreTriangles(mesh, part.tris, saved);
         object.geometry.dispose();
       },
@@ -319,6 +328,53 @@ export class PartController {
     };
     this._configure(item, cfg);
     return item;
+  }
+
+  /**
+   * Emmene les pieces contenues dans le volume de l'ouvrant.
+   *
+   * `attach` est preféré à `add` : il conserve la position à l'écran en
+   * convertissant la transformation. Une poignée reparentée sans cela sauterait
+   * à l'autre bout de la pièce.
+   *
+   * On note la place d'origine de chaque pièce pour la rendre exactement : le
+   * rang parmi les frères compte, l'ordre de parcours sert à départager les
+   * mailles homonymes.
+   */
+  private _carry(
+    pivotNode: THREE.Group,
+    object: THREE.Object3D,
+    host: THREE.Object3D,
+    cfg: OwlnestPart,
+  ): () => void {
+    this.carried.set(cfg.id, []);
+    if (cfg.carry === false || !this._root) return () => {};
+
+    this._root.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(object);
+    const found = findCarried(this._root, box, host, cfg.carryExclude ?? []);
+    if (!found.length) return () => {};
+
+    // Chaque piece est detachee de sa maille comme l'est le vantail : une
+    // poignee partage sa maille avec toutes les autres poignees du logement,
+    // reparenter la maille entiere emmenerait l'etage.
+    const taken = found.map((piece) => {
+      const { mesh: detached, saved } = extractPart(piece.mesh, piece.part, 'start');
+      detached.userData.owlnestPartId = cfg.id;
+      detached.material = untinted(piece.mesh.material);
+      // `attach` et non `add` : la position a l'ecran ne doit pas bouger.
+      pivotNode.attach(detached);
+      return { source: piece.mesh, part: piece.part, saved, detached };
+    });
+    this.carried.set(cfg.id, found.map((piece) => piece.name));
+
+    return () => {
+      for (const t of taken) {
+        restoreTriangles(t.source, t.part.tris, t.saved);
+        t.detached.parent?.remove(t.detached);
+        t.detached.geometry.dispose();
+      }
+    };
   }
 
   /**

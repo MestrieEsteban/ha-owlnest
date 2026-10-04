@@ -1140,6 +1140,7 @@ class Ha3dFloorplan extends HTMLElement {
       () => this._modelSpan,
       () => (this._modelRoot ? stampOrder(this._modelRoot) : null),
       (req) => { this._highlightReq = req; this._applyHighlight(); },
+      (id) => this._parts.carried.get(id)?.length ?? 0,
     );
 
     this._editPanel.onTestRule = (rule) => this.runRuleNow(rule);

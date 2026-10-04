@@ -103,6 +103,32 @@
       trisBefore - trisAfter === best.part.tris.length,
       `${trisBefore} → ${trisAfter}`);
 
+    // ── Entrainement par contenance ───────────────────────────────
+    // Une poignee n'est ni soudee au vantail ni groupee avec lui : seule sa
+    // place dans le volume de l'ouvrant dit qu'elle doit suivre.
+    const emmenees = ctl.carried.get('p1') ?? [];
+    check('des pieces contenues sont emmenees', emmenees.length > 0,
+      emmenees.length + ' : ' + (emmenees.join(', ') || '(aucune)'));
+
+    // Elles doivent bouger avec la porte, pas rester en place.
+    const suivi = emmenees.length ? (() => {
+      let o = null;
+      root.traverse((x) => { if (!o && x.name === emmenees[0]) o = x; });
+      if (!o) return null;
+      const avant = new THREE.Vector3();
+      root.updateMatrixWorld(true); o.getWorldPosition(avant);
+      // `preview` pose la cible ; c'est `update` qui anime jusqu'a elle.
+      ctl.preview('p1', 1);
+      for (let i = 0; i < 200 && ctl.update(0.1); i++);
+      const apres = new THREE.Vector3();
+      root.updateMatrixWorld(true); o.getWorldPosition(apres);
+      ctl.preview('p1', 0);
+      for (let i = 0; i < 200 && ctl.update(0.1); i++);
+      return avant.distanceTo(apres);
+    })() : null;
+    check('la piece emmenee suit l\u2019ouverture', suivi !== null && suivi > 1e-3,
+      suivi === null ? 'aucune piece' : suivi.toFixed(2) + ' unites');
+
     const leaf = best.mesh.children.find((c) => c.userData.owlnestPartId === 'p1');
     check('le vantail est un objet à part entière', !!leaf);
 
