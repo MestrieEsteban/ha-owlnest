@@ -548,6 +548,7 @@ const STRINGS = {
 
     // Card chrome, hint bars and model loading
     hintShow:              'Show',
+    anchorEntityPh:        'light.kitchen, switch.tv…',
     anchorLabelDefault:    'Label',
     toastSceneSaved:       '✓ Scene saved',
     toastSceneSaveError:   '✗ Error while saving',
@@ -1112,6 +1113,7 @@ const STRINGS = {
 
     // Card chrome, hint bars and model loading
     hintShow:              'Afficher',
+    anchorEntityPh:        'light.salon, switch.tv…',
     anchorLabelDefault:    'Étiquette',
     toastSceneSaved:       '✓ Scène sauvegardée',
     toastSceneSaveError:   '✗ Erreur lors de la sauvegarde',

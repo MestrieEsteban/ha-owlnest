@@ -17373,6 +17373,7 @@ const Oa = {
     viewMgrSaveError: "✗ Error saving views",
     // Card chrome, hint bars and model loading
     hintShow: "Show",
+    anchorEntityPh: "light.kitchen, switch.tv…",
     anchorLabelDefault: "Label",
     toastSceneSaved: "✓ Scene saved",
     toastSceneSaveError: "✗ Error while saving",
@@ -17895,6 +17896,7 @@ const Oa = {
     viewMgrSaveError: "✗ Erreur lors de la sauvegarde des vues",
     // Card chrome, hint bars and model loading
     hintShow: "Afficher",
+    anchorEntityPh: "light.salon, switch.tv…",
     anchorLabelDefault: "Étiquette",
     toastSceneSaved: "✓ Scène sauvegardée",
     toastSceneSaveError: "✗ Erreur lors de la sauvegarde",
@@ -24596,7 +24598,7 @@ const Hr = class Hr {
     const f = document.createElement("div");
     f.style.cssText = "position:relative;";
     const m = document.createElement("input");
-    m.value = n.entity, m.placeholder = "light.salon, switch.tv…", m.style.cssText = p, m.addEventListener("focus", () => {
+    m.value = n.entity, m.placeholder = x("anchorEntityPh"), m.style.cssText = p, m.addEventListener("focus", () => {
       m.style.borderColor = "rgba(125,209,252,0.5)";
     }), m.addEventListener("blur", () => {
       m.style.borderColor = "rgba(255,255,255,0.1)";
@@ -27136,7 +27138,7 @@ const dy = "rules-engine-v2", Ps = class Ps extends HTMLElement {
     const i = document.createElement("div");
     i.style.cssText = "font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:24px;letter-spacing:.04em;", i.textContent = "3D Floorplan";
     const r = document.createElement("div");
-    r.style.cssText = "font-size:10px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;align-self:flex-start;max-width:280px;width:100%;", r.textContent = "Scene ID";
+    r.style.cssText = "font-size:10px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;align-self:flex-start;max-width:280px;width:100%;", r.textContent = x("cfgSceneId");
     const o = document.createElement("div");
     o.style.cssText = "display:flex;gap:6px;width:100%;max-width:280px;margin-bottom:16px;";
     const a = document.createElement("input");
@@ -27158,7 +27160,7 @@ const dy = "rules-engine-v2", Ps = class Ps extends HTMLElement {
     })).catch(() => {
     });
     const c = document.createElement("button");
-    c.textContent = "Load", c.style.cssText = [
+    c.textContent = x("cfgLoadScene"), c.style.cssText = [
       "background:rgba(125,209,252,0.15)",
       "border:1px solid rgba(125,209,252,0.3)",
       "border-radius:8px",

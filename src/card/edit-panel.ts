@@ -1914,7 +1914,7 @@ export class EditPanel {
     entityWrap.style.cssText = 'position:relative;';
     const entityInput = document.createElement('input');
     entityInput.value = anchor.entity;
-    entityInput.placeholder = 'light.salon, switch.tv…';
+    entityInput.placeholder = t('anchorEntityPh');
     entityInput.style.cssText = inputStyle;
     entityInput.addEventListener('focus', () => { entityInput.style.borderColor = 'rgba(125,209,252,0.5)'; });
     entityInput.addEventListener('blur', () => { entityInput.style.borderColor = 'rgba(255,255,255,0.1)'; });

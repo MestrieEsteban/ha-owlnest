@@ -796,7 +796,7 @@ class Ha3dFloorplan extends HTMLElement {
 
     const label = document.createElement('div');
     label.style.cssText = 'font-size:10px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;align-self:flex-start;max-width:280px;width:100%;';
-    label.textContent = 'Scene ID';
+    label.textContent = t('cfgSceneId');
 
     const inputRow = document.createElement('div');
     inputRow.style.cssText = 'display:flex;gap:6px;width:100%;max-width:280px;margin-bottom:16px;';
@@ -819,7 +819,7 @@ class Ha3dFloorplan extends HTMLElement {
     }
 
     const loadBtn = document.createElement('button');
-    loadBtn.textContent = 'Load';
+    loadBtn.textContent = t('cfgLoadScene');
     loadBtn.style.cssText = [
       'background:rgba(125,209,252,0.15)', 'border:1px solid rgba(125,209,252,0.3)',
       'border-radius:8px', 'color:#7dd3fc', 'padding:8px 14px',
