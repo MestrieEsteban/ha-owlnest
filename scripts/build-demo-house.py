@@ -179,7 +179,7 @@ def plan(src):
         ('televisionModern', 0.12, 1.2, 90, 'Television', 'cabinetTelevision'),
         ('tableCoffee', 0.85, 1.2, 90, 'Table_basse'),
         ('loungeSofa', 1.45, 1.0, 270, 'Canape'),
-        ('lampRoundFloor', 1.6, 0.55, 0, 'Lampadaire'),
+        ('lampRoundFloor', 0.78, 2.65, 0, 'Lampadaire'),
         ('bookcaseOpen', 0.3, 2.6, 180, 'Bibliotheque'),
         ('pottedPlant', 0.1, 0.1, 0, 'Plante'),
         # Cuisine : plan de travail contre la cloison, table devant.
