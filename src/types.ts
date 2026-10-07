@@ -388,6 +388,12 @@ export interface OwlnestPart {
    */
   closedColor?: string;
   openColor?: string;
+  /**
+   * Intensite de la teinte, de 0 a 1 : la part de la couleur du materiau qu'elle
+   * remplace. Absente : 0,55, le dosage d'origine — assez pour se lire, sans
+   * effacer la matiere. A 1, l'objet prend entierement la couleur d'etat.
+   */
+  tintStrength?: number;
 }
 
 export interface OwlnestScene {

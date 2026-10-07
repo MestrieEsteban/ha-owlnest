@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { PartController } from './parts-runtime.mjs';
-import { tintAt, tintColor, PartTint, untinted } from './part-tint.mjs';
+import { tintAt, tintColor, PartTint, untinted, DEFAULT_TINT_STRENGTH } from './part-tint.mjs';
 
 function boxGeom(c, s) {
   const [x, y, z] = c;
@@ -261,4 +261,51 @@ test('PartTint sans couleur ne monte rien', () => {
   assert.equal(untinted(leaf.material), shared);
   tint.restore();
   assert.equal(leaf.material, shared);
+});
+
+// ── Intensité ──────────────────────────────────────────────────────────────
+
+function blanc() {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: '#ffffff' }));
+  const root = new THREE.Group();
+  root.add(mesh);
+  return { root, mesh };
+}
+
+test('sans intensité fixée, le dosage d’origine est conservé', () => {
+  // Les ouvrants déjà enregistrés ne doivent pas changer d’aspect.
+  const a = blanc(); const b = blanc();
+  new PartTint(a.root, 'p').apply('#ff0000', undefined, 0);
+  new PartTint(b.root, 'p').apply('#ff0000', undefined, 0, DEFAULT_TINT_STRENGTH);
+  assert.equal(a.mesh.material.color.getHexString(), b.mesh.material.color.getHexString());
+});
+
+test('à 100 %, l’objet prend entièrement la couleur', () => {
+  const { root, mesh } = blanc();
+  new PartTint(root, 'p').apply('#ff0000', undefined, 0, 1);
+  assert.equal(mesh.material.color.getHexString(), 'ff0000');
+});
+
+test('l’intensité dose la couleur, de faible à forte', () => {
+  const vert = (k) => { const { root, mesh } = blanc(); new PartTint(root, 'p').apply('#ff0000', undefined, 0, k); return mesh.material.color.g; };
+  // Le vert part de 1 (blanc) et s’efface à mesure que le rouge recouvre.
+  assert.ok(vert(0.1) > vert(0.5), 'plus intense, moins de blanc');
+  assert.ok(vert(0.5) > vert(1), 'et ainsi jusqu’au rouge pur');
+});
+
+test('changer l’intensité repeint sans relever les mailles', () => {
+  const { root, mesh } = blanc();
+  const tint = new PartTint(root, 'p');
+  tint.apply('#ff0000', undefined, 0, 0.2);
+  const copy = mesh.material;
+  const avant = copy.color.g;
+  assert.equal(tint.apply('#ff0000', undefined, 0, 0.9), true, 'le changement est signalé');
+  assert.equal(mesh.material, copy, 'même copie de matériau');
+  assert.ok(copy.color.g < avant, 'et la couleur s’est renforcée');
+});
+
+test('une intensité aberrante est bornée', () => {
+  const { root, mesh } = blanc();
+  new PartTint(root, 'p').apply('#ff0000', undefined, 0, 7);
+  assert.equal(mesh.material.color.getHexString(), 'ff0000');
 });

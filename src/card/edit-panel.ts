@@ -4350,6 +4350,9 @@ export class EditPanel {
     };
     colorRow('closedColor', t('partColorClosed'), t('partColorClosedHint'), '#22c55e');
     colorRow('openColor', t('partColorOpen'), t('partColorOpenHint'), '#f59e0b');
+    slider(tintBox, t('partColorStrength'), 5, 100, 5, Math.round((draft.tintStrength ?? 0.55) * 100),
+      (v) => `${v} %`, (v) => { draft.tintStrength = v === 55 ? undefined : v / 100; });
+    hintLine(tintBox, t('partColorStrengthHint'));
 
     // Ordre d'affichage : réglages du mouvement, puis durée, inversion,
     // teintes et aperçu — l'aperçu juste dessous montre le fondu.

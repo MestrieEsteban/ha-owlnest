@@ -401,7 +401,7 @@ export class PartController {
 
   private _placeClips(anim: LiveClips) {
     anim.rig.set(anim.current);
-    anim.tint?.apply(anim.cfg.closedColor, anim.cfg.openColor, anim.current);
+    anim.tint?.apply(anim.cfg.closedColor, anim.cfg.openColor, anim.current, anim.cfg.tintStrength);
   }
 
   private _configureClips(anim: LiveClips, cfg: OwlnestPart) {
@@ -906,8 +906,10 @@ export class PartController {
       else item.pivotNode.rotation[item.axis] = value;
     }
     // La position animée, pas la cible : la teinte fond avec le mouvement.
-    item.tint.apply(item.cfg.closedColor, item.cfg.openColor, item.current);
-    for (const f of item.followers) f.tint?.apply(item.cfg.closedColor, item.cfg.openColor, item.current);
+    item.tint.apply(item.cfg.closedColor, item.cfg.openColor, item.current, item.cfg.tintStrength);
+    for (const f of item.followers) {
+      f.tint?.apply(item.cfg.closedColor, item.cfg.openColor, item.current, item.cfg.tintStrength);
+    }
   }
 
   // ── Déroulant ─────────────────────────────────────────────────────────────

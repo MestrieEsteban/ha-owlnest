@@ -8,8 +8,11 @@
  */
 import * as THREE from 'three';
 
-/** Part de la couleur propre du matériau remplacée par la teinte, à plein effet. */
-const COLOR_MIX = 0.55;
+/**
+ * Part de la couleur propre du matériau remplacée par la teinte, à plein effet,
+ * quand l'ouvrant ne fixe pas la sienne (`tintStrength`).
+ */
+export const DEFAULT_TINT_STRENGTH = 0.55;
 /** Lueur ajoutée : garde la teinte lisible sur une face à l'ombre. */
 const GLOW = 0.35;
 
@@ -66,13 +69,16 @@ function cloneMaterial(src: THREE.Material): THREE.Material {
   return copy;
 }
 
-function paint(copy: THREE.Material, src: THREE.Material, color: THREE.Color, weight: number) {
+function paint(copy: THREE.Material, src: THREE.Material, color: THREE.Color, weight: number, strength: number) {
   const d = copy as Colored;
   const s = src as Colored;
-  if (d.color?.isColor && s.color) d.color.copy(s.color).lerp(color, COLOR_MIX * weight);
+  if (d.color?.isColor && s.color) d.color.copy(s.color).lerp(color, strength * weight);
   if (d.emissive?.isColor && s.emissive) {
     const base = s.emissiveIntensity ?? 1;
-    d.emissive.copy(s.emissive).multiplyScalar(base).lerp(color.clone().multiplyScalar(GLOW), weight);
+    // La lueur suit l'intensité, rapportée au dosage d'origine : une teinte
+    // discrète ne doit pas briller comme une teinte pleine.
+    const glow = weight * Math.min(1, strength / DEFAULT_TINT_STRENGTH);
+    d.emissive.copy(s.emissive).multiplyScalar(base).lerp(color.clone().multiplyScalar(GLOW), glow);
     d.emissiveIntensity = 1;
   }
 }
@@ -99,18 +105,24 @@ export class PartTint {
   get active(): boolean { return this.entries !== null; }
 
   /** Applique la teinte. Retourne `true` si l'apparence a changé. */
-  apply(closed: string | undefined, open: string | undefined, fraction: number): boolean {
+  apply(
+    closed: string | undefined,
+    open: string | undefined,
+    fraction: number,
+    strength: number = DEFAULT_TINT_STRENGTH,
+  ): boolean {
     const tint = tintAt(closed, open, fraction);
+    const k = Math.min(1, Math.max(0, Number.isFinite(strength) ? strength : DEFAULT_TINT_STRENGTH));
     if (!tint) {
       const had = this.active;
       this.restore();
       return had;
     }
-    const key = `${tint.color.getHexString()}:${tint.weight.toFixed(4)}`;
+    const key = `${tint.color.getHexString()}:${tint.weight.toFixed(4)}:${k.toFixed(3)}`;
     if (this.entries && key === this.last) return false;
     this.last = key;
     if (!this.entries) this._mount();
-    for (const [src, copy] of this.copies) paint(copy, src, tint.color, tint.weight);
+    for (const [src, copy] of this.copies) paint(copy, src, tint.color, tint.weight, k);
     return true;
   }
 
