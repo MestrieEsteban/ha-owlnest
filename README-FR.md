@@ -246,6 +246,10 @@ Configurez cela dans les propriétés de l'ancre → **Visible si** dans l'édit
 
 ### Ouvrants
 
+<p align="center">
+  <img src="assets/openings.gif" alt="Une porte qui s'ouvre avec son entité, poignée et couleur d'état comprises" width="600" />
+</p>
+
 Les ouvrants sont des pièces de votre modèle (portes, fenêtres, volets, porte de lave-vaisselle ou de four, fauteuil inclinable) qui bougent quand une entité Home Assistant s'ouvre ou se ferme. Le fichier du modèle n'est pas modifié : pivoter, coulisser et se dérouler détachent la pièce dans la carte ; **Joue les animations du modèle** pose les nœuds déjà enregistrés dans le GLB.
 
 #### Ajouter un ouvrant

@@ -244,6 +244,10 @@ Configure this in anchor properties → **Visible if** in the editor.
 
 ### Openings
 
+<p align="center">
+  <img src="assets/openings.gif" alt="A door opening with its entity, handle and state colour included" width="600" />
+</p>
+
 Openings are pieces of your model (doors, windows, shutters, a dishwasher or oven door, a reclining sofa) that move when a Home Assistant entity opens or closes. Nothing is changed in the model file: swing, slide and extend detach the piece in the card; **Plays model animations** poses the nodes already stored in the GLB.
 
 #### Adding an opening
