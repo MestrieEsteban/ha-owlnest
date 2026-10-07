@@ -17,6 +17,10 @@
 </p>
 
 <p align="center">
+  <a href="https://mestrieesteban.github.io/ha-owlnest/?lang=fr"><img src="https://img.shields.io/badge/%E2%96%B6%20Essayer%20la%20d%C3%A9mo%20en%20ligne-6C63FF?style=for-the-badge" alt="Essayer la démo en ligne" height="40" /></a>
+</p>
+
+<p align="center">
   <a href="https://mestrieesteban.github.io/ha-owlnest/?lang=fr"><strong>▶ Démo en ligne</strong></a> ·
   <a href="#installation">Installer</a> ·
   <a href="#premiers-pas">Essayer</a> ·
@@ -32,6 +36,14 @@
 </p>
 
 Owlnest est une carte Home Assistant qui affiche votre logement en 3D. Les lumières du modèle suivent vos vraies lampes : allumage, couleur et intensité. Vous pouvez aussi y placer vos capteurs et faire bouger les portes ou les volets selon leur état.
+
+## Essayer en ligne
+
+<p align="center">
+  <a href="https://mestrieesteban.github.io/ha-owlnest/?lang=fr"><img src="assets/live-demo.jpg" alt="La démo en ligne d'Owlnest : une maison en 3D de nuit, chaque pièce éclairée par sa lampe" width="700" /></a>
+</p>
+
+**[▶ Ouvrir la démo en ligne](https://mestrieesteban.github.io/ha-owlnest/?lang=fr)** : la vraie carte, dans votre navigateur, branchée sur une maison simulée. Une visite guidée de 2 minutes montre les lumières, les capteurs, une porte qui s'ouvre avec une règle, puis l'éditeur où tout se règle. Rien à installer.
 
 ## Pourquoi Owlnest ?
 
