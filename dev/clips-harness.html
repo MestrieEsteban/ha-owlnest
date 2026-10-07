@@ -1,0 +1,130 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Owlnest — animations du modèle</title>
+<style>
+  html, body { margin: 0; background: #0d1117; color: #cbd5e1; font-family: system-ui, sans-serif; }
+  .bar { display: flex; gap: 28px; align-items: center; padding: 12px 16px; font-size: 13px; }
+  .bar label { display: flex; gap: 10px; align-items: center; }
+  .bar input[type=range] { width: 200px; }
+  .bar b { color: #7dd3fc; min-width: 40px; display: inline-block; }
+  pre { color: #7dd3fc; font: 11px monospace; padding: 8px 16px; white-space: pre-wrap; }
+</style>
+<div class="bar">
+  <label>cover.droite <input id="droite" type="range" min="0" max="100" value="0" /> <b id="droite-v">0 %</b></label>
+  <label>cover.gauche <input id="gauche" type="range" min="0" max="100" value="0" /> <b id="gauche-v">0 %</b></label>
+</div>
+<div id="host"></div>
+<pre id="out">montage…</pre>
+<script type="module">
+  // Banc des ouvrants « Joue les animations du modèle » (PR #6).
+  //
+  // La vraie carte et le canapé inclinable fourni par cacharritos, exporté de
+  // Blender avec ses pistes NLA. Deux volets simulés, un par côté, comme dans
+  // l'exemple du README. Le mode édition reste disponible : crayon de la carte.
+  //
+  // Le modèle (dev/sofa.local.glb) n'est pas versionné.
+  import '/src/ha-3d-floorplan.ts';
+  import * as THREE from 'three';
+
+  customElements.define('ha-icon', class extends HTMLElement {
+    connectedCallback() { this.style.cssText = 'display:inline-flex;width:16px;height:16px'; this.textContent = '◆'; }
+  });
+
+  const SCENE = {
+    version: 1,
+    scene_id: 'clips',
+    model_url: '/dev/sofa.local.glb',
+    camera_views: [], cards: [], rules: [], anchors: [],
+    parts: [
+      { id: 'p_droite', entity: 'cover.droite', label: 'Côté droit', motion: 'animation',
+        clips: ['Reclinar_Der', 'Cabezal_Der'], mesh: 'Mecanismo_Der', triangle: 0, duration: 0.8 },
+      { id: 'p_gauche', entity: 'cover.gauche', label: 'Côté gauche', motion: 'animation',
+        clips: ['Reclinar_Izq', 'Cabezal_Izq'], mesh: 'Mecanismo_Izq', triangle: 0, duration: 0.8 },
+    ],
+  };
+
+  const cover = (pos) => ({
+    state: pos > 0 ? 'open' : 'closed',
+    attributes: { current_position: pos, friendly_name: 'Volet' },
+  });
+  let states = { 'cover.droite': cover(0), 'cover.gauche': cover(0) };
+
+  let saved = null;
+  const hassFor = () => ({
+    states,
+    language: 'fr',
+    callService() {},
+    callWS: async (msg) => {
+      if (msg.type === 'owlnest/load_scene') return saved ?? SCENE;
+      if (msg.type === 'owlnest/save_scene') { saved = msg.data; return { success: true }; }
+      if (msg.type === 'owlnest/list_scenes') return { scenes: ['clips'] };
+      if (String(msg.type).startsWith('config/')) return [];
+      throw new Error('inconnu: ' + msg.type);
+    },
+  });
+
+  localStorage.setItem('owlnest_scene_id', 'clips');
+  const card = document.createElement('ha-3d-floorplan');
+  card.style.cssText = 'display:block;width:960px;height:540px;';
+  document.getElementById('host').appendChild(card);
+  card.setConfig({ scene_id: 'clips', height: 540 });
+  card.hass = hassFor();
+  window.__card = card;
+
+  for (const id of ['droite', 'gauche']) {
+    const input = document.getElementById(id);
+    input.addEventListener('input', () => {
+      const v = Number(input.value);
+      document.getElementById(id + '-v').textContent = v + ' %';
+      states = { ...states, ['cover.' + id]: cover(v) };
+      card.hass = hassFor();
+    });
+  }
+
+  // ── Contrôles automatiques ───────────────────────────────────────────────
+  await new Promise((r) => setTimeout(r, 2500));
+  const log = [];
+  const check = (label, ok, detail = '') => log.push(`${ok ? '✓' : '✗'} ${label}${detail ? ' — ' + detail : ''}`);
+
+  const root = card._modelRoot;
+  check('le modèle porte ses animations', (root?.animations?.length ?? 0) === 4,
+    (root?.animations ?? []).map((c) => c.name).join(', '));
+
+  const node = (name) => { let n = null; root?.traverse((o) => { if (!n && o.name === name) n = o; }); return n; };
+  const right = node('Respaldo_Der_Pivote');
+  const left = node('Respaldo_Izq_Pivote');
+  const rest = { right: right?.quaternion.clone(), left: left?.quaternion.clone() };
+  // Écart angulaire à la pose de repos, en degrés.
+  const moved = (o, q0) => Math.round(THREE.MathUtils.radToDeg(o.quaternion.angleTo(q0)));
+
+  // La carte anime ses ouvrants dans sa boucle de rendu, qui s'arrête quand
+  // l'onglet est masqué. On fait donc avancer le contrôleur nous-mêmes : un
+  // pas de 10 s amène chaque ouvrant au bout de sa transition.
+  const drive = async (d, g) => {
+    states = { 'cover.droite': cover(d), 'cover.gauche': cover(g) };
+    card.hass = hassFor();
+    await new Promise((r) => setTimeout(r, 30));
+    card._parts.update(10);
+  };
+
+  check('les deux dossiers sont trouvés', !!right && !!left);
+  if (right && left) {
+    await drive(0, 0);
+    check('fermé : pose de repos', moved(right, rest.right) === 0 && moved(left, rest.left) === 0);
+    await drive(100, 0);
+    const full = moved(right, rest.right);
+    check('droite à 100 % : le dossier droit bascule', full > 5, full + '°');
+    check('le côté gauche n’a pas bougé', moved(left, rest.left) === 0, moved(left, rest.left) + '°');
+    await drive(40, 0);
+    const part = moved(right, rest.right);
+    check('droite à 40 % : entre les deux', part > 0 && part < full, `${part}° sur ${full}°`);
+    await drive(0, 100);
+    check('les deux côtés sont indépendants', moved(right, rest.right) === 0 && moved(left, rest.left) > 5,
+      `droite ${moved(right, rest.right)}°, gauche ${moved(left, rest.left)}°`);
+    await drive(0, 0);
+    check('tout se referme', moved(right, rest.right) === 0 && moved(left, rest.left) === 0);
+  }
+
+  document.getElementById('out').textContent = log.join('\n') +
+    '\n\nLes curseurs pilotent les deux côtés. Le crayon de la carte ouvre l’éditeur.';
+</script>
