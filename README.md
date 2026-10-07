@@ -72,6 +72,62 @@ I wanted something different: real-time 3D lights, a visual editor, weather effe
 
 ---
 
+## 🎬 In action
+
+A quick look at what Owlnest does. Each part links to its chapter of the full guide.
+
+### 📍 Place your devices
+
+<p align="center">
+  <img src="assets/moveLight.gif" alt="Moving an anchor in the editor" width="600" />
+</p>
+
+Click on the model to drop an anchor, pick the entity from a list, then drag it where it belongs. No coordinates, no YAML.
+
+→ Learn more: [Anchors](docs/guide.md#anchors)
+
+### 🚪 Doors and shutters that move
+
+<p align="center">
+  <img src="assets/openings.gif" alt="A door opening with its entity, handle and state colour included" width="600" />
+</p>
+
+A door, a window or a shutter follows its entity: it swings, slides or rolls, takes a colour per state, and carries its handle along.
+
+→ Learn more: [Openings](docs/guide.md#openings)
+
+### ⚡ Rules that drive the view
+
+<p align="center">
+  <img src="assets/rules.gif" alt="Rules engine in action" width="600" />
+</p>
+
+When something happens in the house, the card reacts: fly to the room, highlight an anchor, show a message.
+
+→ Learn more: [Rules engine](docs/guide.md#rules-engine)
+
+### 🎥 Camera views
+
+<p align="center">
+  <img src="assets/vue.gif" alt="Camera views navigation" width="600" />
+</p>
+
+Save the angles you like and fly from one to the other in a click.
+
+→ Learn more: [Camera views](docs/guide.md#camera-views)
+
+### 🌦️ Weather and daylight
+
+<p align="center">
+  <img src="assets/meteo.gif" alt="Weather and sun effects" width="600" />
+</p>
+
+The sun follows `sun.sun` and the sky follows your weather entity: rain, snow, fog and night fall on the model.
+
+→ Learn more: [Environment](docs/guide.md#environment)
+
+---
+
 ## 📦 Installation
 
 Owlnest is a Home Assistant integration that carries its own Lovelace card. You

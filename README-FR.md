@@ -72,6 +72,62 @@ J'ai voulu autre chose des lumières 3D temps réel, un éditeur visuel, de la m
 
 ---
 
+## 🎬 En action
+
+Un aperçu de ce que fait Owlnest. Chaque partie renvoie à son chapitre du guide complet.
+
+### 📍 Placez vos appareils
+
+<p align="center">
+  <img src="assets/moveLight.gif" alt="Déplacer une ancre dans l'éditeur" width="600" />
+</p>
+
+Cliquez sur le modèle pour poser une ancre, choisissez l'entité dans une liste, puis glissez-la à sa place. Ni coordonnées, ni YAML.
+
+→ En savoir plus : [Ancres](docs/guide-fr.md#ancres)
+
+### 🚪 Des portes et des volets qui bougent
+
+<p align="center">
+  <img src="assets/openings.gif" alt="Une porte qui s'ouvre avec son entité, poignée et couleur d'état comprises" width="600" />
+</p>
+
+Une porte, une fenêtre ou un volet suit son entité : il pivote, coulisse ou se déroule, prend une couleur selon son état et emmène sa poignée.
+
+→ En savoir plus : [Ouvrants](docs/guide-fr.md#ouvrants)
+
+### ⚡ Des règles qui pilotent la vue
+
+<p align="center">
+  <img src="assets/rules.gif" alt="Le moteur de règles en action" width="600" />
+</p>
+
+Quand quelque chose se passe dans la maison, la carte réagit : elle vole vers la pièce, fait pulser une ancre, affiche un message.
+
+→ En savoir plus : [Moteur de règles](docs/guide-fr.md#moteur-de-règles)
+
+### 🎥 Vues caméra
+
+<p align="center">
+  <img src="assets/vue.gif" alt="Navigation entre les vues caméra" width="600" />
+</p>
+
+Enregistrez les angles qui vous plaisent et passez de l'un à l'autre d'un clic.
+
+→ En savoir plus : [Vues caméra](docs/guide-fr.md#vues-caméra)
+
+### 🌦️ Météo et lumière du jour
+
+<p align="center">
+  <img src="assets/meteo.gif" alt="Effets de météo et de soleil" width="600" />
+</p>
+
+Le soleil suit `sun.sun` et le ciel votre entité météo : pluie, neige, brouillard et nuit tombent sur le modèle.
+
+→ En savoir plus : [Environnement](docs/guide-fr.md#environnement)
+
+---
+
 ## 📦 Installation
 
 Owlnest est une intégration Home Assistant qui embarque sa propre carte Lovelace.
