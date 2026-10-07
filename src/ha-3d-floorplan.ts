@@ -22,7 +22,10 @@ import { EditPanel } from './card/edit-panel';
 import { SceneCardRenderer } from './cards/renderer';
 import { PanelGizmo } from './panels/gizmo';
 import type { SceneCard, SceneCardType } from './cards/types';
-import { PartController, meshOrder } from './parts-runtime';
+import { PartController, meshOrder, partTargetKey } from './parts-runtime';
+import { clipInfos } from './parts-clips';
+import { stampOrder, nodeOrder } from './model-outline';
+import { PartHighlight, type HighlightSource, type HighlightSlot } from './part-highlight';
 import { modelScale } from './scale';
 import { partIndexOf, partFrame, guessPart, verticalAxis } from './parts';
 import { separateCoplanarSlabs } from './coplanar';
@@ -156,6 +159,13 @@ class Ha3dFloorplan extends HTMLElement {
   private _parts = new PartController();
   /** Renseigné pendant que l'éditeur attend un clic sur une pièce du modèle. */
   private _partPickHandler: ((hit: import('./card/edit-panel').PickedPart) => void) | null = null;
+  /** Surlignage de l'arborescence des objets, dans l'éditeur d'ouvrants. */
+  private _highlight = new PartHighlight();
+  /**
+   * Ce que l'éditeur demande de surligner, gardé sous forme de rangs : la
+   * demande survit à un rechargement du modèle et se réapplique ensuite.
+   */
+  private _highlightReq: import('./card/edit-panel').PartHighlightRequest = { hover: null, selected: null };
 
   // Environment lights
   private _hemiLight: THREE.HemisphereLight | null = null;
@@ -1123,10 +1133,17 @@ class Ha3dFloorplan extends HTMLElement {
       (id, fraction) => { this._parts.preview(id, fraction); this._requestRender(); },
       (cfg) => {
         const applied = this._parts.configure(cfg);
-        if (applied) this._requestRender();
+        // Un changement de cible remonte l'ouvrant : le surlignage doit
+        // suivre le nouvel objet.
+        if (applied) { this._applyHighlight(); this._requestRender(); }
         return applied;
       },
       () => this._modelSpan,
+      () => (this._modelRoot ? stampOrder(this._modelRoot) : null),
+      (req) => { this._highlightReq = req; this._applyHighlight(); },
+      (id) => this._parts.carried.get(id)?.length ?? 0,
+      (id) => this._parts.extendInfo(id),
+      () => clipInfos(this._modelRoot?.animations ?? []),
     );
 
     this._editPanel.onTestRule = (rule) => this.runRuleNow(rule);
@@ -1509,15 +1526,69 @@ class Ha3dFloorplan extends HTMLElement {
     // et n'arrive jamais ici.
     const ids = new Set(parts.map((p) => p.id));
     const known = new Set(before.map((p) => p.id));
-    const structural = ids.size !== known.size || [...ids].some((id) => !known.has(id));
+    // Un changement de cible est d'ordinaire déjà monté par `configure` ; il
+    // ne faut recharger que s'il n'a pas pu l'être.
+    const prev = new Map(before.map((p) => [p.id, partTargetKey(p)]));
+    const unmounted = parts.some((p) => prev.get(p.id) !== partTargetKey(p) && !this._parts.hasTarget(p));
+    const structural = ids.size !== known.size || [...ids].some((id) => !known.has(id)) || unmounted;
     if (structural) this.refreshParts();
+  }
+
+  /**
+   * Surligne ce que l'éditeur désigne, d'après la dernière demande.
+   *
+   * Une cible se cherche d'abord parmi les ouvrants montés — une pièce
+   * détachée n'est plus dans sa maille —, puis parmi les nœuds, puis comme
+   * pièce d'une maille.
+   */
+  private _applyHighlight() {
+    this._highlight.clear();
+    const root = this._modelRoot;
+    if (root) {
+      for (const slot of ['hover', 'selected'] as const satisfies readonly HighlightSlot[]) {
+        const target = this._highlightReq[slot];
+        const src = target ? this._resolveHighlight(root, target) : null;
+        if (src) this._highlight.show(slot, [src]);
+      }
+      const followers = this._highlightReq.selected?.followers ?? [];
+      if (followers.length) {
+        const order = nodeOrder(root);
+        const srcs = followers.map((r) => order[r]).filter((o): o is THREE.Object3D => !!o).map((object) => ({ object }));
+        this._highlight.show('follower', srcs);
+      }
+    }
+    this._requestRender();
+  }
+
+  private _resolveHighlight(
+    root: THREE.Object3D,
+    t: import('./card/edit-panel').PartHighlightTarget,
+  ): HighlightSource | null {
+    if (t.part) {
+      const obj = this._parts.objectOf(t.part);
+      if (obj) return { object: obj };
+    }
+    if (t.node !== undefined) {
+      const obj = nodeOrder(root)[t.node];
+      if (obj) return { object: obj };
+    }
+    if (t.mesh !== undefined && t.triangle !== undefined) {
+      const mesh = meshOrder(root)[t.mesh];
+      if (!mesh) return null;
+      const index = partIndexOf(mesh);
+      const id = index.ofTriangle[t.triangle];
+      if (id === undefined || id < 0) return null;
+      return { mesh, tris: index.parts[id].tris };
+    }
+    return null;
   }
 
   /**
    * Attend le prochain clic sur le modèle et renvoie la pièce touchée.
    *
-   * On ne propose pas de liste : sur 2 600 composantes, désigner du doigt est
-   * la seule interaction praticable.
+   * Le clic reste l'entrée : sur 2 600 composantes, désigner du doigt est la
+   * seule interaction praticable. L'arborescence du formulaire permet ensuite
+   * d'élargir la sélection à l'objet ou au groupe qui contient la pièce.
    */
   private _startPartPicking(onPicked: (hit: import('./card/edit-panel').PickedPart) => void) {
     this._partPickHandler = onPicked;
@@ -1538,15 +1609,35 @@ class Ha3dFloorplan extends HTMLElement {
     if (this.canvas) this.canvas.style.cursor = '';
 
     const mesh = hit.object as THREE.Mesh;
+    // Le modèle peut être en mètres comme en centimètres : on cale l'échelle
+    // sur une hauteur d'étage plausible pour que les cotes affichées parlent.
+    const span = this._modelSpan;
+    const unitToCm = span > 50 ? 1 : 100;
+
+    // Pièce déjà détachée : elle n'est plus dans sa maille, et son propre
+    // triangle ne dit rien du modèle. On rend l'ouvrant qui la porte.
+    const ownerId = mesh.userData.owlnestPartId as string | undefined;
+    const owner = ownerId ? this._scene?.parts?.find((p) => p.id === ownerId) : undefined;
+    if (owner) {
+      mesh.geometry.computeBoundingBox();
+      const box = mesh.geometry.boundingBox!;
+      const frame = partFrame(box);
+      cb({
+        mesh: owner.mesh,
+        meshIndex: owner.meshIndex ?? -1,
+        triangle: owner.triangle,
+        size: [frame.size[frame.up] * unitToCm, frame.size[frame.wide] * unitToCm, frame.size[frame.thin] * unitToCm],
+        guess: guessPart(box, unitToCm),
+        triangles: (mesh.geometry.getAttribute('position').count / 3) | 0,
+        partId: owner.id,
+      });
+      return true;
+    }
     const index = partIndexOf(mesh);
     const partId = index.ofTriangle[hit.faceIndex!];
     const part = partId >= 0 ? index.parts[partId] : null;
     if (!part) return false;
 
-    // Le modèle peut être en mètres comme en centimètres : on cale l'échelle
-    // sur une hauteur d'étage plausible pour que les cotes affichées parlent.
-    const span = this._modelSpan;
-    const unitToCm = span > 50 ? 1 : 100;
     const frame = partFrame(part.box);
     cb({
       mesh: mesh.name,
@@ -1561,6 +1652,9 @@ class Ha3dFloorplan extends HTMLElement {
       ],
       guess: guessPart(part.box, unitToCm),
       triangles: part.tris.length,
+      // Un objet posé par des animations n'est pas détaché : c'est son
+      // ouvrant qui le réclame.
+      partId: this._parts.animatedOwnerOf(mesh) ?? undefined,
     });
     return true;
   }
@@ -2213,8 +2307,13 @@ class Ha3dFloorplan extends HTMLElement {
   private _buildParts() {
     const configs = this._scene?.parts ?? [];
     if (!this._modelRoot) return;
+    // Les rangs de l'arborescence se relèvent sur le modèle tel que chargé,
+    // avant qu'un ouvrant ne déplace quoi que ce soit.
+    stampOrder(this._modelRoot);
+    // Les calques de surlignage ne doivent pas entrer dans une boîte d'ouvrant.
+    this._highlight.clear();
     this._parts.dispose(this._modelRoot);
-    if (configs.length === 0) return;
+    if (configs.length === 0) { this._applyHighlight(); return; }
 
     // Déduite du modèle entier, pas de chaque pièce : voir verticalAxis().
     this._parts.setVertical(verticalAxis(this._modelBox));
@@ -2230,15 +2329,20 @@ class Ha3dFloorplan extends HTMLElement {
     // leur état réel, sinon toutes les portes ouvertes s'animeraient au
     // chargement de la page.
     this._parts.update(1e6);
-    this._requestRender();
+    this._applyHighlight();
   }
 
-  /** Reconstruit les ouvrants après une modification dans l'éditeur. */
+  /**
+   * Reconstruit les ouvrants après une modification dans l'éditeur.
+   *
+   * Sur place, sans recharger le modèle : tout montage se défait exactement
+   * (triangles rendus à leur maille, nœuds remis sous leur parent). Recharger
+   * quittait aussi le mode édition — et fermait le formulaire qu'on venait
+   * d'ouvrir sur un nouvel ouvrant.
+   */
   refreshParts() {
     if (!this._modelRoot) return;
-    // Une pièce déjà détachée a été retirée de sa maille : seul un rechargement
-    // rend le modèle à son état initial.
-    this._loadModel();
+    this._buildParts();
   }
 
   // ── Scene content cleanup (keeps renderer/canvas/HUD intact) ─────────
@@ -2246,6 +2350,7 @@ class Ha3dFloorplan extends HTMLElement {
   private _clearSceneContent() {
     // Exit edit mode cleanly
     if (this._editMode) this._exitEditMode();
+    this._highlight.clear();
     this._parts.dispose(this._modelRoot ?? undefined);
     if (this._ghost) { this.scene?.remove(this._ghost); this._ghost = null; }
     // Dispose card renderer

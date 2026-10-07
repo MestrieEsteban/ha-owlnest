@@ -61,6 +61,7 @@ J'ai voulu autre chose des lumières 3D temps réel, un éditeur visuel, de la m
 | 🏠 | **Scène 3D interactive** | Chargez n'importe quel modèle GLB/GLTF et naviguez librement avec la souris ou le tactile |
 | 💡 | **Lumières synchronisées** | Vos entités `light.*` pilotent de vraies lumières 3D — couleur, intensité, transitions fluides |
 | 📍 | **Ancres interactives** | Tap pour allumer/éteindre, appui long pour les détails. Compatible : lumières, capteurs, volets, climat, media players |
+| 🚪 | **Ouvrants animés** | Portes, fenêtres, volets et portes d'électroménager pivotent ou coulissent, stores et rideaux se déroulent, et les animations du GLB (NLA de Blender) se jouent, selon l'état de leur entité |
 | 👁️ | **Voir à travers les murs** | Le mur qui bouche la vue s'efface pendant que vous tournez autour, et se reforme derrière |
 | 📐 | **N'importe quelle unité** | Mètres, centimètres, pouces : distances, lumières et météo se déduisent de la taille du modèle |
 | 🎥 | **Vues caméra** | Sauvegardez des points de vue nommés et naviguez entre eux avec une transition animée |
@@ -240,6 +241,76 @@ Configurez cela dans les propriétés de l'ancre → **Visible si** dans l'édit
 | `icon` | Icône MDI personnalisée (ex: `mdi:thermometer`) |
 | `precision` | Nombre de décimales pour les capteurs (ex: `0` → "18", `1` → "17.6") |
 | `lightIntensity` | Multiplicateur d'intensité lumineuse (défaut: 1) |
+
+---
+
+### Ouvrants
+
+Les ouvrants sont des pièces de votre modèle (portes, fenêtres, volets, porte de lave-vaisselle ou de four, fauteuil inclinable) qui bougent quand une entité Home Assistant s'ouvre ou se ferme. Le fichier du modèle n'est pas modifié : pivoter, coulisser et se dérouler détachent la pièce dans la carte ; **Joue les animations du modèle** pose les nœuds déjà enregistrés dans le GLB.
+
+#### Ajouter un ouvrant
+
+1. Mode édition → onglet **Ouvrants** → **+ Ouvrant**
+2. Cliquez la porte, la fenêtre ou le volet sur le modèle
+3. Réglez-le dans le panneau qui s'ouvre, vérifiez le mouvement avec **Aperçu**, puis enregistrez la scène
+
+Le panneau est une fenêtre flottante : déplacez-la par son en-tête pour voir le modèle derrière, et continuez à tourner autour pendant qu'elle est ouverte. **Annuler** (ou **Échap**) abandonne vos changements, ou supprime un ouvrant tout juste créé. Ouvrir un autre ouvrant conserve les réglages du précédent ; quitter le mode édition ferme le panneau.
+
+#### Choisir ce qui bouge
+
+L'arborescence **Objet** liste les objets et groupes du modèle, comme l'outliner de Blender. Survolez une ligne pour la surligner dans la vue, cliquez-la pour en faire la pièce mobile : un groupe bouge avec tout son contenu. La pièce cliquée est révélée et sélectionnée à l'ouverture du panneau ; **Pièce cliquée** revient au seul morceau de maille. Le filtre recherche par nom.
+
+#### Options
+
+| Option | Description |
+|---|---|
+| **Nom** | Affiché dans la liste des ouvrants et l'en-tête du panneau |
+| **Entité** | Pilote le mouvement. Les entités `cover` suivent `current_position` ; `cover`, `valve`, `lock`, `binary_sensor`, `switch`, `light`, `input_boolean`, `fan` et `group` sont lues comme ouvert/fermé |
+| **Mouvement** | **Pivote** (porte, fenêtre à battant), **Coulisse** (volet roulant, baie), **Se déroule** (store banne, store, rideau — voir plus bas) ou **Joue les animations du modèle** (pistes NLA de Blender dans le GLB — voir plus bas) |
+| **Rotation** | Battants uniquement. **Verticale** pour une porte, **Horizontale** pour un lave-vaisselle, un four ou une fenêtre à soufflet |
+| **Côté des gonds** | L'arête qui porte les gonds : un côté / l'autre, ou **En bas** / **En haut** pour une rotation horizontale |
+| **S'ouvre vers** | Le côté du mur vers lequel pivote le vantail. Le modèle ne sait pas où est l'intérieur : vérifiez à l'aperçu et inversez si besoin |
+| **Angle d'ouverture** / **Se retire vers** / **Course** | Amplitude et sens du mouvement |
+| **Durée** | Durée de l'animation, en secondes |
+| **Inverser** | Pour les entités dont « ouvert » dans Home Assistant signifie fermé à l'écran |
+| **Couleur fermé** / **Couleur ouvert** | Teinte facultative de l'objet dans chaque état (**Aucune** pour désactiver). Entre les deux, la teinte suit le mouvement |
+
+Pour supprimer un ouvrant, cliquez son bouton de suppression dans la liste, puis cliquez à nouveau dans les 3 secondes pour confirmer.
+
+#### Stores bannes, stores et rideaux (Se déroule)
+
+Un ouvrant **Se déroule** replie l'objet choisi le long d'une direction, vers une arête fixe. Le modèle le montre **grand ouvert** ; en se fermant, il se replie vers l'arête fixe. Pour un store banne, choisissez seulement la **toile** dans l'arborescence « Objet », pas le coffre ni les bras : ce sont des objets séparés, ils ne sont donc pas écrasés.
+
+En passant à **Se déroule**, Owlnest mesure la toile : son arête horizontale le long du mur, la direction qui descend en s'en éloignant, et son inclinaison. Tout reste modifiable, et **↺ Détecter à nouveau** revient aux valeurs mesurées.
+
+| Option | Description |
+|---|---|
+| **Se replie le long de** | **Sortant du mur** (store banne, incliné selon l'inclinaison), **La verticale** (store, rideau qui se relève) ou **Le mur** (rideau qui se tire de côté). L'axe détecté est signalé |
+| **Inclinaison sous l'horizontale** | Axe sortant du mur uniquement. 0° sort à plat, 90° descend le long du mur. Par défaut, celle de la toile |
+| **Arête fixe** | L'arête qui ne bouge pas : contre le mur / en haut / à un bout par défaut, ou l'arête opposée |
+| **Taille ouvert** / **Taille fermé** | Taille le long de l'axe à 100 % et à 0 %, par rapport au modèle. Par défaut 100 % et 0 %. Quelques pour cent une fois fermé laissent voir un liseré de toile |
+| **Fermé à** | **0 %** pour un `cover` standard (100 % = grand ouvert). **100 %** pour un volet qui rapporte l'inverse. C'est le même réglage que **Inverser** |
+| **Suit l'arête mobile** | Objets qui se déplacent avec l'arête libre sans être étirés, comme la barre de charge d'un store. Ceux qui touchent cette arête sont suggérés d'office (★). Ils sont surlignés en bleu dans la vue et prennent aussi la teinte d'état |
+
+Un `cover` qui rapporte `current_position` s'affiche à cette position. Un `cover` sans position s'affiche grand ouvert ou fermé.
+
+> **Exemple** : dans un modèle où chaque store est fait de `motor` (coffre), `tela` (toile) et `extremo` (barre de charge, enfant de la toile), choisissez `tela` puis **Se déroule**. L'inclinaison est détectée et `extremo` est proposé comme suiveur. Seule la toile se replie : la barre remonte jusqu'au coffre.
+
+> **Astuce** : le gond est placé sur l'arête de la boîte englobante de la pièce, pas sur l'origine de l'objet dans Blender.
+
+#### Animations du modèle (NLA de Blender)
+
+Si le GLB contient des animations glTF (option **NLA Tracks** à l'export Blender), un ouvrant peut **jouer ces animations** au lieu de pivoter, coulisser ou se dérouler. La position de l'entité parcourt la piste : 0 % est la première image clé, 100 % la dernière, et 40 % reste à 40 % du chemin — comme un volet. Choisissez une ou plusieurs animations ; elles avancent toutes ensemble.
+
+Ce mouvement ne détache rien : les pistes posent les nœuds qu'elles animent déjà. L'arborescence Objet et les pièces emmenées par l'ouvrant sont masquées ; le surlignage et la teinte prennent le parent commun de ces nœuds (le canapé, pas toute la maison). La durée reprend celle de l'animation pour la jouer à la vitesse de Blender ; vous pouvez encore la changer.
+
+On peut poser plusieurs de ces ouvrants sur le même objet (un `cover` pour l'inclinaison droite, un autre pour la gauche). Un clic ne rouvre un ouvrant que s'il tombe sur un nœud que cet ouvrant anime vraiment — pas le canapé entier.
+
+Si deux ouvrants reçoivent des animations qui bougent le même nœud, c'est le dernier posé à chaque image qui l'emporte. Préférez des ensembles de pistes disjoints.
+
+Exportez depuis Blender avec **Animation → NLA Tracks**. Les actions qui commencent à l'image 1 (et non 0) sont gérées. three.js assainit les noms (`tela.001` → `tela001`).
+
+> **Exemple** : un fauteuil inclinable exporté en `Reclinar_Der`, `Reclinar_Izq`, `Cabezal_Der`, `Cabezal_Izq`. Liez le `cover` de droite à `Reclinar_Der` et `Cabezal_Der` : les deux mécanismes suivent la position de ce volet. Un second ouvrant avec le `cover` de gauche et les deux pistes `*_Izq` laisse le côté droit tranquille.
 
 ---
 

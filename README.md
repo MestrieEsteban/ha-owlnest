@@ -61,6 +61,7 @@ I wanted something different: real-time 3D lights, a visual editor, weather effe
 | 🏠 | **Interactive 3D scene** | Load any GLB/GLTF model and navigate freely with mouse or touch |
 | 💡 | **Synchronized lights** | Your `light.*` entities drive real 3D lights — color, brightness, smooth transitions |
 | 📍 | **Interactive anchors** | Tap to toggle, long-press for details. Supports lights, sensors, covers, climate, media players |
+| 🚪 | **Animated openings** | Doors, windows, shutters and appliance doors swing or slide, awnings or curtains extend, and complex motions stored in the GLB (Blender NLA) play with their entity's state |
 | 👁️ | **See through walls** | Whatever stands between you and the rooms fades out as you orbit, and comes back behind you |
 | 📐 | **Any unit** | Metres, centimetres, inches: distances, lights and weather all derive from the model's own size |
 | 🎥 | **Camera views** | Save named viewpoints and fly between them with smooth transitions |
@@ -238,6 +239,76 @@ Configure this in anchor properties → **Visible if** in the editor.
 | `icon` | Custom MDI icon (e.g. `mdi:thermometer`) |
 | `precision` | Decimal places for sensors (e.g. `0` → "18", `1` → "17.6") |
 | `lightIntensity` | Light intensity multiplier (default: 1) |
+
+---
+
+### Openings
+
+Openings are pieces of your model (doors, windows, shutters, a dishwasher or oven door, a reclining sofa) that move when a Home Assistant entity opens or closes. Nothing is changed in the model file: swing, slide and extend detach the piece in the card; **Plays model animations** poses the nodes already stored in the GLB.
+
+#### Adding an opening
+
+1. Edit mode → **Openings** tab → **+ Opening**
+2. Click the door, window or shutter on the model
+3. Configure it in the panel that opens, use **Preview** to check the movement, then save the scene
+
+The panel is a floating window: drag it by its header to see the model behind it, and keep orbiting while it is open. **Cancel** (or **Escape**) discards your changes, or removes an opening you just created. Opening another opening keeps the settings of the current one; leaving edit mode closes the panel.
+
+#### Choosing what moves
+
+The **Object** tree lists the model's objects and groups, like Blender's outliner. Hover a row to highlight it in the view, click it to make it the moving piece: a group moves with everything inside it. The piece you clicked is revealed and selected when the panel opens; **Clicked piece** goes back to just that fragment of the mesh. Use the filter to search by name.
+
+#### Options
+
+| Option | Description |
+|---|---|
+| **Name** | Shown in the Openings list and the panel header |
+| **Entity** | Drives the movement. `cover` entities follow `current_position`; `cover`, `valve`, `lock`, `binary_sensor`, `switch`, `light`, `input_boolean`, `fan` and `group` are read as open/closed |
+| **Movement** | **Swings** (door, casement window), **Slides** (roller shutter, sliding door), **Extends** (awning, blind, curtain — see below) or **Plays model animations** (Blender NLA tracks in the GLB — see below) |
+| **Rotation** | Swings only. **Vertical** for a door, **Horizontal** for a dishwasher/oven door or a top-hung window |
+| **Hinge side** | Which edge carries the hinges: one side / the other, or **Bottom** / **Top** for a horizontal rotation |
+| **Opens towards** | Which side of the wall the leaf swings to. The model doesn't know where "inside" is, so preview and flip if needed |
+| **Opening angle** / **Retracts towards** / **Travel** | Amplitude and direction of the movement |
+| **Duration** | Animation length, in seconds |
+| **Reverse** | For entities where "open" in Home Assistant means closed on screen |
+| **Closed colour** / **Open colour** | Optional tint of the object in each state (**None** to disable). In between, the tint follows the movement |
+
+To remove an opening, click its delete button in the Openings list, then click again within 3 seconds to confirm.
+
+#### Awnings, blinds and curtains (Extends)
+
+An **Extends** opening shrinks the selected object along one direction towards a fixed edge. The model shows it **fully open**; closing it shrinks it towards the fixed edge. For an awning, select only the **fabric** in the Object tree, not the cassette or the arms: they are separate objects, so they don't get squashed.
+
+When you switch to **Extends**, Owlnest measures the fabric: the horizontal edge along the wall, the direction that goes down and away from it, and its inclination. You can change all of this, and **↺ Detect again** puts the detected values back.
+
+| Option | Description |
+|---|---|
+| **Shrinks along** | **Out from the wall** (awning, tilted by the inclination), **Vertical** (blind, curtain that lifts) or **Along the wall** (curtain that draws to the side). The detected axis is marked |
+| **Inclination below horizontal** | Out from the wall only. 0° comes out flat, 90° hangs down the wall. By default, the inclination of the fabric |
+| **Fixed edge** | The edge that does not move: at the wall / the top / one end by default, or the opposite edge |
+| **Size when open** / **Size when closed** | Size along the axis at 100 % and 0 %, relative to the model. Defaults: 100 % and 0 %. Set a few percent when closed to keep a sliver of fabric visible |
+| **Closed at** | **0 %** for a standard `cover` (100 % = fully open). **100 %** for a cover that reports the other way round. This is the same setting as **Reverse** |
+| **Follows the moving edge** | Objects that move with the free edge without being stretched, such as the front bar of an awning. Objects that touch that edge are suggested automatically (★). They are highlighted in blue in the view, and take the state tint too |
+
+A `cover` with `current_position` is shown at that position. A `cover` that does not report a position is shown fully open or fully closed.
+
+> **Example**: in a model where each awning is made of `motor` (cassette), `tela` (fabric) and `extremo` (front bar, child of the fabric), select `tela` and choose **Extends**. The inclination is detected and `extremo` is suggested as a follower. Only the fabric shrinks: the bar slides up to the cassette.
+
+> **Tip**: The hinge is placed on the edge of the piece's bounding box, not on the object's origin in Blender.
+
+#### Model animations (Blender NLA)
+
+If the GLB contains glTF animations (Blender **NLA Tracks** enabled on export), an opening can **play those animations** instead of swinging, sliding or extending. The entity's position scrubs the clip: 0 % is the first keyframe, 100 % the last, and 40 % stays 40 % of the way — the same as a shutter. Pick one or more animations; they all move together.
+
+This motion does not detach anything: the clips pose the nodes they already animate. The Object tree and the pieces that move with the opening are hidden; highlight and tint use the common parent of those nodes (the sofa, not the whole house). Duration defaults to the animation length so it plays at Blender's speed; you can still change it.
+
+You can add several of these openings on the same object (one cover for the right recline, another for the left). A click only reopens an opening if it hits a node that opening actually animates — not the sofa as a whole.
+
+If two openings are given clips that move the same node, the last one applied each frame wins. Prefer disjoint clip sets.
+
+Export from Blender with **Animation → NLA Tracks**. Actions that start at frame 1 (not 0) are handled. three.js sanitises names (`tela.001` → `tela001`).
+
+> **Example**: a reclining sofa exported as `Reclinar_Der`, `Reclinar_Izq`, `Cabezal_Der`, `Cabezal_Izq`. Bind the right-hand cover to `Reclinar_Der` and `Cabezal_Der`; both mechanisms follow that cover's position. A second opening with the left-hand cover and the two `*_Izq` clips leaves the right side alone.
 
 ---
 

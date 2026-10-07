@@ -27,7 +27,7 @@ import * as THREE from 'three';
  *
  * Même dispositif que `CARDS_ENABLED` : basculer à `true` la réactive.
  */
-export const PARTS_ENABLED = false;
+export const PARTS_ENABLED = true;
 
 // ── Index des pièces ────────────────────────────────────────────────────────
 
@@ -184,18 +184,36 @@ export function partFrame(box: THREE.Box3): PartFrame {
 export type HingeSide = 'start' | 'end';
 
 /**
- * Position du gond : sur l'arête verticale choisie, au milieu de l'épaisseur.
+ * Arête portant les gonds : `axis` est l'axe de rotation, `across` l'axe le
+ * long duquel on choisit le bord. Le troisième axe est l'épaisseur.
+ */
+export interface HingeEdge {
+  axis: 0 | 1 | 2;
+  across: 0 | 1 | 2;
+}
+
+/**
+ * Position du gond : sur l'arête choisie, au milieu de l'épaisseur.
+ *
+ * Par défaut l'arête est verticale (porte) ; un abattant passe une arête
+ * horizontale, bord pris le long de la verticale.
  *
  * Faire pivoter un vantail autour de son centre le ferait traverser le mur —
  * c'est le défaut classique quand on anime un objet sans déplacer son pivot.
  */
-export function hingePivot(box: THREE.Box3, frame: PartFrame, side: HingeSide): THREE.Vector3 {
+export function hingePivot(
+  box: THREE.Box3,
+  frame: PartFrame,
+  side: HingeSide,
+  edge: HingeEdge = { axis: frame.up, across: frame.wide },
+): THREE.Vector3 {
   const min = [box.min.x, box.min.y, box.min.z];
   const max = [box.max.x, box.max.y, box.max.z];
+  const depth = (3 - edge.axis - edge.across) as 0 | 1 | 2;
   const p: [number, number, number] = [0, 0, 0];
-  p[frame.up] = min[frame.up];
-  p[frame.wide] = side === 'start' ? min[frame.wide] : max[frame.wide];
-  p[frame.thin] = (min[frame.thin] + max[frame.thin]) / 2;
+  p[edge.axis] = min[edge.axis];
+  p[edge.across] = side === 'start' ? min[edge.across] : max[edge.across];
+  p[depth] = (min[depth] + max[depth]) / 2;
   return new THREE.Vector3(p[0], p[1], p[2]);
 }
 
@@ -230,6 +248,8 @@ export interface ExtractedPart {
   mesh: THREE.Mesh;
   frame: PartFrame;
   pivot: THREE.Vector3;
+  /** Index d'origine des triangles retirés, pour `restoreTriangles`. */
+  saved: Uint32Array;
 }
 
 /**
@@ -289,51 +309,250 @@ export function extractPart(
   detached.name = `${mesh.name || 'part'}#${part.id}`;
   mesh.add(detached);
 
-  removeTriangles(mesh, part.tris);
+  const saved = removeTriangles(mesh, part.tris);
 
-  return { mesh: detached, frame, pivot };
+  return { mesh: detached, frame, pivot, saved };
 }
 
 /**
- * Retire des triangles d'une géométrie en réécrivant son index.
+ * Retire des triangles d'une géométrie sans renuméroter les autres.
  *
- * Les attributs de sommets sont laissés en place : les sommets orphelins ne
- * coûtent que de la mémoire, alors que les renuméroter obligerait à réécrire
- * tous les attributs pour un gain nul à l'affichage.
+ * Chaque triangle retiré devient dégénéré (ses trois coins sur un même
+ * sommet) : il ne se dessine plus et le lancer de rayons l'ignore, mais sa
+ * place dans l'index demeure. Compacter l'index décalait tous les triangles
+ * suivants — le triangle d'amorce d'un second ouvrant de la même maille, ou
+ * celui d'un clic, désignait alors une autre pièce.
+ *
+ * @returns Les indices d'origine, trois par triangle, pour `restoreTriangles`.
  */
-export function removeTriangles(mesh: THREE.Mesh, tris: ArrayLike<number>) {
+export function removeTriangles(mesh: THREE.Mesh, tris: ArrayLike<number>): Uint32Array {
   const geom = mesh.geometry;
-  const index = geom.getIndex();
-  const drop = new Set<number>();
-  for (let i = 0; i < tris.length; i++) drop.add(tris[i]);
-
-  if (index) {
-    const total = index.count / 3 | 0;
-    const kept = new Uint32Array((total - drop.size) * 3);
-    let w = 0;
-    for (let t = 0; t < total; t++) {
-      if (drop.has(t)) continue;
-      kept[w++] = index.getX(t * 3);
-      kept[w++] = index.getX(t * 3 + 1);
-      kept[w++] = index.getX(t * 3 + 2);
-    }
-    geom.setIndex(new THREE.BufferAttribute(kept, 1));
-  } else {
+  let index = geom.getIndex();
+  if (!index) {
     // Géométrie non indexée : on en fabrique un index plutôt que de recopier
     // tous les attributs.
-    const total = geom.getAttribute('position').count / 3 | 0;
-    const kept = new Uint32Array((total - drop.size) * 3);
-    let w = 0;
-    for (let t = 0; t < total; t++) {
-      if (drop.has(t)) continue;
-      kept[w++] = t * 3;
-      kept[w++] = t * 3 + 1;
-      kept[w++] = t * 3 + 2;
-    }
-    geom.setIndex(new THREE.BufferAttribute(kept, 1));
+    const n = geom.getAttribute('position').count;
+    const seq = new Uint32Array(n);
+    for (let i = 0; i < n; i++) seq[i] = i;
+    index = new THREE.BufferAttribute(seq, 1);
+    geom.setIndex(index);
   }
+  const saved = new Uint32Array(tris.length * 3);
+  for (let i = 0; i < tris.length; i++) {
+    const t = tris[i];
+    for (let c = 0; c < 3; c++) saved[i * 3 + c] = index.getX(t * 3 + c);
+    const a = saved[i * 3];
+    index.setX(t * 3 + 1, a);
+    index.setX(t * 3 + 2, a);
+  }
+  index.needsUpdate = true;
   geom.computeBoundingBox();
   geom.computeBoundingSphere();
+  return saved;
+}
+
+/** Rend à une géométrie les triangles retirés par `removeTriangles`. */
+export function restoreTriangles(mesh: THREE.Mesh, tris: ArrayLike<number>, saved: ArrayLike<number>) {
+  const index = mesh.geometry.getIndex();
+  if (!index) return;
+  for (let i = 0; i < tris.length; i++) {
+    for (let c = 0; c < 3; c++) index.setX(tris[i] * 3 + c, saved[i * 3 + c]);
+  }
+  index.needsUpdate = true;
+  mesh.geometry.computeBoundingBox();
+  mesh.geometry.computeBoundingSphere();
+}
+
+// ── Déroulant ───────────────────────────────────────────────────────────────
+
+/**
+ * Repère d'une toile, dans l'espace du modèle.
+ *
+ * Tout est exprimé dans un espace métrique : un nœud Blender porte souvent une
+ * échelle non uniforme, où un angle mesuré ne voudrait plus rien dire.
+ */
+export interface ExtendFrame {
+  up: THREE.Vector3;
+  /** Horizontale qui s'éloigne du mur. */
+  out: THREE.Vector3;
+  /** Horizontale le long du mur, `up × out`. */
+  along: THREE.Vector3;
+  /** Normale au plan de la toile. */
+  normal: THREE.Vector3;
+  /** Pente de la toile, en degrés sous l'horizontale, le long de `out`. */
+  tilt: number;
+  /** Axe suggéré : une toile presque verticale est un store ou un rideau. */
+  axis: 'out' | 'vertical' | 'along';
+}
+
+/** Valeurs et vecteurs propres d'une matrice symétrique 3 × 3 (Jacobi). */
+function eigenSym3(a: number[][]): { values: number[]; vectors: THREE.Vector3[] } {
+  const A = a.map((r) => r.slice());
+  const V = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  for (let sweep = 0; sweep < 32; sweep++) {
+    if (A[0][1] ** 2 + A[0][2] ** 2 + A[1][2] ** 2 < 1e-30) break;
+    for (const [p, q] of [[0, 1], [0, 2], [1, 2]]) {
+      if (A[p][q] === 0) continue;
+      const theta = (A[q][q] - A[p][p]) / (2 * A[p][q]);
+      const t = (theta >= 0 ? 1 : -1) / (Math.abs(theta) + Math.sqrt(theta * theta + 1));
+      const c = 1 / Math.sqrt(t * t + 1);
+      const s = t * c;
+      for (let k = 0; k < 3; k++) {
+        const kp = A[k][p], kq = A[k][q];
+        A[k][p] = c * kp - s * kq; A[k][q] = s * kp + c * kq;
+      }
+      for (let k = 0; k < 3; k++) {
+        const pk = A[p][k], qk = A[q][k];
+        A[p][k] = c * pk - s * qk; A[q][k] = s * pk + c * qk;
+      }
+      for (let k = 0; k < 3; k++) {
+        const kp = V[k][p], kq = V[k][q];
+        V[k][p] = c * kp - s * kq; V[k][q] = s * kp + c * kq;
+      }
+    }
+  }
+  return {
+    values: [A[0][0], A[1][1], A[2][2]],
+    vectors: [0, 1, 2].map((k) => new THREE.Vector3(V[0][k], V[1][k], V[2][k]).normalize()),
+  };
+}
+
+const horizontal = (v: THREE.Vector3, up: THREE.Vector3) => v.clone().addScaledVector(up, -v.dot(up));
+
+/**
+ * Déduit le repère d'une toile de ses sommets.
+ *
+ * Le plan vient d'une analyse en composantes principales : robuste à une toile
+ * double face (les normales des faces s'y annuleraient) comme à une toile
+ * légèrement bombée. L'axe le long du mur est l'horizontale de ce plan ; l'axe
+ * qui descend dans le plan part du bord haut, qui est celui du mur.
+ *
+ * Une toile à plat ne dit pas de quel côté est le mur, pas plus qu'une toile
+ * verticale ne dit où est l'extérieur : on s'éloigne alors du centre du modèle.
+ *
+ * @param points Coordonnées à plat (x, y, z), dans l'espace du modèle.
+ */
+export function detectExtend(points: ArrayLike<number>, up: THREE.Vector3, center: THREE.Vector3): ExtendFrame {
+  const U = up.clone().normalize();
+  const n = Math.floor(points.length / 3);
+  const c = new THREE.Vector3();
+  for (let i = 0; i < n; i++) c.add(new THREE.Vector3(points[i * 3], points[i * 3 + 1], points[i * 3 + 2]));
+  if (n) c.divideScalar(n);
+  const cov = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  for (let i = 0; i < n; i++) {
+    const d = [points[i * 3] - c.x, points[i * 3 + 1] - c.y, points[i * 3 + 2] - c.z];
+    for (let r = 0; r < 3; r++) for (let k = 0; k < 3; k++) cov[r][k] += d[r] * d[k];
+  }
+  const { values, vectors } = eigenSym3(cov);
+  const order = [0, 1, 2].sort((a, b) => values[a] - values[b]);
+  const normal = vectors[order[0]];
+  const away = horizontal(c.clone().sub(center), U);
+
+  let along: THREE.Vector3;
+  const nh = horizontal(normal, U);
+  if (nh.length() > 0.17) {
+    along = U.clone().cross(normal).normalize();
+  } else {
+    // À plat : l'axe de la toile le plus tourné vers l'extérieur sort du mur.
+    const [a, b] = [vectors[order[1]], vectors[order[2]]].map((v) => horizontal(v, U).normalize());
+    const out = Math.abs(a.dot(away)) >= Math.abs(b.dot(away)) ? a : b;
+    along = U.clone().cross(out).normalize();
+  }
+
+  const e = along.clone().cross(normal).normalize();
+  if (Math.abs(e.dot(U)) > 0.05) { if (e.dot(U) > 0) e.negate(); } else if (e.dot(away) < 0) e.negate();
+
+  let out = horizontal(e, U);
+  if (out.length() > 1e-3) out.normalize();
+  else {
+    out = nh.lengthSq() > 0 ? nh.clone().normalize() : new THREE.Vector3(1, 0, 0);
+    if (out.dot(away) < 0) out.negate();
+  }
+  const tilt = THREE.MathUtils.radToDeg(Math.atan2(-e.dot(U), e.dot(out)));
+  along = U.clone().cross(out).normalize();
+  return {
+    up: U, out, along, normal: normal.clone(), tilt,
+    axis: Math.abs(tilt) > 75 ? 'vertical' : 'out',
+  };
+}
+
+/** Direction d'écrasement, de l'arête fixe vers l'arête mobile (ancrage `start`). */
+export function extendDirection(frame: ExtendFrame, axis: 'out' | 'vertical' | 'along', tiltDeg: number): THREE.Vector3 {
+  if (axis === 'vertical') return frame.up.clone().negate();
+  if (axis === 'along') return frame.along.clone();
+  const t = THREE.MathUtils.degToRad(tiltDeg);
+  return frame.out.clone().multiplyScalar(Math.cos(t)).addScaledVector(frame.up, -Math.sin(t)).normalize();
+}
+
+/** Étendue de points (x, y, z à plat) projetés sur une direction. */
+export function projectRange(points: ArrayLike<number>, dir: THREE.Vector3): { min: number; max: number } {
+  let min = Infinity, max = -Infinity;
+  for (let i = 0; i + 2 < points.length; i += 3) {
+    const d = points[i] * dir.x + points[i + 1] * dir.y + points[i + 2] * dir.z;
+    if (d < min) min = d;
+    if (d > max) max = d;
+  }
+  return { min, max };
+}
+
+/**
+ * Géométrie d'une toile vue le long de son axe d'écrasement : `anchor` et
+ * `far` sont les projections des arêtes fixe et mobile sur `u`, les bornes
+ * `w` et `n` celles de la toile en largeur et en épaisseur.
+ */
+export interface ExtendSpan {
+  u: THREE.Vector3;
+  w: THREE.Vector3;
+  n: THREE.Vector3;
+  anchor: number;
+  far: number;
+  wMin: number; wMax: number;
+  nMin: number; nMax: number;
+}
+
+export function extendSpan(
+  points: ArrayLike<number>, frame: ExtendFrame, u: THREE.Vector3, anchorAt: 'start' | 'end',
+): ExtendSpan {
+  const r = projectRange(points, u);
+  let w = frame.normal.clone().cross(u);
+  if (w.length() < 1e-6) w = frame.along.clone();
+  w.normalize();
+  const n = u.clone().cross(w).normalize();
+  const rw = projectRange(points, w);
+  const rn = projectRange(points, n);
+  return {
+    u: u.clone(), w, n,
+    anchor: anchorAt === 'end' ? r.max : r.min,
+    far: anchorAt === 'end' ? r.min : r.max,
+    wMin: rw.min, wMax: rw.max, nMin: rn.min, nMax: rn.max,
+  };
+}
+
+/**
+ * Un objet touche-t-il l'arête mobile d'une toile ? Retourne sa distance à
+ * cette arête, en fraction de la longueur de la toile, ou `null`.
+ *
+ * Il doit être court le long de l'axe (une barre, pas un mur), pas plus large
+ * que la toile, en face d'elle, et chevaucher l'arête mobile.
+ *
+ * @param corners Sommets de ses boîtes (x, y, z à plat), dans l'espace du modèle.
+ */
+export function edgeContact(corners: ArrayLike<number>, span: ExtendSpan): number | null {
+  const L = Math.abs(span.far - span.anchor);
+  if (!(L > 0) || corners.length < 3) return null;
+  const tol = 0.08 * L;
+  const cu = projectRange(corners, span.u);
+  const cw = projectRange(corners, span.w);
+  const cn = projectRange(corners, span.n);
+  if (cu.max < span.far - tol || cu.min > span.far + tol) return null;
+  if (cu.max - cu.min > 0.5 * L) return null;
+  const width = span.wMax - span.wMin;
+  const cwSize = cw.max - cw.min;
+  if (cwSize > 1.5 * width + tol) return null;
+  const overlap = Math.min(cw.max, span.wMax) - Math.max(cw.min, span.wMin);
+  if (overlap < 0.5 * cwSize - 1e-9) return null;
+  if (cn.max < span.nMin - 2 * tol || cn.min > span.nMax + 2 * tol) return null;
+  return Math.abs((cu.min + cu.max) / 2 - span.far) / L;
 }
 
 // ── Reconnaissance ──────────────────────────────────────────────────────────

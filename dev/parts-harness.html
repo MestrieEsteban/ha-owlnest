@@ -75,17 +75,62 @@
       id: 'p1', entity: 'binary_sensor.porte_entree',
       mesh: best.mesh.name, meshIndex: best.meshIndex, triangle: best.triangle,
       motion: 'swing', hinge: 'start', angle: 90, duration: 1,
+      // La detection par contenance est optionnelle : le banc l'exerce, mais
+      // une scene reelle ne l'active que si l'utilisateur la coche.
+      carry: true,
     };
     const ctl = new PartController();
-    const trisBefore = best.mesh.geometry.getIndex().count / 3;
+    // On compte les triangles **dessines**, pas la longueur de l'index.
+    //
+    // Un triangle retire est rendu degenere — ses trois coins sur un meme
+    // sommet — et non supprime de l'index : compacter celui-ci renumeroterait
+    // tous les suivants, et le triangle d'amorce d'un second ouvrant de la meme
+    // maille designerait alors une autre piece. L'index garde donc sa longueur,
+    // ce que l'ancienne mesure prenait pour un echec.
+    const drawn = (mesh) => {
+      const ix = mesh.geometry.getIndex();
+      let n = 0;
+      for (let t = 0; t < ix.count / 3; t++) {
+        const a = ix.getX(t * 3), b = ix.getX(t * 3 + 1), c = ix.getX(t * 3 + 2);
+        if (a !== b || b !== c) n++;
+      }
+      return n;
+    };
+    const trisBefore = drawn(best.mesh);
     const res = ctl.build(root, [cfg]);
-    const trisAfter = best.mesh.geometry.getIndex().count / 3;
+    const trisAfter = drawn(best.mesh);
 
     check('le contrôleur retrouve la pièce depuis la scène', res.ok === 1,
       `${res.missing.length} manquante(s)`);
-    check('les triangles sont retirés de la maille d’origine',
+    check('le vantail ne se dessine plus dans la maille d’origine',
       trisBefore - trisAfter === best.part.tris.length,
       `${trisBefore} → ${trisAfter}`);
+
+    // ── Entrainement par contenance ───────────────────────────────
+    // Une poignee n'est ni soudee au vantail ni groupee avec lui : seule sa
+    // place dans le volume de l'ouvrant dit qu'elle doit suivre.
+    const emmenees = ctl.carried.get('p1') ?? [];
+    check('des pieces contenues sont emmenees', emmenees.length > 0,
+      emmenees.length + ' : ' + (emmenees.join(', ') || '(aucune)'));
+
+    // Elles doivent bouger avec la porte, pas rester en place.
+    const suivi = emmenees.length ? (() => {
+      let o = null;
+      root.traverse((x) => { if (!o && x.name === emmenees[0]) o = x; });
+      if (!o) return null;
+      const avant = new THREE.Vector3();
+      root.updateMatrixWorld(true); o.getWorldPosition(avant);
+      // `preview` pose la cible ; c'est `update` qui anime jusqu'a elle.
+      ctl.preview('p1', 1);
+      for (let i = 0; i < 200 && ctl.update(0.1); i++);
+      const apres = new THREE.Vector3();
+      root.updateMatrixWorld(true); o.getWorldPosition(apres);
+      ctl.preview('p1', 0);
+      for (let i = 0; i < 200 && ctl.update(0.1); i++);
+      return avant.distanceTo(apres);
+    })() : null;
+    check('la piece emmenee suit l\u2019ouverture', suivi !== null && suivi > 1e-3,
+      suivi === null ? 'aucune piece' : suivi.toFixed(2) + ' unites');
 
     const leaf = best.mesh.children.find((c) => c.userData.owlnestPartId === 'p1');
     check('le vantail est un objet à part entière', !!leaf);

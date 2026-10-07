@@ -232,8 +232,26 @@ export interface RenderingConfig {
 /** A full Owlnest scene, persisted by the backend integration. */
 // ── Ouvrants ────────────────────────────────────────────────────────────────
 
-/** Battant (porte, fenêtre) ou coulissant (volet, baie, porte de garage). */
-export type PartMotion = 'swing' | 'slide';
+/**
+ * Battant (porte, fenêtre), coulissant (volet, baie, porte de garage) ou
+ * déroulant (store banne, rideau) : ce dernier s'écrase vers une arête fixe.
+ */
+export type PartMotion = 'swing' | 'slide' | 'extend' | 'animation';
+
+/**
+ * Axe d'écrasement d'un déroulant, relatif au mur qui le porte.
+ *
+ * `out` sort du mur, incliné de `extendTilt` sous l'horizontale (store banne) ;
+ * `vertical` descend le long du mur (store, rideau) ; `along` court le long du
+ * mur (rideau qui se tire de côté).
+ */
+export type ExtendAxis = 'out' | 'vertical' | 'along';
+
+/** Nœud du modèle désigné comme dans `OwlnestPart.node` / `nodeIndex`. */
+export interface PartNodeRef {
+  node: string;
+  nodeIndex?: number;
+}
 
 /** Sens du coulissement, dans le repère propre à la pièce. */
 export type SlideDirection = 'down' | 'up' | 'start' | 'end';
@@ -245,6 +263,15 @@ export type SlideDirection = 'down' | 'up' | 'start' | 'end';
  * la maille et un triangle lui appartenant. L'analyse en composantes connexes
  * a lieu dans l'éditeur, jamais sur la tablette.
  */
+/** Une piece secondaire d'un ouvrant, designee par un clic. */
+export interface PartPiece {
+  mesh: string;
+  meshIndex?: number;
+  triangle: number;
+  /** Ce que montrait le clic, pour nommer la ligne dans la liste. */
+  label?: string;
+}
+
 export interface OwlnestPart {
   id: string;
   entity: string;
@@ -260,16 +287,89 @@ export interface OwlnestPart {
   meshIndex?: number;
   /** Triangle d'amorce : suffit à réidentifier la pièce entière. */
   triangle: number;
+  /**
+   * Nœud du modèle animé en entier — un objet ou un groupe Blender, avec tout
+   * son contenu — à la place de la pièce désignée par `mesh` et `triangle`.
+   * Ceux-ci restent enregistrés : c'est le clic d'origine, qui permet de
+   * revenir à la pièce seule.
+   */
+  node?: string;
+  /** Rang du nœud dans le graphe tel que chargé : départage les homonymes. */
+  nodeIndex?: number;
+  /**
+   * Pieces choisies a la main qui bougent avec l'ouvrant.
+   *
+   * Un modeleur ne soude pas la poignee au vantail et ne les groupe pas : sur
+   * un export plat, rien ne les relie. La geometrie seule ne tranche pas de
+   * facon fiable — un clic, si.
+   *
+   * Chaque piece se designe comme l'ouvrant lui-meme : la maille, son rang, et
+   * un triangle d'amorce qui suffit a retrouver la composante entiere.
+   */
+  extra?: PartPiece[];
+  /**
+   * Emmener les pieces contenues dans le volume de l'ouvrant.
+   *
+   * Une poignee n'est ni soudee au vantail ni groupee avec lui : sur un export
+   * plat, rien dans le graphe ne les relie. La contenance le dit a leur place.
+   * Absent vaut `true` ; `false` ne fait bouger que la piece designee.
+   */
+  carry?: boolean;
+  /** Noms de pieces que l'utilisateur a retirees de l'entrainement. */
+  carryExclude?: string[];
   label?: string;
   motion: PartMotion;
+  /**
+   * Axe de rotation d'un battant. Absent : vertical, comme une porte.
+   * Horizontal : abattant (lave-vaisselle, four, fenêtre à soufflet) ; `hinge`
+   * désigne alors le bas (`start`) ou le haut (`end`), selon la verticale du
+   * modèle.
+   */
+  swingAxis?: 'vertical' | 'horizontal';
   /** Côté des gonds, pour un battant. */
   hinge?: 'start' | 'end';
+  /**
+   * Côté du mur vers lequel s'ouvre un battant.
+   *
+   * Le modèle ne dit pas où est l'intérieur : on ne peut qu'inverser le sens,
+   * et l'aperçu montre lequel est le bon.
+   */
+  swingSide?: 'front' | 'back';
   /** Ouverture d'un battant, en degrés. */
   angle?: number;
   /** Sens de retrait d'un coulissant. */
   slide?: SlideDirection;
   /** Course d'un coulissant, en fraction de sa propre dimension. */
   travel?: number;
+  /** Axe d'un déroulant. Absent : déduit de la géométrie de la toile. */
+  extendAxis?: ExtendAxis;
+  /**
+   * Inclinaison de l'axe `out`, en degrés sous l'horizontale : 0 sort à plat,
+   * 90 descend le long du mur. Absente : celle de la toile.
+   */
+  extendTilt?: number;
+  /**
+   * Arête fixe d'un déroulant : `start` côté mur (ou haut, ou début de l'axe
+   * `along`), `end` à l'opposé. Absente : `start`.
+   */
+  extendAnchor?: 'start' | 'end';
+  /** Échelle le long de l'axe quand l'entité est ouverte. Absente : 1, la pose du modèle. */
+  extendOpen?: number;
+  /** Échelle quand l'entité est fermée. Absente : 0 (bornée à un souffle, voir le runtime). */
+  extendClosed?: number;
+  /**
+   * Objets qui suivent l'arête mobile d'un déroulant sans être déformés : la
+   * barre de charge d'un store. Absent : ceux qui touchent l'arête mobile ;
+   * vide : aucun.
+   */
+  followers?: PartNodeRef[];
+  /**
+   * Animations du fichier (pistes NLA de Blender) posées par l'entité : fermé
+   * à leur première image clé, ouvert à la dernière. Toutes avancent ensemble.
+   * `mesh`, `triangle` et `node` ne servent alors qu'à rouvrir l'ouvrant d'un
+   * clic : rien n'est détaché.
+   */
+  clips?: string[];
   /**
    * États qui signifient « ouvert ».
    *
@@ -282,6 +382,18 @@ export interface OwlnestPart {
   invert?: boolean;
   /** Durée de l'animation, en secondes. */
   duration?: number;
+  /**
+   * Teinte de l'objet fermé, puis ouvert (`#rrggbb`). Absente : aucune teinte
+   * dans cet état. Entre les deux, la teinte suit la position animée.
+   */
+  closedColor?: string;
+  openColor?: string;
+  /**
+   * Intensite de la teinte, de 0 a 1 : la part de la couleur du materiau qu'elle
+   * remplace. Absente : 0,55, le dosage d'origine — assez pour se lire, sans
+   * effacer la matiere. A 1, l'objet prend entierement la couleur d'etat.
+   */
+  tintStrength?: number;
 }
 
 export interface OwlnestScene {
