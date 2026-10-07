@@ -167,8 +167,10 @@ def plan(src):
     # Cloisons : la chambre est fermée, la cuisine ouverte sur le séjour.
     p.append(('wall', 2, 0.0, -1, 0, 'Cloison_cuisine_0'))
     p.append(('wall', 3, 0.0, -1, 0, 'Cloison_cuisine_1'))
-    p += wall_door(2, -1, 90, 'chambre')
-    p.append(('wall', 2, 0.0, -2, 90, 'Cloison_chambre'))
+    # La porte de la chambre est sur la moitié nord de la cloison : sur la
+    # moitié sud, elle s'ouvrait dans le dos du canapé.
+    p.append(('wall', 2, 0.0, -1, 90, 'Cloison_chambre'))
+    p += wall_door(2, -2, 90, 'chambre')
 
     furniture = [
         # Séjour : télévision contre le mur ouest, canapé en face.
@@ -177,7 +179,7 @@ def plan(src):
         ('televisionModern', 0.12, 1.2, 90, 'Television', 'cabinetTelevision'),
         ('tableCoffee', 0.85, 1.2, 90, 'Table_basse'),
         ('loungeSofa', 1.45, 1.0, 270, 'Canape'),
-        ('lampRoundFloor', 1.55, 2.35, 0, 'Lampadaire'),
+        ('lampRoundFloor', 1.6, 0.55, 0, 'Lampadaire'),
         ('bookcaseOpen', 0.3, 2.6, 180, 'Bibliotheque'),
         ('pottedPlant', 0.1, 0.1, 0, 'Plante'),
         # Cuisine : plan de travail contre la cloison, table devant.
@@ -189,8 +191,8 @@ def plan(src):
         ('lampSquareTable', 2.75, 0.2, 0, 'Lampe_cuisine', 'tableRound'),
         # Chambre : lit double tête contre le mur nord, chevet et lampe à côté.
         ('bedDouble', 2.75, 1.85, 0, 'Lit'),
-        ('sideTable', 2.12, 2.72, 0, 'Chevet'),
-        ('lampRoundTable', 2.25, 2.78, 0, 'Lampe_chevet', 'sideTable'),
+        ('sideTable', 3.75, 2.4, 90, 'Chevet'),
+        ('lampRoundTable', 3.77, 2.55, 0, 'Lampe_chevet', 'sideTable'),
     ]
     for entry in furniture:
         p.append(put(src, *entry))
