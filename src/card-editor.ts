@@ -154,8 +154,9 @@ class Ha3dFloorplanEditor extends HTMLElement {
     field(
       row(genSec),
       'Height (px)',
-      numInput(c.height, '75% of width', v => this._patch({ height: v })),
-      'Leave empty for automatic',
+      numInput(typeof c.height === 'number' ? c.height : undefined,
+        c.height === 'fill' ? 'fills the screen' : '75% of width', v => this._patch({ height: v })),
+      'Leave empty for automatic, or set height: fill in YAML to fill the screen',
     );
 
     // ── INFO ─────────────────────────────────────────────────────────────

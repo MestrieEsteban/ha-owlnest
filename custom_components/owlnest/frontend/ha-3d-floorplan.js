@@ -22195,8 +22195,12 @@ class py extends HTMLElement {
     ), o(
       r(c),
       "Height (px)",
-      l(e.height, "75% of width", (u) => this._patch({ height: u })),
-      "Leave empty for automatic"
+      l(
+        typeof e.height == "number" ? e.height : void 0,
+        e.height === "fill" ? "fills the screen" : "75% of width",
+        (u) => this._patch({ height: u })
+      ),
+      "Leave empty for automatic, or set height: fill in YAML to fill the screen"
     );
     const d = i("Advanced settings"), h = document.createElement("div");
     h.className = "info-box", h.innerHTML = [
@@ -28550,7 +28554,10 @@ function yb(s, e) {
 }
 const bb = "rules-engine-v2", Gs = class Gs extends HTMLElement {
   constructor() {
-    super(...arguments), this._config = null, this._hass = null, this._scene = null, this._sceneLoading = !1, this._langFromScene = !1, this.renderer = null, this.scene = null, this.camera = null, this.controls = null, this.canvas = null, this.lockBtn = null, this.editBtn = null, this._hud = null, this._hudBar = null, this._hudLeft = null, this._hudSep = null, this._hudRight = null, this._hudViews = null, this._lockOpenIcon = "🔓", this._lockClosedIcon = "🔒", this.overlayContainer = null, this.anchors = /* @__PURE__ */ new Map(), this.overlays = /* @__PURE__ */ new Map(), this._clusters = /* @__PURE__ */ new Map(), this.rafId = 0, this.ro = null, this.modelLoaded = !1, this._locked = !1, this._editMode = !1, this._dirty = !1, this._lastTime = 0, this._lastGroundKey = "", this._lastQualityKey = "", this._quality = su("auto"), this._shadowsDirty = !0, this._previewingRule = !1, this._previewTimer = null, this._paused = !1, this._io = null, this._onVisibility = null, this._projScratch = new k(), this._camAccum = 0, this._overlaysVisible = !0, this._tapStartTime = 0, this._tapStartPos = { x: 0, y: 0 }, this._controlsHideTimer = null, this._camAnimTo = null, this._ruleEngine = new xb(), this._ghost = null, this._cutaway = lb(), this._parts = new Jy(), this._partPickHandler = null, this._highlight = new ib(), this._highlightReq = { hover: null, selected: null }, this._hemiLight = null, this._sunLight = null, this._sky = null, this._modelBox = new St(), this._modelSpan = 1, this._editor = null, this._modelRoot = null, this._savePending = !1, this._saveQueued = !1, this._env = null, this._sim = null, this._viewMgr = null, this._editPanel = null, this._cardRenderer = null, this._cardPlacementMode = !1, this._cardPlacementType = null, this._selectedCardId = null, this._cardGrabMode = !1, this._cardGrabOrigin = null, this._cardGrabPlane = new Xt(), this._cardGrabRaycaster = new ei(), this._cardFocusId = null, this._panelGizmo = null, this._gizmoDragAxis = null, this._gizmoDragStartIntersect = new k(), this._gizmoDragCardStartPos = new k(), this._gizmoDragPlane = new Xt(), this._preFocusPos = null, this._preFocusTarget = null, this._lastClickTime = 0, this._lastClickCardId = null, this._overlayHideBadge = null, this._onCardKeyDown = (e) => {
+    super(...arguments), this._config = null, this._hass = null, this._scene = null, this._sceneLoading = !1, this._langFromScene = !1, this.renderer = null, this.scene = null, this.camera = null, this.controls = null, this.canvas = null, this.lockBtn = null, this.editBtn = null, this._hud = null, this._hudBar = null, this._hudLeft = null, this._hudSep = null, this._hudRight = null, this._hudViews = null, this._lockOpenIcon = "🔓", this._lockClosedIcon = "🔒", this.overlayContainer = null, this.anchors = /* @__PURE__ */ new Map(), this.overlays = /* @__PURE__ */ new Map(), this._clusters = /* @__PURE__ */ new Map(), this.rafId = 0, this.ro = null, this._onWindowResize = () => {
+      var e;
+      ((e = this._config) == null ? void 0 : e.height) === "fill" && this._onResize();
+    }, this.modelLoaded = !1, this._locked = !1, this._editMode = !1, this._dirty = !1, this._lastTime = 0, this._lastGroundKey = "", this._lastQualityKey = "", this._quality = su("auto"), this._shadowsDirty = !0, this._previewingRule = !1, this._previewTimer = null, this._paused = !1, this._io = null, this._onVisibility = null, this._projScratch = new k(), this._camAccum = 0, this._overlaysVisible = !0, this._tapStartTime = 0, this._tapStartPos = { x: 0, y: 0 }, this._controlsHideTimer = null, this._camAnimTo = null, this._ruleEngine = new xb(), this._ghost = null, this._cutaway = lb(), this._parts = new Jy(), this._partPickHandler = null, this._highlight = new ib(), this._highlightReq = { hover: null, selected: null }, this._hemiLight = null, this._sunLight = null, this._sky = null, this._modelBox = new St(), this._modelSpan = 1, this._editor = null, this._modelRoot = null, this._savePending = !1, this._saveQueued = !1, this._env = null, this._sim = null, this._viewMgr = null, this._editPanel = null, this._cardRenderer = null, this._cardPlacementMode = !1, this._cardPlacementType = null, this._selectedCardId = null, this._cardGrabMode = !1, this._cardGrabOrigin = null, this._cardGrabPlane = new Xt(), this._cardGrabRaycaster = new ei(), this._cardFocusId = null, this._panelGizmo = null, this._gizmoDragAxis = null, this._gizmoDragStartIntersect = new k(), this._gizmoDragCardStartPos = new k(), this._gizmoDragPlane = new Xt(), this._preFocusPos = null, this._preFocusTarget = null, this._lastClickTime = 0, this._lastClickCardId = null, this._overlayHideBadge = null, this._onCardKeyDown = (e) => {
       var n, i, r, o, a;
       if (!this._editMode) return;
       let t = document.activeElement;
@@ -28927,7 +28934,7 @@ const bb = "rules-engine-v2", Gs = class Gs extends HTMLElement {
           this._lastClickCardId = null;
         (O = this._config) != null && O.tap_to_toggle && this._toggleOverlays();
       }
-    }), this._initThree(t), this.ro = new ResizeObserver(() => this._onResize()), this.ro.observe(t), !this._getActiveSceneId() && !((x = this._config) != null && x.model_url) ? this._showSetupOverlay() : (!this._getActiveSceneId() || this._scene) && this._loadModel();
+    }), this._initThree(t), this.ro = new ResizeObserver(() => this._onResize()), this.ro.observe(t), window.addEventListener("resize", this._onWindowResize), !this._getActiveSceneId() && !((x = this._config) != null && x.model_url) ? this._showSetupOverlay() : (!this._getActiveSceneId() || this._scene) && this._loadModel();
   }
   _showSetupOverlay() {
     var h;
@@ -29519,11 +29526,28 @@ const bb = "rules-engine-v2", Gs = class Gs extends HTMLElement {
     e.show_lock !== !1 && this.lockBtn && this._hudRight.appendChild(this.lockBtn), e.show_editor !== !1 && this.editBtn && this._hudRight.appendChild(this.editBtn), (n = this._viewMgr) == null || n.buildHUDBar(), this._hudViews && this._hudLeft && (this._hudViews.innerHTML = "", Array.from(this._hudLeft.children).forEach((r) => this._hudViews.appendChild(r)), this._hudViews.style.display = this._hudViews.children.length > 0 ? "flex" : "none");
   }
   // ── Three.js init ─────────────────────────────────────────────────────
+  /**
+   * Hauteur de la carte pour une largeur donnée.
+   *
+   * `fill` se mesure depuis le haut de la carte jusqu'au bas de la fenêtre :
+   * l'en-tête de Home Assistant et tout ce qui précède la carte sont déduits,
+   * sans avoir à connaître leur taille. Un plancher évite une carte écrasée
+   * quand elle est placée tout en bas d'une longue page.
+   */
+  _cardHeight(e, t) {
+    var i;
+    const n = (i = this._config) == null ? void 0 : i.height;
+    if (n === "fill") {
+      const r = e.getBoundingClientRect().top;
+      return Math.max(240, Math.round(window.innerHeight - Math.max(0, r)));
+    }
+    return typeof n == "number" && n > 0 ? n : Math.round(t * 0.75);
+  }
   _initThree(e) {
-    var h, u, p;
-    const t = e.offsetWidth || 400, n = ((h = this._config) == null ? void 0 : h.height) ?? Math.round(t * 0.75);
+    var h, u;
+    const t = e.offsetWidth || 400, n = this._cardHeight(e, t);
     e.style.height = `${n}px`;
-    const i = ((u = this._config) == null ? void 0 : u.rendering) ?? {}, r = i.sky !== !1 && i.transparent_background !== !0, o = i.background_color ? parseInt(i.background_color.replace("#", ""), 16) : 856343;
+    const i = ((h = this._config) == null ? void 0 : h.rendering) ?? {}, r = i.sky !== !1 && i.transparent_background !== !0, o = i.background_color ? parseInt(i.background_color.replace("#", ""), 16) : 856343;
     this.scene = new Nx(), this.scene.background = r || i.transparent_background ? null : new Ne(o), this.scene.fog = i.transparent_background ? null : new ii(10471656, i.fog_density ?? 0.018), this.camera = new Wt(45, t / n, 0.01, 2e3), this._cardRenderer = new eb(
       this.scene,
       this.camera,
@@ -29531,11 +29555,11 @@ const bb = "rules-engine-v2", Gs = class Gs extends HTMLElement {
     ), this._panelGizmo = new tb(this.scene), this.camera.position.set(0, 5, 12);
     const a = i.shadows !== !1, l = i.transparent_background === !0, c = Jr(this._effectiveConfig);
     this._quality = c, this._lastQualityKey = Ed(this._effectiveConfig), this.renderer = new Dx({ canvas: this.canvas, antialias: c.antialias, alpha: !0 }), this.renderer.setSize(t, n, !1), this.renderer.setPixelRatio(Math.min(devicePixelRatio, c.maxPixelRatio)), this.renderer.shadowMap.enabled = a, this.renderer.shadowMap.type = c.shadowFilter, this.renderer.shadowMap.autoUpdate = !1, this.renderer.toneMapping = hh, this.renderer.toneMappingExposure = i.exposure ?? 1.4, this.renderer.outputColorSpace = Bt, l && this.renderer.setClearColor(0, 0), this.controls = new vv(this.camera, this.canvas), this.controls.enableDamping = !0, this.controls.dampingFactor = 0.08;
-    const d = ((p = this._config) == null ? void 0 : p.orbit) ?? {};
+    const d = ((u = this._config) == null ? void 0 : u.orbit) ?? {};
     if (this.controls.minDistance = d.min_distance ?? 1, this.controls.maxDistance = d.max_distance ?? 100, this.controls.maxPolarAngle = d.max_polar_angle !== void 0 ? d.max_polar_angle * Math.PI / 180 : Math.PI * 0.48, this.controls.addEventListener("change", () => this._requestRender()), this.controls.addEventListener("end", () => this._saveView()), this._hemiLight = new iv(16774368, 1710638, i.ambient_intensity ?? 0.7), this.scene.add(this._hemiLight), this._sunLight = new Yh(16774338, i.sun_intensity ?? 0.8), this._sunLight.position.set(5, 10, 5), this._sunLight.castShadow = a, this._sunLight.shadow.mapSize.set(c.sunShadowMap, c.sunShadowMap), this._sunLight.shadow.camera.near = 0.1, this._sunLight.shadow.camera.far = 60, this._sunLight.shadow.camera.left = -15, this._sunLight.shadow.camera.right = 15, this._sunLight.shadow.camera.top = 15, this._sunLight.shadow.camera.bottom = -15, this._sunLight.shadow.bias = -5e-4, this._sunLight.shadow.normalBias = 0.05, this.scene.add(this._sunLight), r) {
       this._sky = new ho(), this._sky.scale.setScalar(1500), this.scene.add(this._sky);
-      const g = this._sky.material.uniforms;
-      g.turbidity.value = 4, g.rayleigh.value = 1.2, g.mieCoefficient.value = 5e-3, g.mieDirectionalG.value = 0.85;
+      const p = this._sky.material.uniforms;
+      p.turbidity.value = 4, p.rayleigh.value = 1.2, p.mieCoefficient.value = 5e-3, p.mieDirectionalG.value = 0.85;
     }
     this._env = new my(
       this.scene,
@@ -30268,16 +30292,15 @@ const bb = "rules-engine-v2", Gs = class Gs extends HTMLElement {
   }
   // ── Resize ────────────────────────────────────────────────────────────
   _onResize() {
-    var i;
     const e = this.querySelector("ha-card");
     if (!e || !this.renderer || !this.camera) return;
-    const t = e.offsetWidth, n = ((i = this._config) == null ? void 0 : i.height) ?? Math.round(t * 0.75);
+    const t = e.offsetWidth, n = this._cardHeight(e, t);
     e.style.height = `${n}px`, this.renderer.setSize(t, n, !1), this.camera.aspect = t / n, this.camera.updateProjectionMatrix(), this._requestRender();
   }
   // ── Cleanup ───────────────────────────────────────────────────────────
   _teardown() {
     var e, t, n, i, r, o, a, l, c;
-    cancelAnimationFrame(this.rafId), (e = this.ro) == null || e.disconnect(), this._editMode && ((t = this._editor) == null || t.deactivate()), (n = this.controls) == null || n.dispose(), (i = this.renderer) == null || i.dispose(), (r = this._env) == null || r.removeWeatherParticles(), this._env = null, this._sim = null, this._viewMgr = null, this._editPanel = null, (o = this._cardRenderer) == null || o.dispose(), this._cardRenderer = null, (a = this._panelGizmo) == null || a.dispose(), this._panelGizmo = null, this._clusters.forEach((d) => d.destroy()), this._clusters.clear(), this.overlays.forEach((d) => d.destroy()), this.overlays.clear(), this.anchors.forEach((d) => {
+    cancelAnimationFrame(this.rafId), (e = this.ro) == null || e.disconnect(), window.removeEventListener("resize", this._onWindowResize), this._editMode && ((t = this._editor) == null || t.deactivate()), (n = this.controls) == null || n.dispose(), (i = this.renderer) == null || i.dispose(), (r = this._env) == null || r.removeWeatherParticles(), this._env = null, this._sim = null, this._viewMgr = null, this._editPanel = null, (o = this._cardRenderer) == null || o.dispose(), this._cardRenderer = null, (a = this._panelGizmo) == null || a.dispose(), this._panelGizmo = null, this._clusters.forEach((d) => d.destroy()), this._clusters.clear(), this.overlays.forEach((d) => d.destroy()), this.overlays.clear(), this.anchors.forEach((d) => {
       var h, u;
       d.light && ((h = this.scene) == null || h.remove(d.light), d.light.dispose()), d.lightTarget && ((u = this.scene) == null || u.remove(d.lightTarget));
     }), this.anchors.clear(), (l = this._hud) == null || l.remove(), this._hud = null, this._hudLeft = null, this._hudSep = null, this._hudRight = null, this._hudViews = null, this._controlsHideTimer && clearTimeout(this._controlsHideTimer), this._previewTimer && (clearTimeout(this._previewTimer), this._previewTimer = null), this._previewingRule = !1, (c = this._io) == null || c.disconnect(), this._io = null, this._onVisibility && document.removeEventListener("visibilitychange", this._onVisibility), this._onVisibility = null, this._paused = !1, this.modelLoaded = !1, this._editMode = !1, this._modelRoot = null, this._camAnimTo = null, this._sky = null;

@@ -416,7 +416,12 @@ export interface CardConfig {
   anchors?: Record<string, string> | AnchorConfig[];
   show_debug_anchors?: boolean;
   intensity_scale?: number;
-  height?: number;
+  /**
+   * Hauteur en pixels, ou `fill` pour occuper toute la hauteur visible sous la
+   * carte : le mode d'une tablette murale, ou d'une vue en panneau. Absente :
+   * les trois quarts de la largeur.
+   */
+  height?: number | 'fill';
   sky?: boolean;
   sun_entity?: string;
   weather_entity?: string;

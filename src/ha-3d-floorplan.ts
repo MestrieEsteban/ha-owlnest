@@ -99,6 +99,7 @@ class Ha3dFloorplan extends HTMLElement {
 
   private rafId = 0;
   private ro: ResizeObserver | null = null;
+  private readonly _onWindowResize = () => { if (this._config?.height === 'fill') this._onResize(); };
   private modelLoaded = false;
   private _locked = false;
   private _editMode = false;
@@ -784,6 +785,9 @@ class Ha3dFloorplan extends HTMLElement {
 
     this.ro = new ResizeObserver(() => this._onResize());
     this.ro.observe(card);
+    // L'observateur ne voit que la carte : une fenêtre qui change seulement de
+    // hauteur ne la redimensionne pas. En `fill`, c'est pourtant ce qui compte.
+    window.addEventListener('resize', this._onWindowResize);
 
     // If scene_id is set, defer model loading until hass is available.
     // The hass setter will call _fetchAndLoadScene → _loadModel.
@@ -1734,9 +1738,26 @@ class Ha3dFloorplan extends HTMLElement {
 
   // ── Three.js init ─────────────────────────────────────────────────────
 
+  /**
+   * Hauteur de la carte pour une largeur donnée.
+   *
+   * `fill` se mesure depuis le haut de la carte jusqu'au bas de la fenêtre :
+   * l'en-tête de Home Assistant et tout ce qui précède la carte sont déduits,
+   * sans avoir à connaître leur taille. Un plancher évite une carte écrasée
+   * quand elle est placée tout en bas d'une longue page.
+   */
+  private _cardHeight(container: HTMLElement, w: number): number {
+    const h = this._config?.height;
+    if (h === 'fill') {
+      const top = container.getBoundingClientRect().top;
+      return Math.max(240, Math.round(window.innerHeight - Math.max(0, top)));
+    }
+    return typeof h === 'number' && h > 0 ? h : Math.round(w * 0.75);
+  }
+
   private _initThree(container: HTMLElement) {
     const w = container.offsetWidth || 400;
-    const h = this._config?.height ?? Math.round(w * 0.75);
+    const h = this._cardHeight(container, w);
     container.style.height = `${h}px`;
 
     const rl = this._config?.rendering ?? {};
@@ -3131,7 +3152,7 @@ class Ha3dFloorplan extends HTMLElement {
     const container = this.querySelector('ha-card') as HTMLElement | null;
     if (!container || !this.renderer || !this.camera) return;
     const w = container.offsetWidth;
-    const h = this._config?.height ?? Math.round(w * 0.75);
+    const h = this._cardHeight(container, w);
     container.style.height = `${h}px`;
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
@@ -3144,6 +3165,7 @@ class Ha3dFloorplan extends HTMLElement {
   private _teardown() {
     cancelAnimationFrame(this.rafId);
     this.ro?.disconnect();
+    window.removeEventListener('resize', this._onWindowResize);
     if (this._editMode) this._editor?.deactivate();
     this.controls?.dispose();
     this.renderer?.dispose();
