@@ -22114,8 +22114,8 @@ const py = [
     icon: "mdi:floor-lamp",
     position: [
       -1.144,
-      0.1292,
-      -1.2378
+      0.285,
+      -1.238
     ]
   },
   {
@@ -22123,26 +22123,26 @@ const py = [
     icon: "mdi:lamp",
     position: [
       1.846,
-      -9e-3,
-      -1.1378
+      0.124,
+      -1.138
     ]
   },
   {
     id: "kitchenLamp",
-    icon: "mdi:ceiling-light",
+    icon: "mdi:lamp",
     position: [
-      0.81,
-      -0.316,
-      1.24
+      0.3,
+      0.165,
+      0.62
     ]
   },
   {
     id: "television",
     icon: "mdi:television",
     position: [
-      -1.8158,
-      -0.1074,
-      -0.0424
+      -1.816,
+      -0.108,
+      -0.043
     ]
   }
 ], fy = "/owlnest_frontend/demo.glb";
