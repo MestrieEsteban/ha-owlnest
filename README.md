@@ -61,7 +61,7 @@ I wanted something different: real-time 3D lights, a visual editor, weather effe
 | 🏠 | **Interactive 3D scene** | Load any GLB/GLTF model and navigate freely with mouse or touch |
 | 💡 | **Synchronized lights** | Your `light.*` entities drive real 3D lights — color, brightness, smooth transitions |
 | 📍 | **Interactive anchors** | Tap to toggle, long-press for details. Supports lights, sensors, covers, climate, media players |
-| 🚪 | **Animated openings** | Doors, windows, shutters and appliance doors swing or slide, and awnings or curtains extend, with their entity's state |
+| 🚪 | **Animated openings** | Doors, windows, shutters and appliance doors swing or slide, awnings or curtains extend, and complex motions stored in the GLB (Blender NLA) play with their entity's state |
 | 👁️ | **See through walls** | Whatever stands between you and the rooms fades out as you orbit, and comes back behind you |
 | 📐 | **Any unit** | Metres, centimetres, inches: distances, lights and weather all derive from the model's own size |
 | 🎥 | **Camera views** | Save named viewpoints and fly between them with smooth transitions |
@@ -244,7 +244,7 @@ Configure this in anchor properties → **Visible if** in the editor.
 
 ### Openings
 
-Openings are pieces of your model (doors, windows, shutters, a dishwasher or oven door) that move when a Home Assistant entity opens or closes. Nothing is changed in the model file: the piece is detached and animated in the card.
+Openings are pieces of your model (doors, windows, shutters, a dishwasher or oven door, a reclining sofa) that move when a Home Assistant entity opens or closes. Nothing is changed in the model file: swing, slide and extend detach the piece in the card; **Plays model animations** poses the nodes already stored in the GLB.
 
 #### Adding an opening
 
@@ -264,7 +264,7 @@ The **Object** tree lists the model's objects and groups, like Blender's outline
 |---|---|
 | **Name** | Shown in the Openings list and the panel header |
 | **Entity** | Drives the movement. `cover` entities follow `current_position`; `cover`, `valve`, `lock`, `binary_sensor`, `switch`, `light`, `input_boolean`, `fan` and `group` are read as open/closed |
-| **Movement** | **Swings** (door, casement window), **Slides** (roller shutter, sliding door) or **Extends** (awning, blind, curtain — see below) |
+| **Movement** | **Swings** (door, casement window), **Slides** (roller shutter, sliding door), **Extends** (awning, blind, curtain — see below) or **Plays model animations** (Blender NLA tracks in the GLB — see below) |
 | **Rotation** | Swings only. **Vertical** for a door, **Horizontal** for a dishwasher/oven door or a top-hung window |
 | **Hinge side** | Which edge carries the hinges: one side / the other, or **Bottom** / **Top** for a horizontal rotation |
 | **Opens towards** | Which side of the wall the leaf swings to. The model doesn't know where "inside" is, so preview and flip if needed |
@@ -295,6 +295,20 @@ A `cover` with `current_position` is shown at that position. A `cover` that does
 > **Example**: in a model where each awning is made of `motor` (cassette), `tela` (fabric) and `extremo` (front bar, child of the fabric), select `tela` and choose **Extends**. The inclination is detected and `extremo` is suggested as a follower. Only the fabric shrinks: the bar slides up to the cassette.
 
 > **Tip**: The hinge is placed on the edge of the piece's bounding box, not on the object's origin in Blender.
+
+#### Model animations (Blender NLA)
+
+If the GLB contains glTF animations (Blender **NLA Tracks** enabled on export), an opening can **play those animations** instead of swinging, sliding or extending. The entity's position scrubs the clip: 0 % is the first keyframe, 100 % the last, and 40 % stays 40 % of the way — the same as a shutter. Pick one or more animations; they all move together.
+
+This motion does not detach anything: the clips pose the nodes they already animate. The Object tree and the pieces that move with the opening are hidden; highlight and tint use the common parent of those nodes (the sofa, not the whole house). Duration defaults to the animation length so it plays at Blender's speed; you can still change it.
+
+You can add several of these openings on the same object (one cover for the right recline, another for the left). A click only reopens an opening if it hits a node that opening actually animates — not the sofa as a whole.
+
+If two openings are given clips that move the same node, the last one applied each frame wins. Prefer disjoint clip sets.
+
+Export from Blender with **Animation → NLA Tracks**. Actions that start at frame 1 (not 0) are handled. three.js sanitises names (`tela.001` → `tela001`).
+
+> **Example**: a reclining sofa exported as `Reclinar_Der`, `Reclinar_Izq`, `Cabezal_Der`, `Cabezal_Izq`. Bind the right-hand cover to `Reclinar_Der` and `Cabezal_Der`; both mechanisms follow that cover's position. A second opening with the left-hand cover and the two `*_Izq` clips leaves the right side alone.
 
 ---
 

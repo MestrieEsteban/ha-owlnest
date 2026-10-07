@@ -7,9 +7,13 @@ import { bustCache, shouldRetryUncached } from './model-errors';
 
 function fetchGLTF(url: string): Promise<THREE.Group> {
   const loader = new GLTFLoader();
-  return new Promise<{ scene: THREE.Group }>((resolve, reject) =>
+  return new Promise<{ scene: THREE.Group; animations: THREE.AnimationClip[] }>((resolve, reject) =>
     loader.load(url, resolve as (g: unknown) => void, undefined, reject),
-  ).then((gltf) => gltf.scene);
+  ).then((gltf) => {
+    // Les animations voyagent avec la scène : les ouvrants les y retrouvent.
+    gltf.scene.animations = gltf.animations;
+    return gltf.scene;
+  });
 }
 
 export async function loadGLTF(url: string): Promise<THREE.Group> {
