@@ -65,7 +65,11 @@ _BOXES = {}
 
 
 def footprint(src, model):
-    """Boîte d'un modèle dans son repère : (xmin, zmin, xmax, zmax, hauteur).
+    """Boîte d'un modèle dans son repère : (xmin, zmin, xmax, zmax, hauteur, bas).
+
+    `bas` est l'altitude du point le plus bas : certains modèles du kit (la
+    table ronde) descendent sous leur origine, et posés à y = 0 ils
+    s'enfonçaient dans le sol.
 
     Les transformations des nœuds sont appliquées : le kit place parfois une
     pièce sous un nœud tourné ou réduit de moitié, et la boîte brute des
@@ -96,13 +100,13 @@ def footprint(src, model):
     identity = [[1 if r == c else 0 for c in range(4)] for r in range(4)]
     for root in gltf['scenes'][gltf.get('scene', 0)]['nodes']:
         visit(root, identity)
-    _BOXES[model] = (lo[0], lo[2], hi[0], hi[2], hi[1])
+    _BOXES[model] = (lo[0], lo[2], hi[0], hi[2], hi[1] - lo[1], lo[1])
     return _BOXES[model]
 
 
 def turned(box, yaw):
     """Boîte au sol après rotation autour de la verticale (multiples de 90°)."""
-    x0, z0, x1, z1, _ = box
+    x0, z0, x1, z1 = box[:4]
     corners = [(x0, z0), (x1, z0), (x0, z1), (x1, z1)]
     c, sn = round(math.cos(math.radians(yaw))), round(math.sin(math.radians(yaw)))
     pts = [(x * c + z * sn, -x * sn + z * c) for x, z in corners]
@@ -120,7 +124,7 @@ def put(src, model, px, pz, yaw, name, on=None):
     x0, z0, x1, z1 = turned(footprint(src, model), yaw)
     # `on` : le meuble sur lequel il repose, une télévision sur son meuble, une
     # lampe sur un chevet. Sans lui, tout se pose au sol.
-    y = footprint(src, on)[4] if on else 0.0
+    y = (footprint(src, on)[4] if on else 0.0) - footprint(src, model)[5]
     # Le bord sud du meuble est son z le plus grand (z décroît vers le nord).
     return (model, px - x0, y, -pz - z1, yaw, name)
 
@@ -186,13 +190,13 @@ def plan(src):
         ('lampRoundFloor', 0.78, 2.65, 0, 'Lampadaire'),
         ('bookcaseOpen', 0.3, 2.6, 180, 'Bibliotheque'),
         ('pottedPlant', 0.1, 0.1, 0, 'Plante'),
-        # Cuisine : plan de travail contre la cloison, table devant.
-        ('kitchenFridge', 3.4, 0.45, 0, 'Frigo'),
+        # Cuisine : plan de travail et frigo alignés contre la cloison, lampe sur
+        # le plan de travail. Pas de table : la cuisine fait un mètre de profondeur.
+        ('kitchenFridge', 3.35, 0.71, 0, 'Frigo'),
         ('kitchenCabinet', 2.1, 0.55, 0, 'Cuisine_1'),
         ('kitchenSink', 2.5, 0.55, 0, 'Evier'),
         ('kitchenStove', 2.9, 0.55, 0, 'Cuisiniere'),
-        ('tableRound', 2.55, 0.08, 0, 'Table'),
-        ('lampSquareTable', 2.75, 0.2, 0, 'Lampe_cuisine', 'tableRound'),
+        ('lampSquareTable', 2.24, 0.82, 0, 'Lampe_cuisine', 'kitchenCabinet'),
         # Chambre : lit double tête contre le mur nord, chevet et lampe à côté.
         ('bedDouble', 2.75, 1.85, 0, 'Lit'),
         ('sideTable', 3.75, 2.4, 90, 'Chevet'),
@@ -216,11 +220,15 @@ def check(src, pieces):
 
 # Les ancres de démonstration : une par objet que l'utilisateur a toutes les
 # chances de posséder. Elles naissent sans entité ; la carte propose de les
-# relier aux siennes. `at` est la hauteur du point, en fraction de l'objet.
+# relier aux siennes. `at` est la hauteur du point, en fraction de l'objet ;
+# `ABOVE` le pose juste au-dessus : la lumière d'une lampe éclaire alors la
+# pièce au lieu de diffuser à l'intérieur de l'abat-jour.
+ABOVE = 'above'
+ABOVE_GAP = 0.07
 DEMO_ANCHORS = [
-    ('Lampadaire', 'floorLamp', 'mdi:floor-lamp', 0.9),
-    ('Lampe_chevet', 'bedsideLamp', 'mdi:lamp', 0.8),
-    ('Lampe_cuisine', 'kitchenLamp', 'mdi:ceiling-light', 0.8),
+    ('Lampadaire', 'floorLamp', 'mdi:floor-lamp', ABOVE),
+    ('Lampe_chevet', 'bedsideLamp', 'mdi:lamp', ABOVE),
+    ('Lampe_cuisine', 'kitchenLamp', 'mdi:lamp', ABOVE),
     ('Television', 'television', 'mdi:television', 0.5),
 ]
 
@@ -230,8 +238,8 @@ def world_boxes(src, pieces):
     boxes = {}
     for model, x, y, z, yaw, name in pieces:
         x0, z0, x1, z1 = turned(footprint(src, model), yaw)
-        h = footprint(src, model)[4]
-        boxes[name] = (x0 + x, y, z0 + z, x1 + x, y + h, z1 + z)
+        h, bottom = footprint(src, model)[4:6]
+        boxes[name] = (x0 + x, y + bottom, z0 + z, x1 + x, y + bottom + h, z1 + z)
     return boxes
 
 
@@ -248,7 +256,8 @@ def demo_anchors(src, pieces):
     out = []
     for name, key, icon, at in DEMO_ANCHORS:
         x0, y0, z0, x1, y1, z1 = boxes[name]
-        point = [(x0 + x1) / 2, y0 + (y1 - y0) * at, (z0 + z1) / 2]
+        y = y1 + ABOVE_GAP if at == ABOVE else y0 + (y1 - y0) * at
+        point = [(x0 + x1) / 2, y, (z0 + z1) / 2]
         out.append({
             'id': key,
             'icon': icon,
