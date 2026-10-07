@@ -322,3 +322,6 @@ Modele3D/home.glb
 
 # Cache Python de l integration
 custom_components/**/__pycache__/
+
+# Démo en ligne (npm run build:demo)
+dist-demo

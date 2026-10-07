@@ -20,6 +20,8 @@
     "typecheck": "tsc --noEmit",
     "release": "node scripts/release.mjs",
     "preview": "vite preview",
+    "demo": "vite --config vite.demo.config.js",
+    "build:demo": "vite build --config vite.demo.config.js",
     "test": "node scripts/test.mjs"
   },
   "dependencies": {

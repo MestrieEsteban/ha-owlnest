@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Owlnest demo</title>
+  <meta name="description" content="Try Owlnest, the live 3D floorplan for Home Assistant, right in your browser." />
+  <link rel="icon" type="image/svg+xml" data-logo />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" />
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: rgba(13, 17, 23, 0.82);
+      --border: rgba(255, 255, 255, 0.1);
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #6c63ff;
+      color-scheme: dark;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, -apple-system, 'Segoe UI', sans-serif; }
+    body { display: flex; flex-direction: column; overflow: hidden; }
+
+    header {
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--panel);
+    }
+    .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 16px; text-decoration: none; color: var(--text); }
+    .brand img { width: 28px; height: 28px; filter: invert(1); }
+    .brand small { font-weight: 400; color: var(--muted); font-size: 12px; }
+    .spacer { flex: 1; }
+    .controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    select, button {
+      font: inherit; color: var(--text); background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border); border-radius: 8px; padding: 5px 10px; cursor: pointer;
+    }
+    button:hover, select:hover { background: rgba(255, 255, 255, 0.12); }
+    .cta { background: var(--accent); border-color: transparent; color: #fff; text-decoration: none; border-radius: 8px; padding: 6px 12px; font-weight: 600; }
+    .cta:hover { filter: brightness(1.1); }
+
+    main { flex: 1; min-height: 0; position: relative; }
+    ha-3d-floorplan { display: block; width: 100%; }
+
+    #toast {
+      position: absolute; left: 50%; top: 16px; transform: translateX(-50%);
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+      padding: 10px 16px; opacity: 0; transition: opacity 0.3s; pointer-events: none; max-width: calc(100vw - 32px);
+    }
+
+    @media (max-width: 720px) {
+      header { padding: 8px 12px; gap: 8px; }
+      .brand small { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <a class="brand" href="https://github.com/MestrieEsteban/ha-owlnest">
+      <img alt="" data-logo />
+      Owlnest <small data-i18n="tagline">live demo</small>
+    </a>
+    <div class="spacer"></div>
+    <div class="controls">
+      <select id="lang" aria-label="Language">
+        <option value="en">EN</option>
+        <option value="fr">FR</option>
+      </select>
+      <a class="cta" href="https://github.com/MestrieEsteban/ha-owlnest#installation" data-i18n="install">Install it</a>
+    </div>
+  </header>
+  <main id="stage">
+    <div id="toast"></div>
+  </main>
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>
