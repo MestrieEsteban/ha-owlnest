@@ -37,14 +37,6 @@
 
 Owlnest is a Home Assistant card that displays your home in 3D. Lights in the model follow your actual lamps: on/off, colour and brightness. You can also place sensors and have doors or shutters move with their entity's state.
 
-## Try it live
-
-<p align="center">
-  <a href="https://mestrieesteban.github.io/ha-owlnest/?lang=en"><img src="assets/live-demo.jpg" alt="The Owlnest live demo: a 3D house at night, each room lit by its own lamp" width="700" /></a>
-</p>
-
-**[▶ Open the live demo](https://mestrieesteban.github.io/ha-owlnest/?lang=en)**: the real card, running in your browser on a simulated home. A 2-minute guided tour shows the lights, sensors, a door that opens with a rule, then the editor where everything is set up. Nothing to install.
-
 ## Why Owlnest?
 
 3D floorplan solutions for Home Assistant rely on static Blender renders: one image per light state, a new render for every colour or condition. Nothing interactive, nothing alive.
@@ -116,6 +108,10 @@ Anchors support `light`, `switch`, `sensor`, `binary_sensor`, `cover`, `climate`
     <td colspan="2">The sun follows <code>sun.sun</code>. Rain, snow and fog depend on your weather entity. <a href="docs/guide.md#environment">Environment settings →</a></td>
   </tr>
 </table>
+
+<p align="center">
+  <a href="https://mestrieesteban.github.io/ha-owlnest/?lang=en"><img src="https://img.shields.io/badge/%E2%96%B6%20Try%20the%20live%20demo-6C63FF?style=for-the-badge" alt="Try the live demo" height="40" /></a>
+</p>
 
 ## Installation
 

@@ -37,14 +37,6 @@
 
 Owlnest est une carte Home Assistant qui affiche votre logement en 3D. Les lumières du modèle suivent vos vraies lampes : allumage, couleur et intensité. Vous pouvez aussi y placer vos capteurs et faire bouger les portes ou les volets selon leur état.
 
-## Essayer en ligne
-
-<p align="center">
-  <a href="https://mestrieesteban.github.io/ha-owlnest/?lang=fr"><img src="assets/live-demo.jpg" alt="La démo en ligne d'Owlnest : une maison en 3D de nuit, chaque pièce éclairée par sa lampe" width="700" /></a>
-</p>
-
-**[▶ Ouvrir la démo en ligne](https://mestrieesteban.github.io/ha-owlnest/?lang=fr)** : la vraie carte, dans votre navigateur, branchée sur une maison simulée. Une visite guidée de 2 minutes montre les lumières, les capteurs, une porte qui s'ouvre avec une règle, puis l'éditeur où tout se règle. Rien à installer.
-
 ## Pourquoi Owlnest ?
 
 Les solutions de plan 3D pour Home Assistant reposent sur des rendus Blender statiques : une image par état de lumière, un nouveau rendu à chaque couleur ou condition. Rien d'interactif, rien de vivant.
@@ -116,6 +108,10 @@ Les ancres prennent en charge `light`, `switch`, `sensor`, `binary_sensor`, `cov
     <td colspan="2">Le soleil suit <code>sun.sun</code>. La pluie, la neige et le brouillard dépendent de votre entité météo. <a href="docs/guide-fr.md#environnement">Réglages de l'environnement →</a></td>
   </tr>
 </table>
+
+<p align="center">
+  <a href="https://mestrieesteban.github.io/ha-owlnest/?lang=fr"><img src="https://img.shields.io/badge/%E2%96%B6%20Essayer%20la%20d%C3%A9mo%20en%20ligne-6C63FF?style=for-the-badge" alt="Essayer la démo en ligne" height="40" /></a>
+</p>
 
 ## Installation
 
