@@ -16,7 +16,7 @@ jobs:
       - name: HACS validation
         uses: "hacs/action@main"
         with:
-          category: "plugin"
+          category: "integration"
 
   # Vite compile avec esbuild, qui ne vérifie pas les types : sans ce job, une
   # erreur de type ne se révèle qu'au moment du tag, une fois la release lancée.
