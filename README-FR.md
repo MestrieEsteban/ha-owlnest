@@ -1,327 +1,234 @@
 <p align="center">
-  <img src="assets/logo.svg" alt="Owlnest" width="200" />
+  <img src="assets/logo.svg" alt="Owlnest" width="120" />
 </p>
 
 <h1 align="center">Owlnest</h1>
 
 <p align="center">
-  <strong>Votre maison en 3D, directement dans Home Assistant.</strong><br/>
-  Chargez un modèle 3D, placez vos appareils, contrôlez tout en temps réel.
+  <strong>Un plan 3D pour Home Assistant.</strong><br />
+  Vos lumières et vos appareils dans un modèle de votre maison, avec un éditeur pour les placer.
 </p>
 
 <p align="center">
-  <a href="#installation"><img src="https://img.shields.io/badge/Home%20Assistant-2024.1%2B-41BDF5?style=for-the-badge&logo=homeassistant&logoColor=white" alt="Home Assistant" /></a>
-  <a href="#installation"><img src="https://img.shields.io/badge/HACS-Custom-FF6F00?style=for-the-badge&logo=homeassistantcommunitystore&logoColor=white" alt="HACS" /></a>
-  <a href="https://github.com/MestrieEsteban/ha-owlnest/releases/latest"><img src="https://img.shields.io/github/v/release/MestrieEsteban/ha-owlnest?style=for-the-badge&color=6C63FF" alt="Release" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/MestrieEsteban/ha-owlnest?style=for-the-badge&color=22C55E" alt="License" /></a>
+  <a href="https://github.com/MestrieEsteban/ha-owlnest/releases/latest"><img src="https://img.shields.io/github/v/release/MestrieEsteban/ha-owlnest?style=flat-square&color=6C63FF" alt="Dernière version" /></a>
+  <a href="#installation"><img src="https://img.shields.io/badge/HACS-Integration-41BDF5?style=flat-square" alt="Intégration HACS" /></a>
+  <a href="https://github.com/MestrieEsteban/ha-owlnest/issues"><img src="https://img.shields.io/badge/statut-beta-orange?style=flat-square" alt="Bêta : vos retours sont les bienvenus" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/MestrieEsteban/ha-owlnest?style=flat-square&color=22C55E" alt="Licence MIT" /></a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/statut-beta-orange?style=for-the-badge" alt="Beta" />
-</p>
-
-<p align="center">
-  <a href="#-fonctionnalités">Fonctionnalités</a> •
-  <a href="#-installation">Installation</a> •
-  <a href="#-démarrage-rapide">Démarrage rapide</a> •
-  <a href="#-guide-complet">Guide complet</a> •
-  <a href="#-faq">FAQ</a>
-</p>
-
-<p align="center">
-  🌐 <a href="README.md"><strong>English version available here</strong></a>
+  <a href="#installation">Installer</a> ·
+  <a href="#premiers-pas">Essayer</a> ·
+  <a href="docs/guide-fr.md">Guide complet</a> ·
+  <a href="https://www.youtube.com/watch?v=_MbcDL5JaTE">Démo vidéo</a> ·
+  <a href="README.md">English</a>
 </p>
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=_MbcDL5JaTE">
-    <img src="https://img.youtube.com/vi/_MbcDL5JaTE/maxresdefault.jpg" alt="Voir la démo" width="700" />
+    <img src="https://img.youtube.com/vi/_MbcDL5JaTE/maxresdefault.jpg" alt="Voir la démo vidéo d'Owlnest" width="700" />
   </a>
 </p>
 
----
+Owlnest est une carte Home Assistant qui affiche votre logement en 3D. Les lumières du modèle suivent vos vraies lampes : allumage, couleur et intensité. Vous pouvez aussi y placer vos capteurs et faire bouger les portes ou les volets selon leur état.
 
-> **⚠️ Beta** — Owlnest est en développement actif. Des fonctionnalités peuvent changer et des bugs peuvent apparaître. Vos retours et signalements sont les bienvenus via les [Issues](https://github.com/MestrieEsteban/ha-owlnest/issues).
+## Pourquoi Owlnest ?
 
-## 💬 Pourquoi Owlnest ?
+Les solutions de plan 3D pour Home Assistant reposent sur des rendus Blender statiques : une image par état de lumière, un nouveau rendu à chaque couleur ou condition. Rien d'interactif, rien de vivant.
 
-Les solutions de plan 3D pour Home Assistant reposent sur des rendus Blender statiques une image par état de lumière, un nouveau rendu à chaque couleur ou condition. Rien d'interactif, rien de vivant.
+J'ai voulu autre chose : des lumières 3D temps réel, un éditeur visuel, de la météo, des animations. Tout ce que j'aurais aimé trouver. Et je me suis dit que d'autres étaient peut-être dans le même cas, alors j'ai partagé.
 
-J'ai voulu autre chose des lumières 3D temps réel, un éditeur visuel, de la météo, des animations. Tout ce que j'aurais aimé trouver. Et je me suis dit que d'autres étaient peut-être dans le même cas, alors j'ai partagé.
+Une maison de démo est fournie pour essayer la carte avec vos propres lumières, même si vous n'avez pas encore de modèle.
 
-<p align="center">
-  <img src="assets/OnOffLight.gif" alt="Démo contrôle des lumières en temps réel" width="700" />
-</p>
+> **Bêta :** le projet est encore en développement, il reste des bugs et des réglages peuvent changer. Si vous avez un souci, vous pouvez le signaler dans les [issues](https://github.com/MestrieEsteban/ha-owlnest/issues).
 
----
+## Fonctionnalités
 
-## ✨ Fonctionnalités
+| Fonctionnalité | Détail |
+|---|---|
+| Lumières | Allumage, intensité et couleur synchronisés avec les entités `light.*`. |
+| Portes et volets | Rotation, glissement, déroulement ou lecture des animations du GLB. |
+| Capteurs | Valeurs affichées à l'endroit où vous placez les ancres. |
+| Commandes | Clic sur une ancre pour piloter l'appareil, appui long pour ouvrir ses détails. L'action dépend du type d'entité. |
+| Règles | Déplacement de la caméra, mise en évidence d'une ancre ou message selon l'état d'une entité. |
+| Météo et soleil | Éclairage lié à `sun.sun`, pluie, neige, brouillard et orages liés à votre entité météo. |
+| Murs | Les objets qui cachent les pièces s'effacent lorsque vous tournez autour du modèle. |
+| Navigation | Souris, tactile et points de vue enregistrés. |
 
-| | Fonctionnalité | Description |
-|---|---|---|
-| 🏠 | **Scène 3D interactive** | Chargez n'importe quel modèle GLB/GLTF et naviguez librement avec la souris ou le tactile |
-| 💡 | **Lumières synchronisées** | Vos entités `light.*` pilotent de vraies lumières 3D — couleur, intensité, transitions fluides |
-| 📍 | **Ancres interactives** | Tap pour allumer/éteindre, appui long pour les détails. Compatible : lumières, capteurs, volets, climat, media players |
-| 🚪 | **Ouvrants animés** | Portes, fenêtres, volets et portes d'électroménager pivotent ou coulissent, stores et rideaux se déroulent, et les animations du GLB (NLA de Blender) se jouent, selon l'état de leur entité |
-| 👁️ | **Voir à travers les murs** | Le mur qui bouche la vue s'efface pendant que vous tournez autour, et se reforme derrière |
-| 📐 | **N'importe quelle unité** | Mètres, centimètres, pouces : distances, lumières et météo se déduisent de la taille du modèle |
-| 🎥 | **Vues caméra** | Sauvegardez des points de vue nommés et naviguez entre eux avec une transition animée |
-| ⚡ | **Moteur de règles** | *Mouvement détecté → voler vers la pièce*, *Porte ouverte → afficher un panneau* |
-| 🌦️ | **Météo dynamique** | Soleil réaliste depuis `sun.sun`, pluie/neige/brouillard/éclairs depuis votre entité météo |
-| 🎨 | **Éditeur visuel** | Tout se configure dans la scène, sans écrire de YAML |
-| 🌍 | **Multilingue** | Français et anglais inclus |
+Les ancres prennent en charge `light`, `switch`, `sensor`, `binary_sensor`, `cover`, `climate` et `media_player`. L'interface est disponible en français et en anglais.
 
----
+## En action
 
-## 🎬 En action
+<table>
+  <tr>
+    <th colspan="2">Lumières synchronisées en temps réel</th>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><img src="assets/OnOffLight.gif" alt="Les lumières de la maison 3D suivent les entités Home Assistant lorsqu'elles s'allument et s'éteignent" width="800" /></td>
+  </tr>
+  <tr>
+    <td colspan="2">Quand une lampe s'allume ou change de couleur, la lumière dans le modèle suit. Vous pouvez aussi la commander depuis son ancre. <a href="docs/guide-fr.md#ancres">Réglages des lumières →</a></td>
+  </tr>
+  <tr>
+    <th>Placement des appareils</th>
+    <th>Portes et volets</th>
+  </tr>
+  <tr>
+    <td><img src="assets/moveLight.gif" alt="Placement et déplacement d'une ancre dans l'éditeur visuel" width="400" /></td>
+    <td><img src="assets/openings.gif" alt="Une porte suit son entité, avec sa poignée et sa couleur d'état" width="400" /></td>
+  </tr>
+  <tr>
+    <td>Les ancres se placent sur le modèle et se déplacent dans l'éditeur. Chacune peut être reliée à une entité. <a href="docs/guide-fr.md#ancres">Guide des ancres →</a></td>
+    <td>Une porte ou un volet bouge avec son entité. Le mouvement se règle et se teste dans l'éditeur. <a href="docs/guide-fr.md#ouvrants">Guide des ouvrants →</a></td>
+  </tr>
+  <tr>
+    <th>Vues caméra</th>
+    <th>Règles</th>
+  </tr>
+  <tr>
+    <td><img src="assets/vue.gif" alt="Transitions fluides entre des points de vue enregistrés de la maison" width="400" /></td>
+    <td><img src="assets/rules.gif" alt="Des règles visuelles font réagir la scène aux états des entités Home Assistant" width="400" /></td>
+  </tr>
+  <tr>
+    <td>Vous pouvez enregistrer un point de vue pour y revenir plus tard. <a href="docs/guide-fr.md#vues-caméra">Guide des vues caméra →</a></td>
+    <td>Par exemple, un capteur de mouvement peut déclencher le passage à la vue de la pièce. <a href="docs/guide-fr.md#moteur-de-règles">Guide des règles →</a></td>
+  </tr>
+  <tr>
+    <th colspan="2">Météo et soleil</th>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><img src="assets/meteo.gif" alt="Effets météo et changements de lumière du jour dans la scène 3D" width="400" /></td>
+  </tr>
+  <tr>
+    <td colspan="2">Le soleil suit <code>sun.sun</code>. La pluie, la neige et le brouillard dépendent de votre entité météo. <a href="docs/guide-fr.md#environnement">Réglages de l'environnement →</a></td>
+  </tr>
+</table>
 
-Un aperçu de ce que fait Owlnest. Chaque partie renvoie à son chapitre du guide complet.
+## Installation
 
-### 📍 Placez vos appareils
+**Home Assistant 2024.1 ou supérieur est requis.** Owlnest s'installe comme une intégration et embarque sa carte Lovelace. La carte est déclarée automatiquement.
 
-<p align="center">
-  <img src="assets/moveLight.gif" alt="Déplacer une ancre dans l'éditeur" width="600" />
-</p>
+### Avec HACS
 
-Cliquez sur le modèle pour poser une ancre, choisissez l'entité dans une liste, puis glissez-la à sa place. Ni coordonnées, ni YAML.
+1. Dans **HACS**, ouvrez **⋮ → Dépôts personnalisés**.
+2. Ajoutez `https://github.com/MestrieEsteban/ha-owlnest` et choisissez la catégorie **Intégration**.
+3. Cherchez **Owlnest** dans HACS et téléchargez-le.
+4. **Redémarrez Home Assistant**.
+5. Allez dans **Paramètres → Appareils et services → Ajouter une intégration**, cherchez **Owlnest** et validez.
+6. Rechargez le navigateur en forçant le cache avec **Ctrl+Maj+R** (**Cmd+Maj+R** sur macOS).
 
-→ En savoir plus : [Ancres](docs/guide-fr.md#ancres)
+> Choisissez la catégorie **Intégration** dans HACS. La carte est livrée à l'intérieur de l'intégration : aucun téléchargement séparé ni ressource Lovelace à ajouter.
 
-### 🚪 Des portes et des volets qui bougent
+<details>
+<summary><strong>Installation manuelle</strong></summary>
 
-<p align="center">
-  <img src="assets/openings.gif" alt="Une porte qui s'ouvre avec son entité, poignée et couleur d'état comprises" width="600" />
-</p>
+1. Téléchargez l'archive des sources de la [dernière version](https://github.com/MestrieEsteban/ha-owlnest/releases/latest).
+2. Copiez son dossier `custom_components/owlnest/` dans le répertoire `config/custom_components/` de Home Assistant, en incluant le dossier `frontend/`.
+3. Redémarrez Home Assistant.
+4. Ajoutez **Owlnest** depuis **Paramètres → Appareils et services → Ajouter une intégration**.
+5. Rechargez le navigateur en forçant le cache.
 
-Une porte, une fenêtre ou un volet suit son entité : il pivote, coulisse ou se déroule, prend une couleur selon son état et emmène sa poignée.
+La carte et le modèle de démonstration sont inclus dans le dossier de l'intégration.
 
-→ En savoir plus : [Ouvrants](docs/guide-fr.md#ouvrants)
+</details>
 
-### ⚡ Des règles qui pilotent la vue
+## Premiers pas
 
-<p align="center">
-  <img src="assets/rules.gif" alt="Le moteur de règles en action" width="600" />
-</p>
+### Essayez la maison de démonstration
 
-Quand quelque chose se passe dans la maison, la carte réagit : elle vole vers la pièce, fait pulser une ancre, affiche un message.
-
-→ En savoir plus : [Moteur de règles](docs/guide-fr.md#moteur-de-règles)
-
-### 🎥 Vues caméra
-
-<p align="center">
-  <img src="assets/vue.gif" alt="Navigation entre les vues caméra" width="600" />
-</p>
-
-Enregistrez les angles qui vous plaisent et passez de l'un à l'autre d'un clic.
-
-→ En savoir plus : [Vues caméra](docs/guide-fr.md#vues-caméra)
-
-### 🌦️ Météo et lumière du jour
-
-<p align="center">
-  <img src="assets/meteo.gif" alt="Effets de météo et de soleil" width="600" />
-</p>
-
-Le soleil suit `sun.sun` et le ciel votre entité météo : pluie, neige, brouillard et nuit tombent sur le modèle.
-
-→ En savoir plus : [Environnement](docs/guide-fr.md#environnement)
-
----
-
-## 📦 Installation
-
-Owlnest est une intégration Home Assistant qui embarque sa propre carte Lovelace.
-Vous installez une seule chose ; la carte est servie et déclarée pour vous.
-
-### Via HACS (recommandé)
-
-[HACS](https://hacs.xyz) doit être installé au préalable. Owlnest n'est pas encore
-dans le magasin par défaut : on l'ajoute comme dépôt personnalisé.
-
-> **1. Ouvrir la fenêtre des dépôts personnalisés**
->
-> Cliquez sur **HACS** dans la barre latérale, puis sur le menu **⋮** en haut à
-> droite de la page, et choisissez **Dépôts personnalisés**.
->
-> **2. Ajouter ce dépôt**
->
-> Collez `https://github.com/MestrieEsteban/ha-owlnest` dans le champ du dépôt.
->
-> Dans le champ type/catégorie, choisissez **Intégration** — ni Tableau de bord,
-> ni Plugin. C'est déterminant : HACS n'installe qu'une catégorie par dépôt, et
-> Owlnest livre sa carte *à l'intérieur* de l'intégration. Tout autre choix n'en
-> installe que la moitié.
->
-> Cliquez sur **Ajouter**. La fenêtre se ferme et Owlnest apparaît dans la liste.
->
-> **3. Le télécharger**
->
-> Cherchez **Owlnest** dans HACS, ouvrez-le, puis cliquez sur **Télécharger**.
-> HACS copie les fichiers dans `config/custom_components/owlnest/`, carte comprise.
->
-> **4. Redémarrer Home Assistant**
->
-> **Paramètres → Système**, puis l'icône d'alimentation en haut à droite →
-> **Redémarrer Home Assistant**. Une intégration fraîchement téléchargée n'est
-> prise en compte qu'au redémarrage.
->
-> **5. Ajouter l'intégration**
->
-> **Paramètres → Appareils et services → Ajouter une intégration**, cherchez
-> **Owlnest** et validez. Il n'y a rien à configurer.
->
-> **6. Recharger le navigateur en forçant le cache**
->
-> **Ctrl+Maj+R** (**Cmd+Maj+R** sur macOS). Le navigateur garde encore la page
-> d'avant l'installation, et afficherait sinon
-> `Custom element doesn't exist: ha-3d-floorplan`.
-
-Aucune ressource Lovelace à déclarer. L'intégration sert elle-même la carte, qui
-est donc toujours à la version du backend.
-
-> **Déjà ajouté avec la mauvaise catégorie ?** Retirez le dépôt de HACS,
-> supprimez `config/custom_components/owlnest/` s'il subsiste, puis reprenez à
-> l'étape 1 en choisissant **Intégration**.
-
-### Installation manuelle
-
-> 1. Téléchargez les sources de la [dernière version](https://github.com/MestrieEsteban/ha-owlnest/releases/latest)
-> 2. Copiez `custom_components/owlnest/` dans `config/custom_components/owlnest/`
-> 3. **Redémarrez** Home Assistant
-> 4. Ajoutez l'intégration : **Paramètres → Appareils & Services → Ajouter → Owlnest**
->
-> La carte est livrée dans ce dossier : aucun fichier JavaScript à placer, aucune
-> ressource Lovelace à déclarer.
->
-> Puis **rechargez le navigateur en forçant le cache** (Ctrl+Maj+R), même raison.
-
-### Prérequis
-
-- Home Assistant **2024.1** ou supérieur
-- Un modèle 3D au format **GLB** ou **GLTF** (exporté depuis Blender, Sweet Home 3D, SketchUp, etc.)
-
----
-
-## 🚀 Démarrage rapide
-
-### 1. Préparer votre modèle 3D
-
-Placez votre fichier `.glb` dans le dossier `config/www/models/` de votre instance HA.
-
-### 2. Ajouter la carte
-
-Dans n'importe quel tableau de bord, ajoutez une carte manuelle :
+Après l'installation, modifiez un tableau de bord et ajoutez une carte **Manuelle** :
 
 ```yaml
 type: custom:ha-3d-floorplan
-scene_id: ma_maison
-model_url: /local/models/maison.glb
+scene_id: owlnest_demo
 ```
 
-### 3. Placer vos appareils
+Sans `model_url`, Owlnest charge la maison incluse. Cliquez sur un repère **+** d'une lampe ou de la télévision, puis choisissez une de vos entités Home Assistant. La liaison est sauvegardée automatiquement.
 
-1. Cliquez sur l'icône **✏️ crayon** pour entrer en mode édition
-2. Dans l'onglet **Anchors**, cliquez **+ Ajouter**
-3. Choisissez une entité (ex: `light.salon`)
-4. Cliquez dans la scène pour placer l'ancre
-5. Cliquez **💾 Sauvegarder**
+Essayez d'allumer une lumière reliée. Vous pouvez aussi glisser pour tourner autour de la maison, utiliser la molette pour zoomer ou naviguer avec les gestes tactiles.
 
-> **Astuce** : Utilisez la touche **G** pour déplacer une ancre librement (style Blender), puis **X**, **Y** ou **Z** pour contraindre le mouvement à un axe.
+### Utilisez votre logement
 
----
+Exportez votre modèle en **GLB** (recommandé) ou **GLTF**. Pour un GLB nommé `maison.glb` :
 
-## 📖 Guide complet
+1. Créez le dossier `config/www/models/` si nécessaire et placez-y le fichier.
+2. Ajoutez une carte avec cette configuration :
 
-Tout sur l'éditeur, les ouvrants, les vues caméra, les règles et le rendu se trouve dans le **[guide complet](docs/guide-fr.md)** :
+   ```yaml
+   type: custom:ha-3d-floorplan
+   scene_id: ma_maison
+   model_url: /local/models/maison.glb
+   ```
 
-- [Navigation dans la scène](docs/guide-fr.md#navigation-dans-la-scène)
-- [Ancres](docs/guide-fr.md#ancres)
-- [Ouvrants](docs/guide-fr.md#ouvrants)
-- [Vues caméra](docs/guide-fr.md#vues-caméra)
-- [Moteur de règles](docs/guide-fr.md#moteur-de-règles)
-- [Environnement](docs/guide-fr.md#environnement)
-- [Rendu et apparence](docs/guide-fr.md#rendu-et-apparence)
-- [Raccourcis clavier (mode édition)](docs/guide-fr.md#raccourcis-clavier-mode-édition)
-- [Configuration YAML complète](docs/guide-fr.md#configuration-yaml-complète)
+   Si vous avez déjà essayé la démo, ouvrez l'onglet **Config** de l'éditeur dans la scène et sélectionnez ou créez `ma_maison` ; indiquez-y l'URL du modèle, puis cliquez sur **Appliquer**. La carte mémorise la scène choisie dans l'éditeur.
 
----
+3. Ouvrez l'éditeur avec le **crayon** s'il n'est pas déjà ouvert.
+4. Dans **Ancres**, cliquez sur **+ Ajouter**, cliquez sur le modèle pour placer l'ancre, puis choisissez une entité comme `light.salon`.
+5. Ajustez sa position et attendez l'indicateur de sauvegarde. Cliquez sur **Terminé** pour quitter l'éditeur ; les modifications sont sauvegardées automatiquement.
 
-## ❓ FAQ
+`scene_id` identifie la scène sauvegardée. `model_url` indique le chemin du fichier 3D. Une fois la carte en place, continuez dans l'éditeur visuel.
+
+**Astuce d'édition :** appuyez sur **G** pour déplacer une ancre sélectionnée, puis sur **X**, **Y** ou **Z** pour limiter le mouvement à un axe.
+
+## Documentation
+
+| Sujet | Guide |
+|---|---|
+| Naviguer à la souris ou au tactile | [Navigation dans la scène](docs/guide-fr.md#navigation-dans-la-scène) |
+| Configurer les appareils, les étiquettes et leur visibilité | [Ancres](docs/guide-fr.md#ancres) |
+| Animer les portes, les volets ou les animations du GLB | [Ouvrants](docs/guide-fr.md#ouvrants) |
+| Enregistrer des points de vue et passer de l'un à l'autre | [Vues caméra](docs/guide-fr.md#vues-caméra) |
+| Faire réagir la vue aux états des entités | [Moteur de règles](docs/guide-fr.md#moteur-de-règles) |
+| Relier le soleil et la météo | [Environnement](docs/guide-fr.md#environnement) |
+| Ajuster les ombres, l'exposition et l'apparence de la scène | [Rendu et apparence](docs/guide-fr.md#rendu-et-apparence) |
+| Retrouver les raccourcis ou la configuration de la carte | [Raccourcis clavier](docs/guide-fr.md#raccourcis-clavier-mode-édition) · [Référence YAML](docs/guide-fr.md#configuration-yaml-complète) |
+
+## Dépannage
 
 <details>
-<summary><strong>Où trouver un modèle 3D de ma maison ?</strong></summary>
+<summary><strong>« Custom element doesn't exist: ha-3d-floorplan »</strong></summary>
 
-Vous pouvez créer votre modèle avec :
-- **Sweet Home 3D** (gratuit, simple) → exporter en OBJ puis convertir en GLB avec Blender
-- **Blender** (gratuit, avancé) → exporter directement en GLB
-- **SketchUp** (freemium) → exporter via plugin GLTF
-- **Floorplanner.com** (en ligne) → exporter et convertir
+Vérifiez qu'Owlnest a été téléchargé comme une **Intégration** dans HACS, puis redémarrez Home Assistant et ajoutez-le dans **Paramètres → Appareils et services**. Rechargez ensuite le navigateur en forçant le cache.
 
-Le format recommandé est **GLB** (GLTF binaire) pour des performances optimales.
+Si le dépôt a été ajouté dans une autre catégorie, retirez cette entrée de HACS et ajoutez-la à nouveau comme **Intégration**. Pour une installation manuelle, vérifiez la présence de `custom_components/owlnest/frontend/ha-3d-floorplan.js`.
+
 </details>
 
 <details>
 <summary><strong>Mon modèle ne s'affiche pas</strong></summary>
 
-- Vérifiez que le fichier est bien dans `config/www/` et accessible via `/local/...`
-- Vérifiez l'URL dans la config (pas d'espace, bonne extension)
-- Ouvrez la console du navigateur (F12) pour voir les erreurs
-- Testez votre fichier GLB sur [gltf-viewer.donmccurdy.com](https://gltf-viewer.donmccurdy.com/) pour vérifier qu'il est valide
+Vérifiez que `config/www/models/maison.glb` est accessible à l'adresse `/local/models/maison.glb` sur votre instance Home Assistant. Le nom du fichier et `model_url` doivent correspondre. Pour un GLTF, les textures et fichiers binaires référencés doivent aussi être accessibles à leurs chemins relatifs.
+
+Si le fichier est accessible mais ne se charge toujours pas, consultez l'erreur dans la console du navigateur.
+
 </details>
 
 <details>
-<summary><strong>Les lumières ne répondent pas</strong></summary>
+<summary><strong>Une lumière ne répond pas, ou les modifications ne se sauvegardent pas</strong></summary>
 
-- L'ancre doit être liée à une entité de domaine `light.*`
-- Vérifiez que l'entité existe dans Home Assistant (**Outils de développement → États**)
-- Assurez-vous que l'intégration Owlnest est bien installée et active
+Pour les lumières, vérifiez que l'ancre est reliée à la bonne entité `light.*` et que celle-ci est disponible dans **Outils de développement → États**.
+
+Pour la sauvegarde, vérifiez que l'intégration Owlnest est active et qu'une scène est sélectionnée avec un `scene_id`. L'indicateur de l'éditeur précise si les modifications sont sauvegardées. Consultez la console du navigateur pour repérer les erreurs WebSocket en cas d'échec.
+
 </details>
 
 <details>
-<summary><strong>La scène ne se sauvegarde pas</strong></summary>
+<summary><strong>La scène est lente, ou l'échelle semble incorrecte</strong></summary>
 
-- L'intégration backend doit être installée : **Paramètres → Appareils & Services** → vérifiez que **Owlnest** apparaît
-- Un `scene_id` doit être défini dans la configuration de la carte
-- Vérifiez la console du navigateur pour d'éventuelles erreurs WebSocket
+Réduisez le nombre de polygones et la taille des textures du modèle. Dans l'onglet **Config** de l'éditeur, désactivez les ombres et le ciel atmosphérique si nécessaire ; les effets météo inutilisés peuvent aussi être désactivés.
+
+Les modèles peuvent être en mètres, centimètres ou pouces : les effets qui dépendent des distances s'adaptent à la taille globale du modèle. Si les objets sont disproportionnés entre eux, corrigez-les dans votre logiciel 3D avant l'export.
+
 </details>
 
-<details>
-<summary><strong>Puis-je avoir plusieurs scènes ?</strong></summary>
+## Contribuer
 
-Oui ! Chaque carte peut avoir un `scene_id` différent. Vous pouvez avoir une scène par étage, par pièce, ou par bâtiment.
-</details>
+Pour signaler un bug ou proposer une fonctionnalité, [ouvrez une issue](https://github.com/MestrieEsteban/ha-owlnest/issues). En cas de bug, ajoutez vos versions de Home Assistant et d'Owlnest, les étapes pour le reproduire et les erreurs du navigateur s'il y en a.
 
-<details>
-<summary><strong>Le modèle est trop gros / trop petit</strong></summary>
+Pour travailler sur le code, consultez [DEVELOPMENT.md](DEVELOPMENT.md) : installation locale, vérifications et développement avec Home Assistant.
 
-Owlnest utilise les unités du modèle 3D telles quelles. Si votre modèle est à l'échelle dans Blender (1 unité = 1 mètre), il sera à la bonne taille. Sinon, redimensionnez-le dans votre logiciel 3D avant export.
-</details>
+## Licence et crédits
 
-<details>
-<summary><strong>Puis-je utiliser des icônes MDI personnalisées ?</strong></summary>
+[MIT](LICENSE) · Esteban Mestrie.
 
-Oui ! Dans les propriétés d'une ancre, renseignez le champ `icon` avec n'importe quelle icône MDI (ex: `mdi:thermometer`, `mdi:door-open`). La liste complète est sur [pictogrammers.com/library/mdi](https://pictogrammers.com/library/mdi/).
-</details>
-
-<details>
-<summary><strong>La performance est mauvaise</strong></summary>
-
-- Réduisez la complexité de votre modèle 3D (nombre de polygones)
-- Désactivez les ombres (`shadows: false`)
-- Désactivez le ciel atmosphérique (`sky: false`)
-- Fermez les effets météo si inutilisés
-</details>
-
----
-
-## 🤝 Contribuer
-
-Les contributions sont les bienvenues ! N'hésitez pas à ouvrir une [issue](https://github.com/MestrieEsteban/ha-owlnest/issues) pour signaler un bug ou proposer une fonctionnalité.
-
----
-
-## 📄 Licence
-
-[MIT](LICENSE) — Esteban Mestrie
-
-La maison de démonstration est construite avec le [Furniture Kit](https://kenney.nl/assets/furniture-kit) de [Kenney](https://kenney.nl), publié sous licence CC0.
+La maison de démonstration incluse utilise le [Furniture Kit](https://kenney.nl/assets/furniture-kit) de [Kenney](https://kenney.nl), publié sous licence CC0.
