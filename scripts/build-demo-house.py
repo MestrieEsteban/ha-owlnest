@@ -25,20 +25,75 @@ spec = importlib.util.spec_from_file_location('merge_glb', os.path.join(HERE, 'm
 merge_glb = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(merge_glb)
 
-W, D = 5, 4          # largeur et profondeur, en cellules
+W, D = 4, 3          # largeur et profondeur, en cellules
+
+# Le sol du kit est du même bois que les meubles : vus de haut, la table et
+# les chaises s'y fondaient. Un parquet clair et grisé les détache.
+FLOOR_COLOR = [0.80, 0.78, 0.74, 1.0]
+
+
+def _matrix(node):
+    """Matrice 4×4 d'un nœud glTF, depuis sa matrice ou ses TRS."""
+    if 'matrix' in node:
+        m = node['matrix']
+        return [[m[c * 4 + r] for c in range(4)] for r in range(4)]
+    tx, ty, tz = node.get('translation', [0, 0, 0])
+    qx, qy, qz, qw = node.get('rotation', [0, 0, 0, 1])
+    sx, sy, sz = node.get('scale', [1, 1, 1])
+    r = [
+        [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)],
+        [2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)],
+        [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)],
+    ]
+    return [
+        [r[0][0] * sx, r[0][1] * sy, r[0][2] * sz, tx],
+        [r[1][0] * sx, r[1][1] * sy, r[1][2] * sz, ty],
+        [r[2][0] * sx, r[2][1] * sy, r[2][2] * sz, tz],
+        [0, 0, 0, 1],
+    ]
+
+
+def _mul(a, b):
+    return [[sum(a[i][k] * b[k][j] for k in range(4)) for j in range(4)] for i in range(4)]
+
+
+_BOXES = {}
 
 
 def footprint(src, model):
-    """Boîte d'un modèle dans son repère : (xmin, zmin, xmax, zmax, hauteur)."""
+    """Boîte d'un modèle dans son repère : (xmin, zmin, xmax, zmax, hauteur).
+
+    Les transformations des nœuds sont appliquées : le kit place parfois une
+    pièce sous un nœud tourné ou réduit de moitié, et la boîte brute des
+    sommets donnerait alors une taille fausse — un lit trop grand, une table
+    de dix centimètres.
+    """
+    if model in _BOXES:
+        return _BOXES[model]
     gltf, _ = merge_glb.read(os.path.join(src, model + '.glb'))
     lo, hi = [1e9] * 3, [-1e9] * 3
-    for mesh in gltf['meshes']:
-        for prim in mesh['primitives']:
-            acc = gltf['accessors'][prim['attributes']['POSITION']]
-            for k in range(3):
-                lo[k] = min(lo[k], acc['min'][k])
-                hi[k] = max(hi[k], acc['max'][k])
-    return lo[0], lo[2], hi[0], hi[2], hi[1]
+
+    def visit(index, parent):
+        node = gltf['nodes'][index]
+        world = _mul(parent, _matrix(node))
+        if 'mesh' in node:
+            for prim in gltf['meshes'][node['mesh']]['primitives']:
+                acc = gltf['accessors'][prim['attributes']['POSITION']]
+                for cx in (acc['min'][0], acc['max'][0]):
+                    for cy in (acc['min'][1], acc['max'][1]):
+                        for cz in (acc['min'][2], acc['max'][2]):
+                            v = [sum(world[r][k] * (cx, cy, cz, 1)[k] for k in range(4)) for r in range(3)]
+                            for k in range(3):
+                                lo[k] = min(lo[k], v[k])
+                                hi[k] = max(hi[k], v[k])
+        for child in node.get('children', []):
+            visit(child, world)
+
+    identity = [[1 if r == c else 0 for c in range(4)] for r in range(4)]
+    for root in gltf['scenes'][gltf.get('scene', 0)]['nodes']:
+        visit(root, identity)
+    _BOXES[model] = (lo[0], lo[2], hi[0], hi[2], hi[1])
+    return _BOXES[model]
 
 
 def turned(box, yaw):
@@ -51,7 +106,7 @@ def turned(box, yaw):
     return min(xs), min(zs), max(xs), max(zs)
 
 
-def put(src, model, px, pz, yaw, name):
+def put(src, model, px, pz, yaw, name, on=None):
     """Pose un meuble par son emprise au sol.
 
     `px` est le bord gauche, `pz` la profondeur du bord sud depuis le mur sud :
@@ -59,77 +114,92 @@ def put(src, model, px, pz, yaw, name):
     Orientation : 0 regarde le sud, 90 l'est, 180 le nord, 270 l'ouest.
     """
     x0, z0, x1, z1 = turned(footprint(src, model), yaw)
+    # `on` : le meuble sur lequel il repose, une télévision sur son meuble, une
+    # lampe sur un chevet. Sans lui, tout se pose au sol.
+    y = footprint(src, on)[4] if on else 0.0
     # Le bord sud du meuble est son z le plus grand (z décroît vers le nord).
-    return (model, px - x0, -pz - z1, yaw, name)
+    return (model, px - x0, y, -pz - z1, yaw, name)
+
+
+def wall_door(i_or_x, z, yaw, name):
+    """Un mur à passage et sa porte, posée dans l'ouverture.
+
+    La porte du kit se décale de 0,257 le long du mur, dans le repère du mur :
+    tourné de 90°, ce décalage part vers -z.
+    """
+    if yaw == 0:
+        x, door = i_or_x, (i_or_x + 0.257, z)
+    else:
+        x, door = i_or_x, (i_or_x, z - 0.257)
+    return [('wallDoorway', x, 0.0, z, yaw, f'Mur_{name}'), ('doorway', door[0], 0.0, door[1], yaw, f'Porte_{name}')]
 
 
 def plan(src):
-    """La liste des pièces à poser : (modèle, x, z, angle en degrés, nom)."""
+    """La liste des pièces à poser : (modèle, x, z, angle en degrés, nom).
+
+    Plan, vu du sud :
+
+        +-----------+-----------+
+        |           |  chambre  |
+        |   séjour  |           |
+        |           +-----------+
+        |           |  cuisine  |
+        +--porte----+-----------+
+    """
     p = []
 
-    # Sol : une tuile par cellule.
     for i in range(W):
         for j in range(D):
-            p.append(('floorFull', i, -j, 0, f'Sol_{i}_{j}'))
+            p.append(('floorFull', i, 0.0, -j, 0, f'Sol_{i}_{j}'))
 
-    # Murs. Un mur part de son origine vers +x ; tourné de 90°, il part vers -z.
-    south = ['wall', 'wallDoorway', 'wall', 'wallWindow', 'wall']
-    for i, m in enumerate(south):
-        p.append((m, i, 0.05, 0, f'Mur_sud_{i}'))
-    north = ['wall', 'wallWindow', 'wall', 'wall', 'wallWindow']
-    for i, m in enumerate(north):
-        p.append((m, i, -D, 0, f'Mur_nord_{i}'))
-    for j in range(D):
-        p.append(('wallWindow' if j in (1, 2) else 'wall', 0, -j, 90, f'Mur_ouest_{j}'))
-        p.append(('wallWindow' if j == 1 else 'wall', W + 0.05, -j, 90, f'Mur_est_{j}'))
+    # Façades. Un mur part de son origine vers +x ; tourné de 90°, vers -z.
+    p.append(('wall', 0, 0.0, 0.05, 0, 'Mur_sud_0'))
+    p += wall_door(1, 0.05, 0, 'entree')
+    p.append(('wallWindow', 2, 0.0, 0.05, 0, 'Mur_sud_2'))
+    p.append(('wall', 3, 0.0, 0.05, 0, 'Mur_sud_3'))
+    for i, m in enumerate(['wall', 'wallWindow', 'wall', 'wallWindow']):
+        p.append((m, i, 0.0, -D, 0, f'Mur_nord_{i}'))
+    for j, m in enumerate(['wall', 'wallWindow', 'wall']):
+        p.append((m, 0, 0.0, -j, 90, f'Mur_ouest_{j}'))
+    for j, m in enumerate(['wallWindow', 'wall', 'wallWindow']):
+        p.append((m, W + 0.05, 0.0, -j, 90, f'Mur_est_{j}'))
 
-    # Cloison séjour / chambres, avec deux passages ; cuisine ouverte sur le séjour.
-    for i in range(W):
-        p.append(('wallDoorway' if i in (1, 3) else 'wall', i, -2, 0, f'Cloison_{i}'))
-    for j in (2, 3):
-        p.append(('wall', 3, -j, 90, f'Cloison_sdb_{j}'))
-
-    # Les portes, dans les ouvertures des murs à passage.
-    p.append(('doorway', 1.257, 0.05, 0, 'Porte_entree'))
-    p.append(('doorway', 1.257, -2, 0, 'Porte_chambre'))
-    p.append(('doorway', 3.257, -2, 0, 'Porte_sdb'))
+    # Cloisons : la chambre est fermée, la cuisine ouverte sur le séjour.
+    p.append(('wall', 2, 0.0, -1, 0, 'Cloison_cuisine_0'))
+    p.append(('wall', 3, 0.0, -1, 0, 'Cloison_cuisine_1'))
+    p += wall_door(2, -1, 90, 'chambre')
+    p.append(('wall', 2, 0.0, -2, 90, 'Cloison_chambre'))
 
     furniture = [
         # Séjour : télévision contre le mur ouest, canapé en face.
-        ('rugRectangle', 0.75, 0.55, 90, 'Tapis'),
-        ('cabinetTelevision', 0.08, 0.55, 90, 'Meuble_tele'),
-        ('televisionModern', 0.12, 0.75, 90, 'Television'),
-        ('tableCoffee', 1.1, 0.75, 90, 'Table_basse'),
-        ('loungeSofa', 1.95, 0.55, 270, 'Canape'),
-        ('lampRoundFloor', 2.0, 1.6, 0, 'Lampadaire_sejour'),
-        ('pottedPlant', 2.55, 0.1, 0, 'Plante'),
-        # Cuisine : plan de travail contre le mur est, table au milieu.
-        ('kitchenFridge', 4.45, 0.08, 270, 'Frigo'),
-        ('kitchenCabinet', 4.5, 0.62, 270, 'Cuisine_1'),
-        ('kitchenSink', 4.5, 1.02, 270, 'Evier'),
-        ('kitchenStove', 4.5, 1.42, 270, 'Cuisiniere'),
-        ('tableRound', 3.25, 0.7, 0, 'Table'),
-        ('chair', 3.05, 1.25, 180, 'Chaise_1'),
-        ('chair', 3.5, 0.3, 0, 'Chaise_2'),
-        ('lampSquareTable', 3.45, 0.85, 0, 'Lampe_cuisine'),
-        # Chambre : lit contre le mur nord.
-        ('bedDouble', 0.7, 2.05, 0, 'Lit'),
-        ('sideTable', 0.12, 3.45, 0, 'Chevet'),
-        ('lampRoundTable', 0.2, 3.55, 0, 'Lampe_chevet'),
-        ('bookcaseOpen', 2.35, 3.6, 180, 'Bibliotheque'),
-        # Salle de bain.
-        ('bathtub', 3.1, 3.2, 180, 'Baignoire'),
-        ('toilet', 4.15, 2.6, 270, 'Toilettes'),
-        ('bathroomSink', 4.2, 2.08, 180, 'Lavabo'),
+        ('rugRectangle', 0.6, 0.9, 90, 'Tapis'),
+        ('cabinetTelevision', 0.08, 1.0, 90, 'Meuble_tele'),
+        ('televisionModern', 0.12, 1.2, 90, 'Television', 'cabinetTelevision'),
+        ('tableCoffee', 0.85, 1.2, 90, 'Table_basse'),
+        ('loungeSofa', 1.45, 1.0, 270, 'Canape'),
+        ('lampRoundFloor', 1.55, 2.35, 0, 'Lampadaire'),
+        ('bookcaseOpen', 0.3, 2.6, 180, 'Bibliotheque'),
+        ('pottedPlant', 0.1, 0.1, 0, 'Plante'),
+        # Cuisine : plan de travail contre la cloison, table devant.
+        ('kitchenFridge', 3.4, 0.45, 0, 'Frigo'),
+        ('kitchenCabinet', 2.1, 0.55, 0, 'Cuisine_1'),
+        ('kitchenSink', 2.5, 0.55, 0, 'Evier'),
+        ('kitchenStove', 2.9, 0.55, 0, 'Cuisiniere'),
+        ('tableRound', 2.55, 0.08, 0, 'Table'),
+        ('lampSquareTable', 2.75, 0.2, 0, 'Lampe_cuisine', 'tableRound'),
+        # Chambre : lit double tête contre le mur nord, chevet et lampe à côté.
+        ('bedDouble', 2.75, 1.85, 0, 'Lit'),
+        ('sideTable', 2.12, 2.72, 0, 'Chevet'),
+        ('lampRoundTable', 2.25, 2.78, 0, 'Lampe_chevet', 'sideTable'),
     ]
-    for model, px, pz, yaw, name in furniture:
-        p.append(put(src, model, px, pz, yaw, name))
+    for entry in furniture:
+        p.append(put(src, *entry))
     return p
 
 
 def check(src, pieces):
     """Signale tout meuble qui déborde de la maison."""
-    for model, x, z, yaw, name in pieces:
+    for model, x, _y, z, yaw, name in pieces:
         if model.startswith(('floor', 'wall', 'doorway')):
             continue
         x0, z0, x1, z1 = turned(footprint(src, model), yaw)
@@ -148,9 +218,12 @@ def build(src, out):
     binary = bytearray()
     pieces = plan(src)
     check(src, pieces)
-    for model, x, z, yaw, name in pieces:
+    for model, x, y, z, yaw, name in pieces:
         extra, extra_bin = merge_glb.read(os.path.join(src, model + '.glb'))
-        gltf, binary = merge_glb.merge(gltf, binary, extra, extra_bin, (x, 0.0, z), yaw, 1.0, name)
+        if model.startswith('floor'):
+            for mat in extra.get('materials', []):
+                mat.setdefault('pbrMetallicRoughness', {})['baseColorFactor'] = FLOOR_COLOR
+        gltf, binary = merge_glb.merge(gltf, binary, extra, extra_bin, (x, y, z), yaw, 1.0, name)
     size = merge_glb.write(out, gltf, binary)
     print(f'{out} : {size / 1024:.0f} Ko, {len(pieces)} pièces, {len(gltf["meshes"])} mailles')
 
