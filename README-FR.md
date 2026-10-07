@@ -17,6 +17,7 @@
 </p>
 
 <p align="center">
+  <a href="https://mestrieesteban.github.io/ha-owlnest/?lang=fr"><strong>▶ Démo en ligne</strong></a> ·
   <a href="#installation">Installer</a> ·
   <a href="#premiers-pas">Essayer</a> ·
   <a href="docs/guide-fr.md">Guide complet</a> ·
