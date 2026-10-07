@@ -3012,7 +3012,10 @@ export class EditPanel {
     } else if (card.type === 'entity') {
       // Entity ID
       container.appendChild(mkFieldLabel(t('cardEntityLabel')));
-      container.appendChild(mkEntityInput(card.entity_id ?? '', 'entity', (v) => this._updateCard(card.id, { entity_id: v } as Partial<import('../cards/types').EntityCard>)));
+      container.appendChild(mkEntityInput(card.entity_id ?? '', 'entity', (v) => {
+        if (v !== '' && !/^[a-z0-9_]+\.[a-z0-9_]+$/.test(v)) return;
+        this._updateCard(card.id, { entity_id: v } as Partial<import('../cards/types').EntityCard>);
+      }));
 
       // Label override
       container.appendChild(mkFieldLabel(t('cardEntityOptLabel')));
