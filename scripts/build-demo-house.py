@@ -7,7 +7,11 @@ avec `merge-glb.py` : chaque pièce garde ses matériaux et ses nœuds, ce qui
 laisse la porte et la fenêtre détachables comme ouvrants.
 
 Usage :
-  python scripts/build-demo-house.py <dossier des .glb Kenney> <sortie.glb>
+  python scripts/build-demo-house.py <dossier des .glb Kenney> [sortie.glb] [ancres.json]
+
+Par défaut, le modèle est écrit dans l'intégration, qui le sert à
+`/owlnest_frontend/demo.glb`, et les ancres de démonstration dans
+`src/demo-anchors.json`, que la carte importe.
 
 Le kit se télécharge sur https://kenney.nl/assets/furniture-kit (CC0, mention
 facultative) : on en extrait `Models/GLTF format/*.glb`.
@@ -210,7 +214,50 @@ def check(src, pieces):
             print(f'  ! {name} ({model}) déborde : x {x0:.2f}..{x1:.2f}, z {z0:.2f}..{z1:.2f}')
 
 
-def build(src, out):
+# Les ancres de démonstration : une par objet que l'utilisateur a toutes les
+# chances de posséder. Elles naissent sans entité ; la carte propose de les
+# relier aux siennes. `at` est la hauteur du point, en fraction de l'objet.
+DEMO_ANCHORS = [
+    ('Lampadaire', 'floorLamp', 'mdi:floor-lamp', 0.9),
+    ('Lampe_chevet', 'bedsideLamp', 'mdi:lamp', 0.8),
+    ('Lampe_cuisine', 'kitchenLamp', 'mdi:ceiling-light', 0.8),
+    ('Television', 'television', 'mdi:television', 0.5),
+]
+
+
+def world_boxes(src, pieces):
+    """Boîte de chaque pièce posée, dans le repère du modèle."""
+    boxes = {}
+    for model, x, y, z, yaw, name in pieces:
+        x0, z0, x1, z1 = turned(footprint(src, model), yaw)
+        h = footprint(src, model)[4]
+        boxes[name] = (x0 + x, y, z0 + z, x1 + x, y + h, z1 + z)
+    return boxes
+
+
+def demo_anchors(src, pieces):
+    """Positions des ancres, dans le repère recentré qu'utilise la carte.
+
+    La carte recentre tout modèle sur le centre de sa boîte englobante : une
+    position écrite dans le repère du fichier tomberait à côté de l'objet.
+    """
+    boxes = world_boxes(src, pieces)
+    lo = [min(b[k] for b in boxes.values()) for k in range(3)]
+    hi = [max(b[k + 3] for b in boxes.values()) for k in range(3)]
+    centre = [(lo[k] + hi[k]) / 2 for k in range(3)]
+    out = []
+    for name, key, icon, at in DEMO_ANCHORS:
+        x0, y0, z0, x1, y1, z1 = boxes[name]
+        point = [(x0 + x1) / 2, y0 + (y1 - y0) * at, (z0 + z1) / 2]
+        out.append({
+            'id': key,
+            'icon': icon,
+            'position': [round(point[k] - centre[k], 4) for k in range(3)],
+        })
+    return out
+
+
+def build(src, out, anchors_out):
     gltf = {
         'asset': {'version': '2.0', 'generator': 'owlnest build-demo-house'},
         'scene': 0,
@@ -229,6 +276,17 @@ def build(src, out):
     size = merge_glb.write(out, gltf, binary)
     print(f'{out} : {size / 1024:.0f} Ko, {len(pieces)} pièces, {len(gltf["meshes"])} mailles')
 
+    import json
+    with open(anchors_out, 'w', encoding='utf-8') as f:
+        json.dump(demo_anchors(src, pieces), f, indent=2)
+        f.write(chr(10))
+    print(f'{anchors_out} : {len(DEMO_ANCHORS)} ancres')
+
 
 if __name__ == '__main__':
-    build(sys.argv[1], sys.argv[2])
+    root = os.path.dirname(HERE)
+    build(
+        sys.argv[1],
+        sys.argv[2] if len(sys.argv) > 2 else os.path.join(root, 'custom_components', 'owlnest', 'frontend', 'demo.glb'),
+        sys.argv[3] if len(sys.argv) > 3 else os.path.join(root, 'src', 'demo-anchors.json'),
+    )

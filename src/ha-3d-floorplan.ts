@@ -12,6 +12,16 @@ import type { ClusterItem } from './overlay';
 import { AnchorEditor } from './editor';
 import { loadScene, saveScene, listScenes, sceneToEffectiveConfig, buildSceneFromEditor, normalizeViews } from './scene';
 import { setLang, langFromLocale, t } from './i18n';
+import { demoModelUrl, isPlaceholder, seedDemoAnchors, type DemoAnchorId } from './demo';
+import { openEntityPicker } from './entities/picker';
+
+/** Clé de traduction du libellé de chaque ancre de démonstration. */
+const DEMO_LABEL: Record<DemoAnchorId, 'demoFloorLamp' | 'demoBedsideLamp' | 'demoKitchenLamp' | 'demoTelevision'> = {
+  floorLamp: 'demoFloorLamp',
+  bedsideLamp: 'demoBedsideLamp',
+  kitchenLamp: 'demoKitchenLamp',
+  television: 'demoTelevision',
+};
 import { qualityFromConfig, qualityKey, profileFor } from './quality';
 import { describeEntity, fallbackIcon } from './entities/descriptors';
 import './card-editor';
@@ -309,8 +319,16 @@ class Ha3dFloorplan extends HTMLElement {
 
   /** Merged config: scene data overrides YAML config for model_url / anchors / camera_views */
   private get _effectiveConfig(): CardConfig {
-    if (!this._scene) return this._config!;
-    return sceneToEffectiveConfig(this._scene, this._config!);
+    const cfg = this._scene ? sceneToEffectiveConfig(this._scene, this._config!) : this._config!;
+    // Sans modèle, ni dans la carte ni dans la scène, la carte montre la maison
+    // de démonstration plutôt qu'un cadre vide : voir demo.ts.
+    if (cfg.model_url?.trim()) return cfg;
+    return { ...cfg, model_url: demoModelUrl() };
+  }
+
+  /** La carte montre-t-elle la maison de démonstration ? */
+  private get _isDemo(): boolean {
+    return !this._config?.model_url?.trim() && !this._scene?.model_url?.trim();
   }
 
   private _fetchAndLoadScene(sceneId: string) {
@@ -318,6 +336,10 @@ class Ha3dFloorplan extends HTMLElement {
       .then((scene) => {
         this._scene = scene;
         this._sceneLoading = false;
+        if (this._isDemo) {
+          const seeded = seedDemoAnchors(scene.anchors, (id) => t(DEMO_LABEL[id]));
+          if (seeded.length) this._scene = { ...scene, anchors: seeded };
+        }
         if (scene.settings?.language) {
           this._langFromScene = true;
           setLang(scene.settings.language);
@@ -796,6 +818,91 @@ class Ha3dFloorplan extends HTMLElement {
     } else if (!this._getActiveSceneId() || this._scene) {
       this._loadModel();
     }
+  }
+
+  /**
+   * Bandeau de la maison de démonstration.
+   *
+   * Il dit ce qu'on regarde et quoi en faire : sans lui, une maison qu'on n'a
+   * pas dessinée passerait pour un bug. On peut le fermer ; il revient au
+   * rechargement tant qu'aucun modèle n'est configuré.
+   */
+  private _showDemoBanner() {
+    if (!this.overlayContainer || this.overlayContainer.querySelector('#owlnest-demo-banner')) return;
+    const banner = document.createElement('div');
+    banner.id = 'owlnest-demo-banner';
+    banner.style.cssText = [
+      'position:absolute', 'top:12px', 'left:50%', 'transform:translateX(-50%)',
+      'max-width:calc(100% - 140px)', 'display:flex', 'align-items:center', 'gap:10px',
+      'padding:7px 8px 7px 14px', 'border-radius:999px', 'z-index:40',
+      'background:rgba(8,13,26,0.82)', 'backdrop-filter:blur(8px)',
+      'border:1px solid rgba(125,211,252,0.35)', 'color:#dbeafe',
+      'font:12px var(--primary-font-family,sans-serif)', 'pointer-events:auto',
+    ].join(';');
+    const text = document.createElement('span');
+    text.textContent = t('demoBanner');
+    const close = document.createElement('button');
+    close.textContent = '✕';
+    close.style.cssText = 'background:none;border:none;color:#94a3b8;cursor:pointer;font-size:12px;padding:2px 6px;';
+    close.addEventListener('click', () => banner.remove());
+    banner.append(text, close);
+    this.overlayContainer.appendChild(banner);
+  }
+
+  /**
+   * Relie un emplacement de la démo à une entité choisie par l'utilisateur.
+   *
+   * La scène est enregistrée tout de suite : relier une lampe est un geste
+   * complet, on ne demande pas d'entrer en mode édition pour le valider.
+   */
+  private _linkPlaceholder(name: string) {
+    if (!this._hass || !this._scene || !this.overlayContainer) return;
+    const index = Number(name.replace('anchor_cfg_', ''));
+    const target = this._scene.anchors[index];
+    if (!target) return;
+
+    const placed = new Set(this._scene.anchors.map((a) => a.entity).filter(Boolean));
+    openEntityPicker({
+      container: this.overlayContainer,
+      hass: this._hass,
+      placed,
+      onCancel: () => {},
+      onPick: (entity) => {
+        if (!this._scene) return;
+        const anchors = this._scene.anchors.map((a, i) => (i === index ? { ...a, entity } : a));
+        this._scene = { ...this._scene, anchors };
+        // L'éditeur garde sa propre copie des ancres, faite à l'entrée en
+        // édition. Si on relie pendant qu'il est ouvert, la sortie du mode
+        // édition réappliquerait l'ancienne copie et effacerait la liaison.
+        this._editor?.updateAnchor(name, { entity });
+        this._rebuildAnchors();
+        const sceneId = this._getActiveSceneId();
+        if (sceneId && this._hass) {
+          saveScene(this._hass, sceneId, this._scene)
+            .then(() => this._showToast(t('toastSceneSaved')))
+            .catch(() => this._showToast(t('toastSceneSaveError'), true));
+        }
+      },
+    });
+  }
+
+  /** Reconstruit ancres, lumières et pastilles depuis la configuration effective. */
+  private _rebuildAnchors() {
+    if (!this.scene || !this._modelRoot) return;
+    this.anchors.forEach((entry) => {
+      if (entry.light) {
+        this.scene?.remove(entry.light);
+        entry.light.dispose();
+      }
+      if (entry.lightTarget) this.scene?.remove(entry.lightTarget);
+    });
+    this.anchors = detectAnchors(this._modelRoot, this.scene, this._effectiveConfig, this._modelSpan);
+    this._createOverlays();
+    if (this._hass) {
+      syncLights(this.anchors, this._hass, this._effectiveConfig, this._modelSpan);
+      this._updateOverlayStates();
+    }
+    this._requestRender();
   }
 
   private _showSetupOverlay() {
@@ -2452,6 +2559,7 @@ class Ha3dFloorplan extends HTMLElement {
       return;
     }
     loadingEl.remove();
+    if (this._isDemo) this._showDemoBanner();
 
     // Enable shadows on all meshes — but skip transparent/glass materials
     // so that windows let light (and shadows) pass through.
@@ -2738,6 +2846,27 @@ class Ha3dFloorplan extends HTMLElement {
         this.overlays.set(name, new LabelOverlay(
           this.overlayContainer!, entry.label, entry.icon, entry.color,
         ));
+        return;
+      }
+
+      // Ancre d'entité sans entité : un emplacement à relier. Un clic propose
+      // de choisir l'entité, plutôt que d'afficher l'état d'une entité vide.
+      if (isPlaceholder({ entity: entry.entityId, kind })) {
+        const slot = new AnchorOverlay(
+          this.overlayContainer!,
+          'default',
+          `${entry.label} · ${t('demoLinkHint')}`,
+          () => this._linkPlaceholder(name),
+          () => this._linkPlaceholder(name),
+          '',
+        );
+        slot.el.style.borderStyle = 'dashed';
+        slot.el.style.borderColor = 'rgba(125,211,252,0.7)';
+        slot.el.innerHTML = '';
+        slot.el.style.color = '#7dd3fc';
+        slot.el.style.fontSize = '20px';
+        slot.el.textContent = '+';
+        this.overlays.set(name, slot);
         return;
       }
 

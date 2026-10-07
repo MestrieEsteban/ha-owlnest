@@ -2,6 +2,13 @@ export type Lang = 'en' | 'fr';
 
 const STRINGS = {
   en: {
+    // Maison de démonstration
+    demoFloorLamp:   'Floor lamp',
+    demoBedsideLamp: 'Bedside lamp',
+    demoKitchenLamp: 'Kitchen lamp',
+    demoTelevision:  'Television',
+    demoLinkHint:    'click to link one of your entities',
+    demoBanner:      'Demo house: click a + to link your own lights, or set your model in the card settings.',
     // Inspector tabs
     tabAnchors:     'Anchors',
     tabAnchorsDesc: '3D points linked to Home Assistant entities',
@@ -656,6 +663,13 @@ const STRINGS = {
   },
 
   fr: {
+    // Maison de démonstration
+    demoFloorLamp:   'Lampadaire',
+    demoBedsideLamp: 'Lampe de chevet',
+    demoKitchenLamp: 'Lampe de la cuisine',
+    demoTelevision:  'Télévision',
+    demoLinkHint:    'cliquez pour relier une de vos entités',
+    demoBanner:      'Maison de démonstration : cliquez sur un + pour y relier vos lampes, ou indiquez votre modèle dans les réglages de la carte.',
     tabAnchors:     'Ancres',
     tabAnchorsDesc: 'Points 3D liés à des entités Home Assistant',
     tabCards:       'Cartes',

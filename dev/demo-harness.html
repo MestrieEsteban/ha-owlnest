@@ -1,0 +1,62 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Owlnest — maison de démonstration</title>
+<style>
+  html, body { margin: 0; background: #0d1117; color: #cbd5e1; font-family: system-ui, sans-serif; }
+  pre { color: #7dd3fc; font: 11px monospace; padding: 8px 16px; white-space: pre-wrap; }
+</style>
+<div id="host"></div>
+<pre id="out">montage…</pre>
+<script type="module">
+  // Premier lancement : une carte sans modèle, comme celle qu'on ajoute depuis
+  // l'interface. Elle doit montrer la maison de démonstration, ses quatre
+  // emplacements à relier, et laisser en relier un à une lampe.
+  window.__OWLNEST_DEMO_URL = '/custom_components/owlnest/frontend/demo.glb';
+  import '/src/ha-3d-floorplan.ts';
+
+  customElements.define('ha-icon', class extends HTMLElement {
+    connectedCallback() { this.style.cssText = 'display:inline-flex;width:16px;height:16px'; this.textContent = '◆'; }
+  });
+
+  const states = {
+    'light.salon':   { state: 'on',  attributes: { friendly_name: 'Lampe du salon', brightness: 220, rgb_color: [255, 190, 120] } },
+    'light.chambre': { state: 'off', attributes: { friendly_name: 'Lampe de la chambre' } },
+  };
+  let saved = null;
+  const hass = {
+    states,
+    language: 'fr',
+    callService() {},
+    callWS: async (msg) => {
+      if (msg.type === 'owlnest/load_scene') {
+        if (saved) return saved;
+        throw new Error('scène absente');
+      }
+      if (msg.type === 'owlnest/save_scene') { saved = msg.data; return { success: true }; }
+      if (msg.type === 'owlnest/list_scenes') return { scenes: saved ? ['main'] : [] };
+      if (String(msg.type).startsWith('config/')) return [];
+      throw new Error('inconnu: ' + msg.type);
+    },
+  };
+
+  localStorage.removeItem('owlnest_scene_id');
+  const card = document.createElement('ha-3d-floorplan');
+  card.style.cssText = 'display:block;width:960px;height:540px;';
+  document.getElementById('host').appendChild(card);
+  // Ce que reçoit une carte ajoutée depuis l'interface : une scène, pas de modèle.
+  card.setConfig({ type: 'custom:ha-3d-floorplan', scene_id: 'main', height: 540 });
+  card.hass = hass;
+  window.__card = card;
+  window.__saved = () => saved;
+
+  await new Promise((r) => setTimeout(r, 2500));
+  const log = [];
+  const check = (label, ok, detail = '') => log.push(`${ok ? '✓' : '✗'} ${label}${detail ? ' — ' + detail : ''}`);
+
+  check('le modèle de démonstration est chargé', !!card._modelRoot && card.modelLoaded, card._effectiveConfig.model_url);
+  const slots = [...card.overlays.values()].filter((o) => o.el?.textContent === '+');
+  check('quatre emplacements à relier', slots.length === 4, `${slots.length}`);
+  check('le bandeau de démonstration est affiché', !!card.querySelector('#owlnest-demo-banner'));
+
+  document.getElementById('out').textContent = log.join('\n');
+</script>

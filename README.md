@@ -265,3 +265,5 @@ Contributions are welcome! Feel free to open an [issue](https://github.com/Mestr
 ## 📄 License
 
 [MIT](LICENSE) — Esteban Mestrie
+
+The demo house is built from the [Furniture Kit](https://kenney.nl/assets/furniture-kit) by [Kenney](https://kenney.nl), released under CC0.

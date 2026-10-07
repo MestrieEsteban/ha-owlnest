@@ -8,6 +8,11 @@
  * construit à partir de ha-3d-floorplan.ts.
  */
 
+// L'intégration installée sur le HA de test peut précéder la maison de
+// démonstration : on la sert depuis le dépôt, à côté de ce point d'entrée.
+(globalThis as { __OWLNEST_DEMO_URL?: string }).__OWLNEST_DEMO_URL =
+  new URL('../custom_components/owlnest/frontend/demo.glb', import.meta.url).href;
+
 import './ha-3d-floorplan';
 
 // Un custom element ne peut pas être redéfini : le HMR à chaud est un cul-de-sac

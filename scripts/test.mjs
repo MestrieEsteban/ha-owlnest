@@ -34,6 +34,7 @@ const ENTRIES = [
   'src/scale.ts',
   'src/model-errors.ts',
   'src/i18n.ts',
+  'src/demo.ts',
 ];
 
 /**

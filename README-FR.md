@@ -267,3 +267,5 @@ Les contributions sont les bienvenues ! N'hésitez pas à ouvrir une [issue](htt
 ## 📄 Licence
 
 [MIT](LICENSE) — Esteban Mestrie
+
+La maison de démonstration est construite avec le [Furniture Kit](https://kenney.nl/assets/furniture-kit) de [Kenney](https://kenney.nl), publié sous licence CC0.
