@@ -1,0 +1,54 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Owlnest — aperçu d'un modèle</title>
+<style>html, body { margin: 0; background: #111; } canvas { display: block; }</style>
+<script type="module">
+  // Aperçu brut d'un GLB, sans la carte : vue de dessus ou de trois quarts.
+  //   /dev/model-viewer.html?src=/dev/demo-house.local.glb&view=top
+  //   /dev/model-viewer.html?src=...&view=persp&yaw=35&pitch=40
+  import * as THREE from 'three';
+  import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+
+  const q = new URLSearchParams(location.search);
+  const src = q.get('src') ?? '/dev/demo-house.local.glb';
+  const view = q.get('view') ?? 'top';
+  const W = Number(q.get('w') ?? 1200), H = Number(q.get('h') ?? 800);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+  renderer.setSize(W, H);
+  renderer.shadowMap.enabled = true;
+  document.body.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color('#1a1f2b');
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 1.6));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+  sun.position.set(3, 8, 5);
+  scene.add(sun);
+
+  const gltf = await new GLTFLoader().loadAsync(src);
+  scene.add(gltf.scene);
+  const box = new THREE.Box3().setFromObject(gltf.scene);
+  const c = box.getCenter(new THREE.Vector3());
+  const s = box.getSize(new THREE.Vector3());
+
+  let camera;
+  if (view === 'top') {
+    const half = Math.max(s.x, s.z) * 0.6;
+    camera = new THREE.OrthographicCamera(-half * W / H, half * W / H, half, -half, 0.01, 100);
+    camera.position.set(c.x, box.max.y + 5, c.z);
+    camera.up.set(0, 0, -1);
+    camera.lookAt(c.x, 0, c.z);
+    // Les murs sont coupés à mi-hauteur, comme sur un plan d'architecte.
+    renderer.clippingPlanes = [new THREE.Plane(new THREE.Vector3(0, -1, 0), s.y * 0.55)];
+  } else {
+    const yaw = THREE.MathUtils.degToRad(Number(q.get('yaw') ?? 35));
+    const pitch = THREE.MathUtils.degToRad(Number(q.get('pitch') ?? 40));
+    const d = s.length() * 1.05;
+    camera = new THREE.PerspectiveCamera(40, W / H, 0.01, 100);
+    camera.position.set(c.x + d * Math.cos(pitch) * Math.sin(yaw), c.y + d * Math.sin(pitch), c.z + d * Math.cos(pitch) * Math.cos(yaw));
+    camera.lookAt(c);
+  }
+  renderer.render(scene, camera);
+  window.__done = { size: s.toArray().map((v) => +v.toFixed(2)), meshes: gltf.scene.children.length };
+</script>
