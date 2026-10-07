@@ -936,3 +936,30 @@ test('changer le côté des gonds n’éloigne pas la pièce', () => {
   const apres = positionPoignee(root);
   assert.ok(avant.distanceTo(apres) < 1e-3, `la pièce reste en place (${avant.distanceTo(apres)})`);
 });
+
+test('la teinte d’état s’applique aussi aux pièces entraînées', () => {
+  // Signalé : seule la pièce principale prenait la couleur. La teinte relevait
+  // ses mailles au premier placement, avant que les pièces soient attachées.
+  const root = modelAvecPoignees();
+  const source = root.children[1].material;
+  const c = new PartController();
+  c.build(root, [{ ...DOOR, extra: [POIGNEE], closedColor: '#ff0000' }]);
+
+  let piece = null;
+  root.traverse((o) => { if (!piece && o.name.startsWith('Poignees#')) piece = o; });
+  assert.ok(piece, 'la poignée est montée');
+  assert.notEqual(piece.material, source, 'la poignée porte une copie teintée, pas le matériau d’origine');
+  assert.notEqual(piece.material.color.getHexString(), source.color.getHexString(), 'et sa couleur a changé');
+});
+
+test('la teinte suit une pièce ajoutée en direct', () => {
+  const root = modelAvecPoignees();
+  const source = root.children[1].material;
+  const c = new PartController();
+  c.build(root, [{ ...DOOR, closedColor: '#ff0000' }]);
+  c.configure({ ...DOOR, extra: [POIGNEE], closedColor: '#ff0000' });
+
+  let piece = null;
+  root.traverse((o) => { if (!piece && o.name.startsWith('Poignees#')) piece = o; });
+  assert.ok(piece && piece.material !== source, 'la poignée ajoutée après coup est teintée aussi');
+});

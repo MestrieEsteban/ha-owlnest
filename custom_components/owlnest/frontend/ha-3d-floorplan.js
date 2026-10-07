@@ -24022,7 +24022,7 @@ class Jy {
       followers: [],
       warned: /* @__PURE__ */ new Set()
     };
-    return this._configure(d, n), c = this._bringAlong(i, i, e, n), d;
+    return this._configure(d, n), c = this._bringAlong(i, i, e, n), d.tint.restore(), this._place(d), d;
   }
   /**
    * Emmene les pieces contenues dans le volume de l'ouvrant.
@@ -24131,7 +24131,7 @@ class Jy {
       followers: [],
       warned: /* @__PURE__ */ new Set()
     };
-    return this._configure(h, t), d = this._bringAlong(e, e, e, t), h;
+    return this._configure(h, t), d = this._bringAlong(e, e, e, t), h.tint.restore(), this._place(h), h;
   }
   /** Défait le montage d'un ouvrant. */
   _unmount(e) {

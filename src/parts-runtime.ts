@@ -521,6 +521,10 @@ export class PartController {
     // Le vantail porte les pièces : elles suivent ainsi tout changement de côté
     // de gonds, qui replace `object` sans toucher au reste.
     releaseCarried = this._bringAlong(object, object, mesh, cfg);
+    // La teinte a relevé ses mailles au placement, avant que les pièces soient
+    // là : on la remonte pour qu'elles prennent la couleur d'état elles aussi.
+    item.tint.restore();
+    this._place(item);
     return item;
   }
 
@@ -660,6 +664,10 @@ export class PartController {
     };
     this._configure(item, cfg);
     releaseCarried = this._bringAlong(node, node, node, cfg);
+    // La teinte a relevé ses mailles au placement, avant que les pièces soient
+    // là : on la remonte pour qu'elles prennent la couleur d'état elles aussi.
+    item.tint.restore();
+    this._place(item);
     return item;
   }
 
