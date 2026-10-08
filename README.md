@@ -122,7 +122,7 @@ Anchors support `light`, `switch`, `sensor`, `binary_sensor`, `cover`, `climate`
 
 ### With HACS
 
-The fastest way: these two buttons open your own Home Assistant on the right page.
+The fastest way: these two buttons open your own Home Assistant on the right page. [▶ Watch the installation video](https://www.youtube.com/watch?v=iBREyrejHSo) (1 min 30).
 
 [![Open your Home Assistant instance and open the Owlnest repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=MestrieEsteban&repository=ha-owlnest&category=integration)
 

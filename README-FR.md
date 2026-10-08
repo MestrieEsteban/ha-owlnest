@@ -122,7 +122,7 @@ Les ancres prennent en charge `light`, `switch`, `sensor`, `binary_sensor`, `cov
 
 ### Avec HACS
 
-Le plus rapide : ces deux boutons ouvrent votre propre Home Assistant à la bonne page.
+Le plus rapide : ces deux boutons ouvrent votre propre Home Assistant à la bonne page. [▶ Voir la vidéo d'installation](https://www.youtube.com/watch?v=iBREyrejHSo) (1 min 30, en anglais).
 
 [![Ouvrir le dépôt Owlnest dans le HACS de votre Home Assistant.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=MestrieEsteban&repository=ha-owlnest&category=integration)
 
