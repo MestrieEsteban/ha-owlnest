@@ -242,8 +242,28 @@ export class Ha3dFloorplan extends HTMLElement {
 
   // ── Persistence ───────────────────────────────────────────────────────
 
+  /**
+   * Clé du point de vue enregistré : par scène et par modèle.
+   *
+   * Elle ne dépendait que du `model_url` du YAML : toutes les cartes et
+   * scènes sans ce réglage partageaient le même point de vue. Passer d'un plan
+   * en centimètres à la démo en mètres replaçait la caméra à des centaines de
+   * mètres.
+   */
   private get _storageKey() {
-    return `ha-3d-floorplan:${this._config?.model_url ?? 'default'}`;
+    const model = this._scene?.model_url || this._config?.model_url || 'default';
+    return `ha-3d-floorplan:${this._getActiveSceneId() ?? ''}:${model}`;
+  }
+
+  /** Un point de vue enregistré qui regarde bien ce modèle, à une distance possible. */
+  private _viewFits(view: SavedView): boolean {
+    if (!this.controls) return false;
+    const target = new THREE.Vector3().fromArray(view.target);
+    const dist = new THREE.Vector3().fromArray(view.pos).distanceTo(target);
+    const box = this._modelBox.clone().expandByScalar(this._modelSpan * 0.5);
+    return box.containsPoint(target)
+      && dist >= this.controls.minDistance * 0.5
+      && dist <= this.controls.maxDistance * 1.5;
   }
 
   private _loadView(): SavedView | null {
@@ -2924,7 +2944,7 @@ export class Ha3dFloorplan extends HTMLElement {
     this._applyCutaway();
 
     const saved = this._loadView();
-    if (saved) {
+    if (saved && this._viewFits(saved)) {
       this.camera!.position.fromArray(saved.pos);
       this.controls!.target.fromArray(saved.target);
       this._toggleLock(saved.locked);
