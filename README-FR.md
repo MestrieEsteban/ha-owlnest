@@ -119,12 +119,28 @@ Les ancres prennent en charge `light`, `switch`, `sensor`, `binary_sensor`, `cov
 
 ### Avec HACS
 
+Le plus rapide : ces deux boutons ouvrent votre propre Home Assistant à la bonne page.
+
+[![Ouvrir le dépôt Owlnest dans le HACS de votre Home Assistant.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=MestrieEsteban&repository=ha-owlnest&category=integration)
+
+[![Ajouter l’intégration Owlnest à votre Home Assistant.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=owlnest)
+
+1. Cliquez sur le premier bouton, confirmez l'ajout du dépôt, puis **Télécharger**.
+2. **Redémarrez Home Assistant**.
+3. Cliquez sur le second bouton et validez.
+4. Rechargez le navigateur en forçant le cache avec **Ctrl+Maj+R** (**Cmd+Maj+R** sur macOS).
+
+<details>
+<summary><strong>Sans les boutons</strong></summary>
+
 1. Dans **HACS**, ouvrez **⋮ → Dépôts personnalisés**.
 2. Ajoutez `https://github.com/MestrieEsteban/ha-owlnest` et choisissez la catégorie **Intégration**.
 3. Cherchez **Owlnest** dans HACS et téléchargez-le.
 4. **Redémarrez Home Assistant**.
 5. Allez dans **Paramètres → Appareils et services → Ajouter une intégration**, cherchez **Owlnest** et validez.
 6. Rechargez le navigateur en forçant le cache avec **Ctrl+Maj+R** (**Cmd+Maj+R** sur macOS).
+
+</details>
 
 > Choisissez la catégorie **Intégration** dans HACS. La carte est livrée à l'intérieur de l'intégration : aucun téléchargement séparé ni ressource Lovelace à ajouter.
 

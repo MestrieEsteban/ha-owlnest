@@ -119,12 +119,28 @@ Anchors support `light`, `switch`, `sensor`, `binary_sensor`, `cover`, `climate`
 
 ### With HACS
 
+The fastest way: these two buttons open your own Home Assistant on the right page.
+
+[![Open your Home Assistant instance and open the Owlnest repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=MestrieEsteban&repository=ha-owlnest&category=integration)
+
+[![Open your Home Assistant instance and add the Owlnest integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=owlnest)
+
+1. Click the first button, confirm adding the repository, then **Download**.
+2. **Restart Home Assistant**.
+3. Click the second button and confirm.
+4. Force-reload your browser with **Ctrl+Shift+R** (**Cmd+Shift+R** on macOS).
+
+<details>
+<summary><strong>Without the buttons</strong></summary>
+
 1. In **HACS**, open **⋮ → Custom repositories**.
 2. Add `https://github.com/MestrieEsteban/ha-owlnest` and select **Integration** as the category.
 3. Search for **Owlnest** in HACS and download it.
 4. **Restart Home Assistant**.
 5. Go to **Settings → Devices & Services → Add Integration**, search for **Owlnest** and confirm.
 6. Force-reload your browser with **Ctrl+Shift+R** (**Cmd+Shift+R** on macOS).
+
+</details>
 
 > Choose the **Integration** category in HACS. The card is bundled inside the integration; there is no separate card download or Lovelace resource to add.
 
