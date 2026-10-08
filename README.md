@@ -177,7 +177,7 @@ Try toggling a linked light. You can also drag to orbit, scroll to zoom, or use 
 
 ### Use your own home
 
-The easiest way is [Sweet Home 3D](https://www.sweethome3d.com/), a free home design app.
+The easiest way is [Sweet Home 3D](https://www.sweethome3d.com/), a free home design app. [▶ Watch the import video](https://www.youtube.com/watch?v=4hBuNCvALFA) (2 min).
 
 1. In Sweet Home 3D, open your home and choose **3D view → Export to OBJ format**. Export all the items into an empty folder.
 2. **Drop that folder onto the card.** Its files or a zip of it work too. You can also click **Import my floor plan**, in the demo banner or at the top of the editor's **Config** tab.

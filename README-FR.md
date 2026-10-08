@@ -177,7 +177,7 @@ Essayez d'allumer une lumière reliée. Vous pouvez aussi glisser pour tourner a
 
 ### Utilisez votre logement
 
-Le plus simple est [Sweet Home 3D](https://www.sweethome3d.com/fr/), un logiciel gratuit d'aménagement intérieur.
+Le plus simple est [Sweet Home 3D](https://www.sweethome3d.com/fr/), un logiciel gratuit d'aménagement intérieur. [▶ Voir la vidéo de l'import](https://www.youtube.com/watch?v=4hBuNCvALFA) (2 min, en anglais).
 
 1. Dans Sweet Home 3D, ouvrez votre logement et choisissez **Vue 3D → Exporter au format OBJ**. Exportez tous les éléments dans un dossier vide.
 2. **Glissez ce dossier sur la carte.** Ses fichiers ou un zip fonctionnent aussi. Vous pouvez également cliquer sur **Importer mon plan**, dans le bandeau de la démo ou en haut de l'onglet **Config** de l'éditeur.

@@ -17,6 +17,8 @@
 
 ## Importing your floor plan
 
+[▶ Watch the import video](https://www.youtube.com/watch?v=4hBuNCvALFA) (2 min).
+
 Drop your plan onto the card, or click **Import my floor plan** (demo banner, or top of the editor's **Config** tab) and pick the files. The card accepts:
 
 - the folder exported by **Sweet Home 3D** (**3D view → Export to OBJ format**), its files selected together, or a zip of it;

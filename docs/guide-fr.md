@@ -17,6 +17,8 @@
 
 ## Importer votre plan
 
+[▶ Voir la vidéo de l'import](https://www.youtube.com/watch?v=4hBuNCvALFA) (2 min, en anglais).
+
 Glissez votre plan sur la carte, ou cliquez sur **Importer mon plan** (bandeau de la démo, ou haut de l'onglet **Config** de l'éditeur) et choisissez les fichiers. La carte accepte :
 
 - le dossier exporté par **Sweet Home 3D** (**Vue 3D → Exporter au format OBJ**), ses fichiers sélectionnés ensemble, ou un zip de ce dossier ;
