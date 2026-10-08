@@ -11,6 +11,7 @@ const STRINGS = {
     demoBanner:      'Demo house: click a + to link your lights, or drop your Sweet Home 3D export here.',
     // Import d'un plan
     importButton:     'Import my floor plan',
+    cfgSceneReload:   'Reload this scene from Home Assistant',
     backendDownTitle: 'The Owlnest integration is not responding',
     backendDownHint:  'Your scenes are safe. Check Settings → System → Logs for “owlnest”, then restart Home Assistant.',
     importHint:       'A Sweet Home 3D export (the folder, its files or a zip) or a .glb. You can also drop it straight onto the card.',
@@ -695,6 +696,7 @@ const STRINGS = {
     demoBanner:      'Maison de démonstration : cliquez sur un + pour y relier vos lampes, ou glissez ici votre export Sweet Home 3D.',
     // Import d'un plan
     importButton:     'Importer mon plan',
+    cfgSceneReload:   'Recharger cette scène depuis Home Assistant',
     backendDownTitle: 'L’intégration Owlnest ne répond pas',
     backendDownHint:  'Vos scènes sont intactes. Cherchez « owlnest » dans Paramètres → Système → Journaux, puis redémarrez Home Assistant.',
     importHint:       'Un export Sweet Home 3D (le dossier, ses fichiers ou un zip) ou un .glb. Vous pouvez aussi le glisser directement sur la carte.',

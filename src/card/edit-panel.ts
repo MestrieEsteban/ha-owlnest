@@ -1364,6 +1364,20 @@ export class EditPanel {
           text.appendChild(sub);
           row.appendChild(text);
 
+          // La scène ouverte se recharge : après un redémarrage de Home
+          // Assistant, ou pour abandonner ce qui s'affiche et relire le serveur.
+          if (isActive) {
+            const reload = document.createElement('span');
+            reload.setAttribute('role', 'button');
+            reload.style.cssText = 'flex-shrink:0;color:#7dd3fc;cursor:pointer;font-size:13px;line-height:1;padding:3px 4px;';
+            reload.textContent = '↻';
+            reload.title = t('cfgSceneReload');
+            reload.addEventListener('click', () => {
+              this.onSceneSettingsChange?.({ scene_id: sum.id } as SceneSettings, true);
+            });
+            row.appendChild(reload);
+          }
+
           const del = document.createElement('span');
           del.setAttribute('role', 'button');
           del.style.cssText = 'flex-shrink:0;color:rgba(248,113,113,0.5);cursor:pointer;font-size:14px;line-height:1;padding:3px 4px;';

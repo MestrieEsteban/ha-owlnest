@@ -33,6 +33,12 @@ const failedSceneFallbacks = new Map<string, OwlnestScene>();
  */
 const unreachableScenes = new Set<string>();
 
+/** Oublie un échec de lecture, pour que le prochain `loadScene` interroge vraiment le serveur. */
+export function forgetSceneFailure(sceneId: string): void {
+  failedSceneFallbacks.delete(sceneId);
+  unreachableScenes.delete(sceneId);
+}
+
 /** L'intégration n'a pas pu lire cette scène : ne rien montrer ni écrire à sa place. */
 export function sceneUnreachable(sceneId: string): boolean {
   return unreachableScenes.has(sceneId);

@@ -10,7 +10,7 @@ import { modelErrorKey, httpStatus } from './model-errors';
 import { AnchorOverlay, SensorOverlay, ClusterOverlay, LabelOverlay, CameraOverlay, pulseOverlay } from './overlay';
 import type { ClusterItem } from './overlay';
 import { AnchorEditor } from './editor';
-import { loadScene, saveScene, listScenes, sceneToEffectiveConfig, buildSceneFromEditor, normalizeViews, emptyScene, sceneUnreachable } from './scene';
+import { loadScene, saveScene, listScenes, sceneToEffectiveConfig, buildSceneFromEditor, normalizeViews, emptyScene, sceneUnreachable, forgetSceneFailure } from './scene';
 import { importModel, ImportError } from './import/drop';
 import { UploadError } from './import/upload';
 import { attachDropZone, pickFiles, ImportProgress } from './card/import-ui';
@@ -196,6 +196,7 @@ class Ha3dFloorplan extends HTMLElement {
   private _modelRoot: THREE.Object3D | null = null;
   private _savePending = false;  // true while a callWS is in flight
   private _importing = false;
+  private _backendRetryAt = 0;
   private _detachDrop: (() => void) | null = null;
   private _saveQueued = false;   // une modification est arrivee pendant l'envoi
 
@@ -285,6 +286,14 @@ class Ha3dFloorplan extends HTMLElement {
     // If scene_id is configured and scene hasn't been fetched yet, do it now.
     // _loadModel() is deferred until scene data is available.
     const activeSceneId = this._getActiveSceneId();
+    // Intégration injoignable : on réessaie de temps en temps. Après un
+    // redémarrage de Home Assistant, la scène revient sans recharger la page.
+    if (activeSceneId && this._backendDown && !this._sceneLoading && Date.now() - this._backendRetryAt > 10_000) {
+      this._backendRetryAt = Date.now();
+      forgetSceneFailure(activeSceneId);
+      this.overlayContainer?.querySelector('#owlnest-backend-down')?.remove();
+      this._scene = null;
+    }
     if (activeSceneId && !this._scene && !this._sceneLoading) {
       this._sceneLoading = true;
       this._fetchAndLoadScene(activeSceneId);
@@ -1338,6 +1347,9 @@ class Ha3dFloorplan extends HTMLElement {
           const newId = (s as Record<string, unknown>)['scene_id'] as string | undefined;
           if (newId) {
             localStorage.setItem('owlnest_scene_id', newId);
+            // Recharger, c'est relire le serveur, pas le repli gardé en mémoire.
+            forgetSceneFailure(newId);
+            this.overlayContainer?.querySelector('#owlnest-backend-down')?.remove();
             this._scene = null;
             this._sceneLoading = false;
             if (this._hass) {

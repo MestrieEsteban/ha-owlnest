@@ -22,7 +22,8 @@
   const log = [];
   const say = (s) => { log.push(s); out.textContent = log.join('\n'); };
 
-  const DOWN = new URLSearchParams(location.search).has('down');
+  let DOWN = new URLSearchParams(location.search).has('down');
+  window.__recover = () => { DOWN = false; };
   let scene = { version: 1, scene_id: 'drop', model_url: '', anchors: [], camera_views: [], cards: [], rules: [], parts: [] };
   const uploads = [];
   let file = new Uint8Array(0);
