@@ -4,9 +4,30 @@ type Hass = import('./types').Hass;
 class Ha3dFloorplanEditor extends HTMLElement {
   private _config: CardConfig | null = null;
   private _rendered = false;
+  private _hass: Hass | null = null;
+  private _scenes: string[] = [];
 
-  set hass(_hass: Hass) {
+  set hass(hass: Hass) {
+    const first = !this._hass;
+    this._hass = hass;
     if (!this._rendered) this._render();
+    // La liste des scènes existantes, une fois : elle alimente le champ Scène.
+    if (first) {
+      hass.callWS<{ scenes: string[] }>({ type: 'owlnest/list_scenes' })
+        .then((r) => { this._scenes = r.scenes ?? []; this._fillScenes(); })
+        .catch(() => {});
+    }
+  }
+
+  private _fillScenes() {
+    const dl = this.querySelector('#owlnest-editor-scenes');
+    if (!dl) return;
+    dl.innerHTML = '';
+    for (const id of this._scenes) {
+      const opt = document.createElement('option');
+      opt.value = id;
+      dl.appendChild(opt);
+    }
   }
 
   setConfig(config: CardConfig) {
@@ -144,11 +165,25 @@ class Ha3dFloorplanEditor extends HTMLElement {
 
     const genSec = sec('General');
 
+    // La scène d'abord : c'est elle qui rend deux cartes indépendantes.
+    const sceneInput = textInput(c.scene_id, 'my_home', v => this._patch({ scene_id: v || undefined }));
+    sceneInput.setAttribute('list', 'owlnest-editor-scenes');
+    const scenes = document.createElement('datalist');
+    scenes.id = 'owlnest-editor-scenes';
     field(
       row(genSec),
-      '3D Model URL (.glb) <span class="required">*</span>',
-      textInput(c.model_url, '/local/floorplan.glb', v => this._patch({ model_url: v })),
-      'Relative path in config/www/ (e.g. /local/model.glb)',
+      'Scene',
+      sceneInput,
+      'Each card shows its own scene. Pick an existing one or type a new name: a new scene starts on the demo house.',
+    );
+    genSec.appendChild(scenes);
+    this._fillScenes();
+
+    field(
+      row(genSec),
+      '3D Model URL (.glb)',
+      textInput(c.model_url, '/local/floorplan.glb', v => this._patch({ model_url: v || undefined })),
+      'Optional. Leave empty and drop your Sweet Home 3D export on the card instead.',
     );
 
     field(
@@ -169,7 +204,7 @@ class Ha3dFloorplanEditor extends HTMLElement {
       'can be configured directly in the <strong>3D edit panel</strong>',
       'by clicking the ✏️ icon on the card.',
       '<br><br>',
-      'Active scene: <strong>' + (c.scene_id ? `<code>${c.scene_id}</code>` : '(none — set via the startup overlay)') + '</strong>',
+      'Active scene: <strong>' + (c.scene_id ? `<code>${c.scene_id}</code>` : '(none, set one above)') + '</strong>',
     ].join(' ');
     infoSec.appendChild(infoBox);
   }

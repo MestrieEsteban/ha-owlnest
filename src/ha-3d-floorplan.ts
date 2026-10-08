@@ -14,6 +14,7 @@ import { loadScene, saveScene, listScenes, sceneToEffectiveConfig, buildSceneFro
 import { importModel, ImportError } from './import/drop';
 import { UploadError } from './import/upload';
 import { attachDropZone, pickFiles, ImportProgress, askOpenings } from './card/import-ui';
+import { assignScene } from './card/lovelace-config';
 import { findLeaves, proposeParts, replaceParts } from './import/sh3d-parts';
 import { setLang, langFromLocale, t } from './i18n';
 import { demoModelUrl, isPlaceholder, seedDemoAnchors, type DemoAnchorId } from './demo';
@@ -273,6 +274,16 @@ export class Ha3dFloorplan extends HTMLElement {
       if (id === (this._config?.scene_id || DEFAULT_SCENE_ID)) localStorage.removeItem(this._sceneChoiceKey);
       else localStorage.setItem(this._sceneChoiceKey, id);
     } catch { /* stockage bloqué */ }
+    // Puis dans la carte elle-même, pour qu'elle seule change de scène, sur
+    // tous les appareils. Home Assistant la reconfigure ensuite : le choix
+    // retenu dans le navigateur n'a alors plus lieu d'être.
+    const config = this._config;
+    if (!this._hass || !config || id === config.scene_id) return;
+    const key = this._sceneChoiceKey;
+    assignScene(this._hass, config, id).then((ok) => {
+      if (!ok) return;
+      try { localStorage.removeItem(key); } catch { /* stockage bloqué */ }
+    });
   }
 
   private _saveView() {
@@ -348,7 +359,9 @@ export class Ha3dFloorplan extends HTMLElement {
   }
 
   static getStubConfig() {
-    return { scene_id: DEFAULT_SCENE_ID };
+    // Une scène propre à chaque nouvelle carte : deux cartes ajoutées depuis
+    // l'interface ne partagent rien, et chacune démarre sur la démo.
+    return { scene_id: `maison_${Date.now().toString(36).slice(-5)}` };
   }
 
   static getConfigElement() {
