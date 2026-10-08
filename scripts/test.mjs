@@ -35,6 +35,7 @@ const ENTRIES = [
   'src/model-errors.ts',
   'src/i18n.ts',
   'src/demo.ts',
+  'src/import/obj-to-glb.ts',
 ];
 
 /**

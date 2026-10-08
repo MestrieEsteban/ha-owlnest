@@ -1,0 +1,69 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Owlnest — import OBJ</title>
+<style>
+  html, body { margin: 0; background: #111; color: #cbd5e1; font-family: system-ui, sans-serif; }
+  pre { color: #7dd3fc; font: 12px monospace; padding: 8px 14px; white-space: pre-wrap; }
+</style>
+<pre id="out">conversion…</pre>
+<script type="module">
+  // Convertit un vrai export Sweet Home 3D dans le navigateur, comme le fera
+  // la carte quand on y glissera ses fichiers, puis l'affiche.
+  //   /dev/import-harness.html?obj=/Modele3D/Small-flat-35mq-compressed.obj
+  import * as THREE from 'three';
+  import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+  import { objToGlb, parseMtl, fileKey } from '/src/import/obj-to-glb.ts';
+
+  const q = new URLSearchParams(location.search);
+  const objUrl = q.get('obj') ?? '/Modele3D/Small-flat-35mq-compressed.obj';
+  const dir = objUrl.slice(0, objUrl.lastIndexOf('/') + 1);
+  const out = document.getElementById('out');
+  const log = [];
+  const say = (s) => { log.push(s); out.textContent = log.join('\n'); };
+
+  const t0 = performance.now();
+  const objText = await (await fetch(objUrl)).text();
+  const mtlName = (objText.match(/^mtllib\s+(.+)$/m) ?? [])[1]?.trim();
+  const mtlText = mtlName ? await (await fetch(dir + mtlName)).text() : null;
+  const maps = [...parseMtl(mtlText ?? '').values()].map((m) => m.map).filter(Boolean);
+  const images = new Map();
+  for (const m of new Set(maps)) {
+    const r = await fetch(dir + m.replace(/\\/g, '/').split('/').pop());
+    if (!r.ok) continue;
+    const mime = /\.png$/i.test(m) ? 'image/png' : 'image/jpeg';
+    images.set(fileKey(m), { data: new Uint8Array(await r.arrayBuffer()), mime });
+  }
+  const t1 = performance.now();
+  say(`lecture : ${(objText.length / 1048576).toFixed(1)} Mo d'OBJ, ${images.size} textures, ${((t1 - t0) / 1000).toFixed(1)} s`);
+
+  const { glb, stats } = objToGlb(objText, mtlText, images);
+  const t2 = performance.now();
+  say(`conversion : ${((t2 - t1) / 1000).toFixed(1)} s`);
+  say(`GLB : ${(glb.byteLength / 1048576).toFixed(1)} Mo, ${stats.triangles} triangles, ${stats.groups} groupes, ${stats.materials} matériaux, ${stats.textures} textures`);
+  if (stats.missingTextures.length) say(`textures manquantes : ${stats.missingTextures.join(', ')}`);
+
+  const gltf = await new GLTFLoader().parseAsync(glb, '');
+  const t3 = performance.now();
+  say(`relu par three.js : ${((t3 - t2) / 1000).toFixed(1)} s`);
+  const ouvrants = [];
+  gltf.scene.traverse((o) => { if (/sweethome3d_(hinge|opening)/.test(o.name)) ouvrants.push(o.name); });
+  say(`nœuds d'ouvrants Sweet Home 3D : ${ouvrants.length}`);
+
+  const W = 900, H = 520;
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(W, H);
+  document.body.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color('#1a1f2b');
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 1.5));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.2); sun.position.set(300, 800, 400); scene.add(sun);
+  scene.add(gltf.scene);
+  const box = new THREE.Box3().setFromObject(gltf.scene);
+  const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
+  const cam = new THREE.PerspectiveCamera(40, W / H, s.length() / 500, s.length() * 10);
+  cam.position.set(c.x + s.x * 0.2, c.y + s.length() * 0.9, c.z + s.z * 0.9);
+  cam.lookAt(c);
+  renderer.render(scene, cam);
+  window.__glb = glb;
+  window.__done = true;
+</script>
