@@ -238,22 +238,31 @@ export class ImportProgress {
   }
 }
 
+export interface OpeningsChoice {
+  label: string;
+  primary?: boolean;
+  onClick: () => void;
+}
+
 /**
  * Propose d'ajouter les ouvrants reconnus, juste après l'import.
  *
  * Le moment où l'on vient de déposer sa maison est celui où l'on a envie de la
- * voir s'animer : on demande là, une fois, sans rien imposer.
+ * voir s'animer : on demande là, une fois, sans rien imposer. Quand la scène a
+ * déjà des ouvrants, on ne choisit pas à la place de l'utilisateur : garder,
+ * compléter ou remplacer, c'est lui qui décide.
  */
 export function askOpenings(
   container: HTMLElement,
   doors: number,
   windows: number,
-  onAccept: () => void,
+  existing: number,
+  choices: OpeningsChoice[],
 ): void {
   const box = document.createElement('div');
   box.style.cssText = [
     'position:absolute', 'left:50%', 'bottom:16px', 'transform:translateX(-50%)',
-    'z-index:300', 'width:min(360px,calc(100% - 32px))', 'box-sizing:border-box',
+    'z-index:300', 'width:min(380px,calc(100% - 32px))', 'box-sizing:border-box',
     'padding:14px 16px', 'border-radius:12px', 'pointer-events:auto',
     'background:rgba(8,13,26,0.94)', 'backdrop-filter:blur(10px)',
     'border:1px solid rgba(125,211,252,0.35)', 'color:#e2e8f0', FONT,
@@ -265,18 +274,20 @@ export function askOpenings(
     .replace('{windows}', String(windows));
   const body = document.createElement('div');
   body.style.cssText = 'font-size:11.5px;color:#94a3b8;line-height:1.5;margin-bottom:12px;';
-  body.textContent = t('sh3dFoundHint');
+  body.textContent = existing > 0
+    ? t('sh3dFoundExisting').replace('{n}', String(existing))
+    : t('sh3dFoundHint');
   const row = document.createElement('div');
-  row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;';
-  const later = document.createElement('button');
-  later.textContent = t('sh3dLater');
-  later.style.cssText = 'background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.14);border-radius:7px;color:#cbd5e1;padding:6px 12px;font-size:11px;font-family:inherit;cursor:pointer;';
-  later.addEventListener('click', () => box.remove());
-  const add = document.createElement('button');
-  add.textContent = t('sh3dAdd');
-  add.style.cssText = 'background:rgba(125,209,252,0.2);border:1px solid rgba(125,209,252,0.45);border-radius:7px;color:#7dd3fc;padding:6px 12px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;';
-  add.addEventListener('click', () => { box.remove(); onAccept(); });
-  row.append(later, add);
+  row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;';
+  for (const c of choices) {
+    const b = document.createElement('button');
+    b.textContent = c.label;
+    b.style.cssText = c.primary
+      ? 'background:rgba(125,209,252,0.2);border:1px solid rgba(125,209,252,0.45);border-radius:7px;color:#7dd3fc;padding:6px 12px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;'
+      : 'background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.14);border-radius:7px;color:#cbd5e1;padding:6px 12px;font-size:11px;font-family:inherit;cursor:pointer;';
+    b.addEventListener('click', () => { box.remove(); c.onClick(); });
+    row.appendChild(b);
+  }
   box.append(title, body, row);
   container.appendChild(box);
 }

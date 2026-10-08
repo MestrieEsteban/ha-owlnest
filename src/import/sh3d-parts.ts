@@ -122,3 +122,26 @@ export function proposeParts(
       return { part, kind, piece: l.piece };
     });
 }
+
+/**
+ * Remplace les ouvrants de la scène par ceux reconnus dans le nouveau modèle.
+ *
+ * « Remplacer » ne doit pas faire perdre le travail déjà fait : un vantail
+ * déjà présent (même nœud) garde son capteur, ses couleurs, son libellé et les
+ * corrections de sens qu'on lui a apportées. Seuls disparaissent les ouvrants
+ * qui ne correspondent à aucun vantail détecté, ceux de l'ancien modèle.
+ */
+export function replaceParts(existing: readonly OwlnestPart[], detected: readonly OwlnestPart[]): OwlnestPart[] {
+  const byNode = new Map(existing.filter((p) => p.node).map((p) => [p.node!, p]));
+  return detected.map((d) => {
+    const old = byNode.get(d.node!);
+    if (!old) return d;
+    // La cible vient du nouveau modèle (les rangs ont pu bouger), le reste de
+    // l'ancien ouvrant.
+    return {
+      ...d, ...old,
+      mesh: d.mesh, meshIndex: d.meshIndex, triangle: d.triangle,
+      node: d.node, nodeIndex: d.nodeIndex,
+    };
+  });
+}

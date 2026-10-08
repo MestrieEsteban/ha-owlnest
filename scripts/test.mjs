@@ -40,6 +40,7 @@ const ENTRIES = [
   'src/import/upload.ts',
   'src/import/sh3d.ts',
   'src/import/lighten.ts',
+  'src/import/sh3d-parts.ts',
 ];
 
 /**

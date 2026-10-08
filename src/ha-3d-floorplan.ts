@@ -14,7 +14,7 @@ import { loadScene, saveScene, listScenes, sceneToEffectiveConfig, buildSceneFro
 import { importModel, ImportError } from './import/drop';
 import { UploadError } from './import/upload';
 import { attachDropZone, pickFiles, ImportProgress, askOpenings } from './card/import-ui';
-import { findLeaves, proposeParts } from './import/sh3d-parts';
+import { findLeaves, proposeParts, replaceParts } from './import/sh3d-parts';
 import { setLang, langFromLocale, t } from './i18n';
 import { demoModelUrl, isPlaceholder, seedDemoAnchors, type DemoAnchorId } from './demo';
 import { openEntityPicker } from './entities/picker';
@@ -1043,12 +1043,7 @@ export class Ha3dFloorplan extends HTMLElement {
         this._showToast(t('importDone'));
       }
 
-      const found = this._detectedOpenings();
-      if (found.length && this.overlayContainer) {
-        // Une fenêtre à deux vantaux compte pour une fenêtre.
-        const count = (kind: 'door' | 'window') => new Set(found.filter((f) => f.kind === kind).map((f) => f.piece)).size;
-        askOpenings(this.overlayContainer, count('door'), count('window'), () => { this._addDetectedOpenings(); });
-      }
+      this._offerDetectedOpenings();
     } catch (err) {
       console.error('[Owlnest] import failed:', err);
       progress.fail(this._importErrorMessage(err));
@@ -1058,11 +1053,59 @@ export class Ha3dFloorplan extends HTMLElement {
   }
 
   /** Portes et fenêtres Sweet Home 3D du modèle, pas encore dans la scène. */
-  private _detectedOpenings() {
+  /**
+   * Après un import : propose les portes et fenêtres reconnues.
+   *
+   * Sans ouvrant dans la scène, un seul choix : les ajouter. Avec des ouvrants
+   * déjà là (ceux d'un import précédent, ou désignés à la main sur l'ancien
+   * modèle), on laisse décider : les garder, compléter avec les nouveaux, ou
+   * tout remplacer en gardant les capteurs déjà reliés.
+   */
+  private _offerDetectedOpenings() {
+    const all = this._detectedOpenings(true);
+    if (!all.length || !this.overlayContainer) return;
+    const existing = this._scene?.parts?.length ?? 0;
+    const fresh = this._detectedOpenings().length;
+    // Une fenêtre à deux vantaux compte pour une fenêtre.
+    const count = (kind: 'door' | 'window') => new Set(all.filter((f) => f.kind === kind).map((f) => f.piece)).size;
+    const choices = existing === 0
+      ? [
+          { label: t('sh3dLater'), onClick: () => {} },
+          { label: t('sh3dAdd'), primary: true, onClick: () => { this._addDetectedOpenings(); } },
+        ]
+      : [
+          { label: t('sh3dKeep'), onClick: () => {} },
+          ...(fresh > 0
+            ? [{ label: t('sh3dAddNew').replace('{n}', String(fresh)), onClick: () => { this._addDetectedOpenings(); } }]
+            : []),
+          { label: t('sh3dReplace'), primary: true, onClick: () => { this._replaceWithDetected(); } },
+        ];
+    askOpenings(this.overlayContainer, count('door'), count('window'), existing, choices);
+  }
+
+  /** Remplace les ouvrants par ceux reconnus, capteurs et réglages gardés. */
+  private async _replaceWithDetected() {
+    const detected = this._detectedOpenings(true).map((f) => f.part);
+    if (!detected.length) return;
+    const before = this._scene?.parts ?? [];
+    const known = new Set(before.map((p) => p.node).filter(Boolean));
+    const merged = replaceParts(before, detected);
+    // On repart de zéro : les anciens ouvrants libèrent leurs pièces avant
+    // que les nouveaux ne les prennent.
+    await this._savePartsDirect([]);
+    await this._savePartsDirect(merged);
+    // Seuls les vantaux nouveaux sont orientés : les autres gardent le sens
+    // que l'utilisateur a peut-être corrigé.
+    await this._orientInward(new Set(merged.filter((p) => !known.has(p.node)).map((p) => p.id)));
+    this._showToast(t('sh3dReplaced'));
+  }
+
+  /** `all` : tous les vantaux reconnus, y compris ceux déjà dans la scène. */
+  private _detectedOpenings(all = false) {
     if (!this._modelRoot) return [];
     return proposeParts(
       findLeaves(this._modelRoot, this._modelSpan),
-      this._scene?.parts ?? [],
+      all ? [] : this._scene?.parts ?? [],
       (kind, n, leaf, leaves) =>
         `${t(kind === 'door' ? 'sh3dDoor' : 'sh3dWindow')} ${n}${leaves > 1 ? ` · ${t('sh3dLeaf')} ${leaf}` : ''}`,
     );
@@ -1072,8 +1115,12 @@ export class Ha3dFloorplan extends HTMLElement {
     const found = this._detectedOpenings().map((f) => f.part);
     if (!found.length) return;
     await this._savePartsDirect([...(this._scene?.parts ?? []), ...found]);
-    // Une fois montés, on oriente chaque battant vers l'intérieur.
-    const added = new Set(found.map((p) => p.id));
+    await this._orientInward(new Set(found.map((p) => p.id)));
+    this._showToast(t('sh3dAdded'));
+  }
+
+  /** Une fois montés, oriente ces battants vers l'intérieur de la maison. */
+  private async _orientInward(added: Set<string>) {
     let flipped = false;
     const parts = (this._scene?.parts ?? []).map((p) => {
       if (!added.has(p.id)) return p;
@@ -1086,7 +1133,6 @@ export class Ha3dFloorplan extends HTMLElement {
     });
     if (flipped) await this._savePartsDirect(parts);
     this._requestRender();
-    this._showToast(t('sh3dAdded'));
   }
 
   private _importErrorMessage(err: unknown): string {
@@ -1483,6 +1529,8 @@ export class Ha3dFloorplan extends HTMLElement {
     });
     this._editPanel.countDetectedOpenings = () => this._detectedOpenings().length;
     this._editPanel.onAddDetectedOpenings = () => this._addDetectedOpenings();
+    this._editPanel.countAllDetectedOpenings = () => this._detectedOpenings(true).length;
+    this._editPanel.onReplaceDetectedOpenings = () => this._replaceWithDetected();
     if (this._canImport()) {
       this._editPanel.onImportModel = () => pickFiles((files) => this._importModel(files));
     }

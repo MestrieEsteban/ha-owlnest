@@ -266,6 +266,10 @@ export class EditPanel {
   countDetectedOpenings?: () => number;
   /** Ajoute ces ouvrants à la scène. */
   onAddDetectedOpenings?: () => Promise<void>;
+  /** Tous les vantaux reconnus, y compris ceux déjà dans la scène. */
+  countAllDetectedOpenings?: () => number;
+  /** Remplace les ouvrants par ceux reconnus, capteurs gardés. */
+  onReplaceDetectedOpenings?: () => Promise<void>;
   /** Ouvre le sélecteur de fichiers pour importer un plan (admin seulement). */
   onImportModel?: () => void;
 
@@ -3483,6 +3487,20 @@ export class EditPanel {
         this.onAddDetectedOpenings?.().then(() => this._fillPartsList(pane));
       });
       pane.appendChild(add);
+    }
+    // Des ouvrants existent déjà (ancien modèle, ajout à la main) : on peut
+    // repartir de ceux reconnus, sans perdre les capteurs déjà reliés.
+    const all = this.countAllDetectedOpenings?.() ?? 0;
+    if (parts.length > 0 && all > 0) {
+      const replace = document.createElement('button');
+      replace.textContent = t('sh3dReplaceDetected').replace('{n}', String(all));
+      replace.style.cssText = 'display:block;width:calc(100% - 20px);margin:' + (detected ? '0' : '10px') + ' 10px 10px;background:none;border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#94a3b8;padding:6px 10px;font-size:10.5px;font-family:inherit;cursor:pointer;text-align:left;';
+      replace.addEventListener('click', () => {
+        if (!confirm(t('sh3dReplaceConfirm').replace('{n}', String(parts.length)).replace('{m}', String(all)))) return;
+        replace.disabled = true;
+        this.onReplaceDetectedOpenings?.().then(() => this._fillPartsList(pane));
+      });
+      pane.appendChild(replace);
     }
 
     if (parts.length === 0) {

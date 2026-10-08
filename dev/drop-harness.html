@@ -97,6 +97,8 @@
     haCard.dispatchEvent(new DragEvent('dragenter', { dataTransfer: dt, bubbles: true, cancelable: true }));
     say(`voile de dépôt affiché : ${haCard.textContent.includes('Sweet Home 3D') || haCard.textContent.includes('plan')}`);
     haCard.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+    // Pour rejouer l'import par-dessus (réimport d'un plan retouché).
+    window.__redrop = () => haCard.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
 
     // L'allègement attend une réponse : ?lighten coche la case, sinon on
     // continue sans rien réduire.
