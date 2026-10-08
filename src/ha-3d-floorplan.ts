@@ -77,7 +77,7 @@ function _formatSensorValue(raw: string, precision?: number): string {
  */
 const OWLNEST_BUILD = 'rules-engine-v2';
 
-class Ha3dFloorplan extends HTMLElement {
+export class Ha3dFloorplan extends HTMLElement {
   static readonly OWLNEST_BUILD = OWLNEST_BUILD;
 
   private _config: CardConfig | null = null;
@@ -944,7 +944,9 @@ class Ha3dFloorplan extends HTMLElement {
 
   /** Importer un plan écrit sur le serveur : réservé aux administrateurs. */
   private _canImport(): boolean {
-    return this._hass?.user?.is_admin === true && !!this._getActiveSceneId() && !this._backendDown;
+    // Seul un refus explicite cache l'import : le serveur vérifie de toute façon
+    // les droits, et un `hass` sans `user` ne doit pas priver l'administrateur.
+    return this._hass?.user?.is_admin !== false && !!this._getActiveSceneId() && !this._backendDown;
   }
 
   /**
@@ -1386,6 +1388,9 @@ class Ha3dFloorplan extends HTMLElement {
     );
 
     this._editPanel.onTestRule = (rule) => this.runRuleNow(rule);
+    console.debug('[Owlnest] import:', {
+      admin: this._hass?.user?.is_admin, scene: this._getActiveSceneId(), backendDown: this._backendDown,
+    });
     if (this._canImport()) {
       this._editPanel.onImportModel = () => pickFiles((files) => this._importModel(files));
     }
@@ -3482,7 +3487,30 @@ class Ha3dFloorplan extends HTMLElement {
 
 // Garde-fou : redéfinir un custom element lève une exception. Le cas se produit
 // si le module est chargé deux fois (ressource HACS + ressource de dev, par ex.).
-if (!customElements.get('ha-3d-floorplan')) {
-  customElements.define('ha-3d-floorplan', Ha3dFloorplan);
+const defineCard = () => {
+  if (!customElements.get('ha-3d-floorplan')) {
+    customElements.define('ha-3d-floorplan', Ha3dFloorplan);
+  }
+};
+
+/**
+ * Passage de relais au serveur de développement.
+ *
+ * L'intégration charge sa carte avant les ressources Lovelace : en mode dev, la
+ * carte embarquée définissait l'élément la première et celle de Vite n'était
+ * jamais utilisée. dev-entry.ts inscrit son adresse ici ; la carte embarquée la
+ * charge alors à sa place, et reprend la main si le serveur ne répond plus.
+ */
+const DEV_KEY = 'owlnest_dev_entry';
+let devEntry: string | null = null;
+try { devEntry = import.meta.env.DEV ? null : localStorage.getItem(DEV_KEY); } catch { /* stockage bloqué */ }
+if (devEntry) {
+  import(/* @vite-ignore */ devEntry).catch(() => {
+    try { localStorage.removeItem(DEV_KEY); } catch { /* stockage bloqué */ }
+    console.info('[Owlnest] dev server unreachable, using the bundled card');
+    defineCard();
+  });
+} else {
+  defineCard();
 }
 

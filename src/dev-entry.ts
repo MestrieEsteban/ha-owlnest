@@ -13,7 +13,23 @@
 (globalThis as { __OWLNEST_DEMO_URL?: string }).__OWLNEST_DEMO_URL =
   new URL('../custom_components/owlnest/frontend/demo.glb', import.meta.url).href;
 
-import './ha-3d-floorplan';
+// La carte embarquée par l'intégration se charge avant les ressources Lovelace
+// et a pu définir l'élément avant nous. On lui laisse notre adresse : au
+// prochain chargement, elle nous passera la main (voir la fin de
+// ha-3d-floorplan.ts). Un seul rechargement, pour ne jamais boucler.
+const DEV_KEY = 'owlnest_dev_entry';
+const devUrl = new URL(import.meta.url);
+devUrl.search = '';
+// Les imports passent avant ce code : l'élément est donc défini, reste à
+// savoir par qui.
+const bundledFirst = customElements.get('ha-3d-floorplan') !== Ha3dFloorplan;
+try { localStorage.setItem(DEV_KEY, devUrl.href); } catch { /* stockage bloqué */ }
+if (bundledFirst && !sessionStorage.getItem('owlnest_dev_reloaded')) {
+  sessionStorage.setItem('owlnest_dev_reloaded', '1');
+  location.reload();
+}
+
+import { Ha3dFloorplan } from './ha-3d-floorplan';
 
 // Un custom element ne peut pas être redéfini : le HMR à chaud est un cul-de-sac
 // ici. On force donc un rechargement complet de la page à chaque modification,
