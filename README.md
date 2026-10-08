@@ -37,6 +37,8 @@
 
 Owlnest is a Home Assistant card that displays your home in 3D. Lights in the model follow your actual lamps: on/off, colour and brightness. You can also place sensors and have doors or shutters move with their entity's state.
 
+**Bring your own home in one gesture:** drop your Sweet Home 3D export on the card. It is converted in your browser, its doors and windows are found and set up, and it shows up right away. No Blender, no converter, no file to copy.
+
 ## Why Owlnest?
 
 3D floorplan solutions for Home Assistant rely on static Blender renders: one image per light state, a new render for every colour or condition. Nothing interactive, nothing alive.
@@ -51,6 +53,7 @@ A demo house is included so you can try the card with your own lights before mak
 
 | Feature | Details |
 |---|---|
+| Import | Drop a Sweet Home 3D export (folder, files or zip) or a `.glb` on the card. Doors and windows are found and set up for you; heavy plans can be lightened for wall tablets. |
 | Lights | On/off, brightness and colour synchronized with `light.*` entities. |
 | Doors and shutters | Swinging, sliding, extending or playback of animations in the GLB. |
 | Sensors | Values displayed wherever you place their anchors. |
@@ -174,24 +177,30 @@ Try toggling a linked light. You can also drag to orbit, scroll to zoom, or use 
 
 ### Use your own home
 
-Export your model as **GLB** (recommended) or **GLTF**. For a GLB named `house.glb`:
+The easiest way is [Sweet Home 3D](https://www.sweethome3d.com/), a free home design app.
 
-1. Create `config/www/models/` if needed and place the file there.
-2. Add a card with this configuration:
+1. In Sweet Home 3D, open your home and choose **3D view → Export to OBJ format**. Export all the items into an empty folder.
+2. **Drop that folder onto the card.** Its files or a zip of it work too. You can also click **Import my floor plan**, in the demo banner or at the top of the editor's **Config** tab.
+3. If the plan is heavy, the card offers to lighten it for wall tablets and explains what that changes. It is unchecked by default.
+4. The card offers to add the doors and windows it found. Click **Add them**, then pick the sensor of each one in the **Openings** tab.
+5. Open the editor with the **pencil**. In **Anchors**, click **+ Add**, click the model to place the anchor, then choose an entity such as `light.living_room`. Changes are saved automatically.
 
-   ```yaml
-   type: custom:ha-3d-floorplan
-   scene_id: my_home
-   model_url: /local/models/house.glb
-   ```
+Dropping your plan again after editing it keeps your anchors, and asks what to do with your openings: keep them, add only the new ones, or replace them while keeping the sensors already linked. Importing requires an administrator account. [Import guide →](docs/guide.md#importing-your-floor-plan)
 
-   If you already tried the demo, open the in-scene editor's **Config** tab and select or create `my_home`; set the model URL there and click **Apply**. The card remembers the scene selected in the editor.
+<details>
+<summary><strong>Using a GLB made elsewhere (Blender…)</strong></summary>
 
-3. Open the editor with the **pencil** if it isn't already open.
-4. In **Anchors**, click **+ Add**, click the model to place the anchor, then choose an entity such as `light.living_room`.
-5. Adjust its position and wait for the save indicator. Click **Done** to leave the editor; changes are saved automatically.
+You can drop a `.glb` onto the card in the same way. To serve it yourself instead, place it in `config/www/models/` and set it in the card:
 
-`scene_id` identifies the saved scene. `model_url` points to the 3D file. Once the card is set up, continue in the visual editor.
+```yaml
+type: custom:ha-3d-floorplan
+scene_id: my_home
+model_url: /local/models/house.glb
+```
+
+A plan imported from the card takes precedence over `model_url`.
+
+</details>
 
 **Editing tip:** press **G** to move a selected anchor, then **X**, **Y** or **Z** to constrain movement to an axis.
 
@@ -199,6 +208,7 @@ Export your model as **GLB** (recommended) or **GLTF**. For a GLB named `house.g
 
 | Topic | Guide |
 |---|---|
+| Import a Sweet Home 3D plan or a GLB | [Importing your floor plan](docs/guide.md#importing-your-floor-plan) |
 | Navigate with mouse or touch | [Scene navigation](docs/guide.md#scene-navigation) |
 | Configure devices, labels and visibility | [Anchors](docs/guide.md#anchors) |
 | Animate doors, shutters or GLB animations | [Openings](docs/guide.md#openings) |
@@ -222,7 +232,9 @@ If the repository was added under another category, remove that HACS entry and a
 <details>
 <summary><strong>My model doesn't appear</strong></summary>
 
-Check that `config/www/models/house.glb` is accessible at `/local/models/house.glb` on your Home Assistant instance. The filename and `model_url` must match. For GLTF, keep any referenced textures and binary files accessible at their relative paths too.
+If you dropped your plan on the card and it says the integration does not accept imports, update Owlnest in HACS and restart Home Assistant.
+
+If you serve the model yourself, check that `config/www/models/house.glb` is accessible at `/local/models/house.glb` on your Home Assistant instance. The filename and `model_url` must match. For GLTF, keep any referenced textures and binary files accessible at their relative paths too.
 
 If the file is accessible but still fails to load, check the browser console for the loading error.
 

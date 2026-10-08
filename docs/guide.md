@@ -2,6 +2,7 @@
 
 🇫🇷 [Version française](guide-fr.md) · ← [Back to the README](../README.md)
 
+- [Importing your floor plan](#importing-your-floor-plan)
 - [Scene navigation](#scene-navigation)
 - [Anchors](#anchors)
 - [Openings](#openings)
@@ -11,6 +12,36 @@
 - [Rendering and appearance](#rendering-and-appearance)
 - [Keyboard shortcuts (edit mode)](#keyboard-shortcuts-edit-mode)
 - [Full YAML reference](#full-yaml-reference)
+
+---
+
+## Importing your floor plan
+
+Drop your plan onto the card, or click **Import my floor plan** (demo banner, or top of the editor's **Config** tab) and pick the files. The card accepts:
+
+- the folder exported by **Sweet Home 3D** (**3D view → Export to OBJ format**), its files selected together, or a zip of it;
+- a `.glb` file. A `.gltf` cannot be imported as is: export a `.glb` instead.
+
+The conversion happens in your browser, textures included. The model is then sent to Home Assistant, stored in `config/owlnest/models/` and shown right away. Only administrators can import; the limit is 300 MB.
+
+### Lightening a heavy plan
+
+When a plan is heavy for a wall tablet (over 150 000 triangles, or textures larger than 1024 px), the card offers to lighten it before converting, and shows the expected gain:
+
+- **very detailed small objects** (dishes, plants, taps) are simplified, within 1 % of their size;
+- **large textures** are reduced to 1024 px.
+
+Walls, floors, doors and windows are never touched, so openings and anchors stay exact. The option is unchecked by default; the card remembers your last choice.
+
+### Doors and windows found for you
+
+Sweet Home 3D names the hinges and the moving parts of its doors and windows. On import, the card turns each door and window into a ready-made opening: hinges on the right side, opening towards the inside of the home, sliding panels towards each other. Cupboard and appliance doors are left out. You only pick the sensor of each opening in the **Openings** tab.
+
+If the scene already has openings, the card asks: **Keep mine**, **Add the new ones**, or **Replace**. Replacing keeps the sensor, name, colours and direction of every door or window that is still there, and removes the openings of the previous model. The same choice is in the **Openings** tab.
+
+### Importing again
+
+Drop your plan again after editing it in Sweet Home 3D: anchors, rules, cards and camera views are kept, and the camera frames the new model. Importing over the demo house starts from a clean scene. An imported plan takes precedence over the card's `model_url`.
 
 ---
 
@@ -89,6 +120,8 @@ Configure this in anchor properties → **Visible if** in the editor.
 </p>
 
 Openings are pieces of your model (doors, windows, shutters, a dishwasher or oven door, a reclining sofa) that move when a Home Assistant entity opens or closes. Nothing is changed in the model file: swing, slide and extend detach the piece in the card; **Plays model animations** poses the nodes already stored in the GLB.
+
+> Imported from Sweet Home 3D? Doors and windows are added for you, set up: see [Doors and windows found for you](#doors-and-windows-found-for-you). The steps below are for anything else.
 
 ### Adding an opening
 

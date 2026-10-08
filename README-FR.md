@@ -37,6 +37,8 @@
 
 Owlnest est une carte Home Assistant qui affiche votre logement en 3D. Les lumières du modèle suivent vos vraies lampes : allumage, couleur et intensité. Vous pouvez aussi y placer vos capteurs et faire bouger les portes ou les volets selon leur état.
 
+**Votre logement en un geste :** glissez votre export Sweet Home 3D sur la carte. Il est converti dans votre navigateur, ses portes et fenêtres sont repérées et réglées, et il s'affiche aussitôt. Pas de Blender, pas de convertisseur, aucun fichier à copier.
+
 ## Pourquoi Owlnest ?
 
 Les solutions de plan 3D pour Home Assistant reposent sur des rendus Blender statiques : une image par état de lumière, un nouveau rendu à chaque couleur ou condition. Rien d'interactif, rien de vivant.
@@ -51,6 +53,7 @@ Une maison de démo est fournie pour essayer la carte avec vos propres lumières
 
 | Fonctionnalité | Détail |
 |---|---|
+| Import | Glissez un export Sweet Home 3D (dossier, fichiers ou zip) ou un `.glb` sur la carte. Portes et fenêtres sont repérées et réglées pour vous ; un plan lourd peut être allégé pour une tablette murale. |
 | Lumières | Allumage, intensité et couleur synchronisés avec les entités `light.*`. |
 | Portes et volets | Rotation, glissement, déroulement ou lecture des animations du GLB. |
 | Capteurs | Valeurs affichées à l'endroit où vous placez les ancres. |
@@ -174,24 +177,30 @@ Essayez d'allumer une lumière reliée. Vous pouvez aussi glisser pour tourner a
 
 ### Utilisez votre logement
 
-Exportez votre modèle en **GLB** (recommandé) ou **GLTF**. Pour un GLB nommé `maison.glb` :
+Le plus simple est [Sweet Home 3D](https://www.sweethome3d.com/fr/), un logiciel gratuit d'aménagement intérieur.
 
-1. Créez le dossier `config/www/models/` si nécessaire et placez-y le fichier.
-2. Ajoutez une carte avec cette configuration :
+1. Dans Sweet Home 3D, ouvrez votre logement et choisissez **Vue 3D → Exporter au format OBJ**. Exportez tous les éléments dans un dossier vide.
+2. **Glissez ce dossier sur la carte.** Ses fichiers ou un zip fonctionnent aussi. Vous pouvez également cliquer sur **Importer mon plan**, dans le bandeau de la démo ou en haut de l'onglet **Config** de l'éditeur.
+3. Si le plan est lourd, la carte propose de l'alléger pour une tablette murale et explique ce que cela change. L'option est décochée par défaut.
+4. La carte propose d'ajouter les portes et fenêtres trouvées. Cliquez sur **Les ajouter**, puis choisissez le capteur de chacune dans l'onglet **Ouvrants**.
+5. Ouvrez l'éditeur avec le **crayon**. Dans **Ancres**, cliquez sur **+ Ajouter**, cliquez sur le modèle pour placer l'ancre, puis choisissez une entité comme `light.salon`. Les modifications sont sauvegardées automatiquement.
 
-   ```yaml
-   type: custom:ha-3d-floorplan
-   scene_id: ma_maison
-   model_url: /local/models/maison.glb
-   ```
+Glisser à nouveau votre plan après l'avoir retouché garde vos ancres, et demande quoi faire de vos ouvrants : les garder, ajouter seulement les nouveaux, ou les remplacer en gardant les capteurs déjà reliés. L'import demande un compte administrateur. [Guide de l'import →](docs/guide-fr.md#importer-votre-plan)
 
-   Si vous avez déjà essayé la démo, ouvrez l'onglet **Config** de l'éditeur dans la scène et sélectionnez ou créez `ma_maison` ; indiquez-y l'URL du modèle, puis cliquez sur **Appliquer**. La carte mémorise la scène choisie dans l'éditeur.
+<details>
+<summary><strong>Utiliser un GLB fait ailleurs (Blender…)</strong></summary>
 
-3. Ouvrez l'éditeur avec le **crayon** s'il n'est pas déjà ouvert.
-4. Dans **Ancres**, cliquez sur **+ Ajouter**, cliquez sur le modèle pour placer l'ancre, puis choisissez une entité comme `light.salon`.
-5. Ajustez sa position et attendez l'indicateur de sauvegarde. Cliquez sur **Terminé** pour quitter l'éditeur ; les modifications sont sauvegardées automatiquement.
+Vous pouvez glisser un `.glb` sur la carte de la même façon. Pour le servir vous-même, placez-le dans `config/www/models/` et indiquez-le dans la carte :
 
-`scene_id` identifie la scène sauvegardée. `model_url` indique le chemin du fichier 3D. Une fois la carte en place, continuez dans l'éditeur visuel.
+```yaml
+type: custom:ha-3d-floorplan
+scene_id: ma_maison
+model_url: /local/models/maison.glb
+```
+
+Un plan importé depuis la carte passe devant `model_url`.
+
+</details>
 
 **Astuce d'édition :** appuyez sur **G** pour déplacer une ancre sélectionnée, puis sur **X**, **Y** ou **Z** pour limiter le mouvement à un axe.
 
@@ -199,6 +208,7 @@ Exportez votre modèle en **GLB** (recommandé) ou **GLTF**. Pour un GLB nommé 
 
 | Sujet | Guide |
 |---|---|
+| Importer un plan Sweet Home 3D ou un GLB | [Importer votre plan](docs/guide-fr.md#importer-votre-plan) |
 | Naviguer à la souris ou au tactile | [Navigation dans la scène](docs/guide-fr.md#navigation-dans-la-scène) |
 | Configurer les appareils, les étiquettes et leur visibilité | [Ancres](docs/guide-fr.md#ancres) |
 | Animer les portes, les volets ou les animations du GLB | [Ouvrants](docs/guide-fr.md#ouvrants) |
@@ -222,7 +232,9 @@ Si le dépôt a été ajouté dans une autre catégorie, retirez cette entrée d
 <details>
 <summary><strong>Mon modèle ne s'affiche pas</strong></summary>
 
-Vérifiez que `config/www/models/maison.glb` est accessible à l'adresse `/local/models/maison.glb` sur votre instance Home Assistant. Le nom du fichier et `model_url` doivent correspondre. Pour un GLTF, les textures et fichiers binaires référencés doivent aussi être accessibles à leurs chemins relatifs.
+Si vous avez glissé votre plan sur la carte et qu'elle indique que l'intégration n'accepte pas les imports, mettez Owlnest à jour dans HACS et redémarrez Home Assistant.
+
+Si vous servez le modèle vous-même, vérifiez que `config/www/models/maison.glb` est accessible à l'adresse `/local/models/maison.glb` sur votre instance Home Assistant. Le nom du fichier et `model_url` doivent correspondre. Pour un GLTF, les textures et fichiers binaires référencés doivent aussi être accessibles à leurs chemins relatifs.
 
 Si le fichier est accessible mais ne se charge toujours pas, consultez l'erreur dans la console du navigateur.
 

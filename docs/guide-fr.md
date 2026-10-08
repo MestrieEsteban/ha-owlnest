@@ -2,6 +2,7 @@
 
 🇬🇧 [English version](guide.md) · ← [Retour au README](../README-FR.md)
 
+- [Importer votre plan](#importer-votre-plan)
 - [Navigation dans la scène](#navigation-dans-la-scène)
 - [Ancres](#ancres)
 - [Ouvrants](#ouvrants)
@@ -11,6 +12,36 @@
 - [Rendu et apparence](#rendu-et-apparence)
 - [Raccourcis clavier (mode édition)](#raccourcis-clavier-mode-édition)
 - [Configuration YAML complète](#configuration-yaml-complète)
+
+---
+
+## Importer votre plan
+
+Glissez votre plan sur la carte, ou cliquez sur **Importer mon plan** (bandeau de la démo, ou haut de l'onglet **Config** de l'éditeur) et choisissez les fichiers. La carte accepte :
+
+- le dossier exporté par **Sweet Home 3D** (**Vue 3D → Exporter au format OBJ**), ses fichiers sélectionnés ensemble, ou un zip de ce dossier ;
+- un fichier `.glb`. Un `.gltf` ne s'importe pas tel quel : exportez plutôt un `.glb`.
+
+La conversion se fait dans votre navigateur, textures comprises. Le modèle est ensuite envoyé à Home Assistant, rangé dans `config/owlnest/models/` et affiché aussitôt. Seuls les administrateurs peuvent importer ; la limite est de 300 Mo.
+
+### Alléger un plan lourd
+
+Quand un plan est lourd pour une tablette murale (plus de 150 000 triangles, ou des textures de plus de 1024 px), la carte propose de l'alléger avant la conversion, et affiche le gain attendu :
+
+- les **petits objets très détaillés** (vaisselle, plantes, robinets) sont simplifiés, à 1 % de leur taille près ;
+- les **grandes textures** sont réduites à 1024 px.
+
+Murs, sols, portes et fenêtres ne sont jamais touchés : ouvrants et ancres restent exacts. L'option est décochée par défaut ; la carte retient votre dernier choix.
+
+### Portes et fenêtres repérées pour vous
+
+Sweet Home 3D nomme les gonds et les parties mobiles de ses portes et fenêtres. À l'import, la carte transforme chaque porte et fenêtre en ouvrant tout réglé : gonds du bon côté, ouverture vers l'intérieur du logement, vantaux coulissants l'un vers l'autre. Les portes de placard et d'électroménager sont laissées de côté. Il ne reste qu'à choisir le capteur de chaque ouvrant dans l'onglet **Ouvrants**.
+
+Si la scène a déjà des ouvrants, la carte demande : **Garder les miens**, **Ajouter les nouveaux** ou **Remplacer**. Remplacer garde le capteur, le nom, les couleurs et le sens de chaque porte ou fenêtre encore présente, et retire les ouvrants de l'ancien modèle. Le même choix existe dans l'onglet **Ouvrants**.
+
+### Importer à nouveau
+
+Glissez à nouveau votre plan après l'avoir retouché dans Sweet Home 3D : ancres, règles, cartes et vues caméra sont gardées, et la caméra cadre le nouveau modèle. Importer par-dessus la maison de démo repart d'une scène vierge. Un plan importé passe devant le `model_url` de la carte.
 
 ---
 
@@ -89,6 +120,8 @@ Configurez cela dans les propriétés de l'ancre → **Visible si** dans l'édit
 </p>
 
 Les ouvrants sont des pièces de votre modèle (portes, fenêtres, volets, porte de lave-vaisselle ou de four, fauteuil inclinable) qui bougent quand une entité Home Assistant s'ouvre ou se ferme. Le fichier du modèle n'est pas modifié : pivoter, coulisser et se dérouler détachent la pièce dans la carte ; **Joue les animations du modèle** pose les nœuds déjà enregistrés dans le GLB.
+
+> Plan importé depuis Sweet Home 3D ? Portes et fenêtres sont ajoutées pour vous, toutes réglées : voir [Portes et fenêtres repérées pour vous](#portes-et-fenêtres-repérées-pour-vous). Les étapes ci-dessous servent pour tout le reste.
 
 ### Ajouter un ouvrant
 
