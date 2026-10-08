@@ -194,11 +194,18 @@ export function normalizeViews(views: CameraView[]): CameraView[] {
  * rendering pipeline doesn't need to know about scenes at all.
  * All anchor fields (lightStyle, lightIntensity, lightDirection, hidden) are preserved.
  */
+/** Adresse sous laquelle l'intégration sert les plans importés (voir models.py). */
+export const IMPORTED_MODELS = '/owlnest_models/';
+
 export function sceneToEffectiveConfig(scene: OwlnestScene, base: CardConfig): CardConfig {
   const s = scene.settings;
+  // Un plan importé depuis la carte est le dernier choix explicite de
+  // l'utilisateur : il passe devant le model_url du YAML. Sans cela, déposer
+  // son plan ne changerait rien chez qui avait suivi l'ancienne installation.
+  const imported = scene.model_url?.startsWith(IMPORTED_MODELS) ? scene.model_url : '';
   return {
     ...base,
-    model_url: base.model_url || scene.model_url || '',
+    model_url: imported || base.model_url || scene.model_url || '',
     // Scene settings override YAML values (settings are configured from edit mode)
     ...(s?.sun_entity     !== undefined && { sun_entity:     s.sun_entity }),
     ...(s?.weather_entity !== undefined && { weather_entity: s.weather_entity }),

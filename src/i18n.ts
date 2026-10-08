@@ -31,7 +31,6 @@ const STRINGS = {
     importErrIntegration: 'The Owlnest integration does not accept imports yet: update it and restart Home Assistant.',
     importErrGeneric: 'The import failed',
     importNoScene:    'Choose a scene first in the card settings.',
-    importYamlOverride: 'Imported, but the card YAML sets model_url: remove it to see this plan.',
     importMissingTextures: 'Some textures were missing and were left out',
     // Inspector tabs
     tabAnchors:     'Anchors',
@@ -716,7 +715,6 @@ const STRINGS = {
     importErrIntegration: 'L’intégration Owlnest n’accepte pas encore les imports : mettez-la à jour et redémarrez Home Assistant.',
     importErrGeneric: 'L’import a échoué',
     importNoScene:    'Choisissez d’abord une scène dans les réglages de la carte.',
-    importYamlOverride: 'Importé, mais le YAML de la carte fixe model_url : retirez-le pour voir ce plan.',
     importMissingTextures: 'Des textures manquaient, elles ont été laissées de côté',
     tabAnchors:     'Ancres',
     tabAnchorsDesc: 'Points 3D liés à des entités Home Assistant',

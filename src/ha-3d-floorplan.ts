@@ -342,7 +342,13 @@ export class Ha3dFloorplan extends HTMLElement {
 
   /** La carte montre-t-elle la maison de démonstration ? */
   private get _isDemo(): boolean {
-    return !this._config?.model_url?.trim() && !this._scene?.model_url?.trim() && !this._backendDown;
+    return !this._effectiveModelUrl() && !this._backendDown;
+  }
+
+  /** Le modèle configuré, scène et YAML confondus, sans le repli de la démo. */
+  private _effectiveModelUrl(): string {
+    const cfg = this._scene ? sceneToEffectiveConfig(this._scene, this._config!) : this._config;
+    return cfg?.model_url?.trim() ?? '';
   }
 
   /** L'intégration n'a pas pu lire la scène active : voir `sceneUnreachable`. */
@@ -984,9 +990,7 @@ export class Ha3dFloorplan extends HTMLElement {
       progress.done();
       await this._loadModel();
 
-      if (this._config?.model_url?.trim()) {
-        this._showToast(t('importYamlOverride'), true);
-      } else if (stats?.missingTextures.length) {
+      if (stats?.missingTextures.length) {
         this._showToast(`${t('importMissingTextures')} (${stats.missingTextures.length})`, true);
       } else {
         this._showToast(t('importDone'));
