@@ -214,6 +214,11 @@ export interface RenderingConfig {
    * reforme derrière. Le reste de la maison reste plein.
    */
   xray?: number;
+  /**
+   * `low` : murs coupés à mi-hauteur, mobilier intact (voir low-walls.ts).
+   * Absent ou `full` : murs entiers. Chaque écran peut basculer pour lui.
+   */
+  walls?: 'full' | 'low';
   ground_color?: string;
   shadows?: boolean;
   transparent_background?: boolean;
