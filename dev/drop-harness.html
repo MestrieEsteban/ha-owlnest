@@ -98,8 +98,22 @@
     say(`voile de dépôt affiché : ${haCard.textContent.includes('Sweet Home 3D') || haCard.textContent.includes('plan')}`);
     haCard.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
 
+    // L'allègement attend une réponse : ?lighten coche la case, sinon on
+    // continue sans rien réduire.
+    const lighten = new URLSearchParams(location.search).has('lighten');
+    //   ?ask : on laisse la question affichée, pour la regarder.
+    const answer = new URLSearchParams(location.search).has('ask') ? 0 : setInterval(() => {
+      const go = [...card.querySelectorAll('button')].find((b) => /^(Continue|Continuer)$/.test(b.textContent));
+      if (!go) return;
+      const box = go.parentElement.querySelector('input[type=checkbox]');
+      if (box) box.checked = lighten;
+      say(`allègement proposé : ${go.parentElement.textContent.match(/\d+ image[^.]*\./)?.[0] ?? '?'} → ${lighten ? 'oui' : 'non'}`);
+      go.click();
+    }, 100);
+
     // Attend la fin : plus d'import en cours et un modèle chargé.
     while (card._importing || !card.modelLoaded) await new Promise((r) => setTimeout(r, 200));
+    clearInterval(answer);
     await new Promise((r) => setTimeout(r, 500));
     say(`import terminé en ${((performance.now() - t0) / 1000).toFixed(1)} s, modèle chargé : ${!!card.modelLoaded}, démo : ${card._isDemo}`);
 

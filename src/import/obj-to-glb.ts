@@ -27,6 +27,8 @@ export interface ImportImage {
 
 export interface ImportStats {
   triangles: number;
+  /** Triangles écrits dans le GLB : moins que `triangles` si l'on a simplifié. */
+  trianglesOut: number;
   groups: number;
   /** Vantaux Sweet Home 3D reconnus, prêts à devenir des ouvrants. */
   leaves: number;
@@ -280,7 +282,38 @@ class GlbWriter {
  *
  * @param images textures fournies par l'utilisateur, indexées par `fileKey`
  */
-export function objToGlb(objText: string, mtlText: string | null, images: Map<string, ImportImage>): ImportResult {
+/**
+ * Simplifie une primitive : rend sa nouvelle liste d'indices, ou `null` pour
+ * la garder telle quelle. Les sommets inutilisés sont retirés ensuite.
+ */
+export type SimplifyFn = (group: string, indices: number[], positions: number[]) => number[] | null;
+
+/** Retire les sommets qu'aucun triangle n'utilise plus, et renumérote. */
+export function compact(
+  idx: readonly number[], pos: readonly number[], uv: readonly number[], nor: readonly number[],
+): { idx: number[]; pos: number[]; uv: number[]; nor: number[] } {
+  const remap = new Map<number, number>();
+  const out = { idx: [] as number[], pos: [] as number[], uv: [] as number[], nor: [] as number[] };
+  for (const i of idx) {
+    let j = remap.get(i);
+    if (j === undefined) {
+      j = remap.size;
+      remap.set(i, j);
+      out.pos.push(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]);
+      out.uv.push(uv[i * 2], uv[i * 2 + 1]);
+      out.nor.push(nor[i * 3], nor[i * 3 + 1], nor[i * 3 + 2]);
+    }
+    out.idx.push(j);
+  }
+  return out;
+}
+
+export function objToGlb(
+  objText: string,
+  mtlText: string | null,
+  images: Map<string, ImportImage>,
+  options: { simplify?: SimplifyFn } = {},
+): ImportResult {
   const mats = mtlText ? parseMtl(mtlText) : new Map<string, Material>();
   const { groups, triangles } = parseObj(objText);
   const w = new GlbWriter();
@@ -327,17 +360,24 @@ export function objToGlb(objText: string, mtlText: string | null, images: Map<st
   const nodes: Record<string, unknown>[] = [];
   /** Nœud de chaque groupe, -1 pour un groupe sans triangle. */
   const nodeOfGroup: number[] = [];
+  let trianglesOut = 0;
   for (const g of groups) {
     nodeOfGroup.push(-1);
     const primitives: Record<string, unknown>[] = [];
     g.prims.forEach((pr) => {
       if (!pr.idx.length) return;
-      const attributes: Record<string, number> = { POSITION: w.floats(pr.pos, 'VEC3', true) };
-      if (pr.hasNormal) attributes.NORMAL = w.floats(pr.nor, 'VEC3');
-      if (pr.hasUv) attributes.TEXCOORD_0 = w.floats(pr.uv, 'VEC2');
+      let geo: { idx: readonly number[]; pos: readonly number[]; uv: readonly number[]; nor: readonly number[] } = pr;
+      const simpler = options.simplify?.(g.name, pr.idx, pr.pos);
+      if (simpler && simpler.length >= 3 && simpler.length < pr.idx.length) {
+        geo = compact(simpler, pr.pos, pr.uv, pr.nor);
+      }
+      trianglesOut += geo.idx.length / 3;
+      const attributes: Record<string, number> = { POSITION: w.floats(geo.pos as number[], 'VEC3', true) };
+      if (pr.hasNormal) attributes.NORMAL = w.floats(geo.nor as number[], 'VEC3');
+      if (pr.hasUv) attributes.TEXCOORD_0 = w.floats(geo.uv as number[], 'VEC2');
       primitives.push({
         attributes,
-        indices: w.indices(pr.idx, pr.pos.length / 3),
+        indices: w.indices(geo.idx as number[], geo.pos.length / 3),
         material: materialFor(pr.material, pr.hasUv),
       });
     });
@@ -409,6 +449,7 @@ export function objToGlb(objText: string, mtlText: string | null, images: Map<st
     glb: w.finish(json),
     stats: {
       triangles,
+      trianglesOut,
       groups: groups.length,
       leaves: leafCount,
       materials: materials.length,

@@ -166,3 +166,16 @@ test('un vantail Sweet Home 3D devient un nœud parent, gonds notés', () => {
   const roots = json.scenes[0].nodes.map((i) => json.nodes[i].name);
   assert.deepEqual(roots, ['frame', 'sweethome3d_hinge_1', 'sofa', 'sweethome3d_leaf_0_1']);
 });
+
+test('une simplification écrit moins de triangles et retire les sommets orphelins', () => {
+  const obj = ['v 0 0 0', 'v 1 0 0', 'v 1 1 0', 'v 0 1 0', 'v 5 5 5', 'g deco', 'f 1 2 3', 'f 1 3 4', 'f 3 4 5'].join('\n');
+  const { glb, stats } = objToGlb(obj, null, new Map(), {
+    simplify: (group, idx) => (group === 'deco' ? idx.slice(0, 3) : null),
+  });
+  const { json, accessor } = read(glb);
+  assert.equal(stats.triangles, 3);
+  assert.equal(stats.trianglesOut, 1);
+  const prim = json.meshes[0].primitives[0];
+  assert.deepEqual(accessor(prim.indices), [0, 1, 2]);
+  assert.equal(json.accessors[prim.attributes.POSITION].count, 3, 'le sommet (5,5,5) a disparu');
+});

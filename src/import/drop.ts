@@ -7,11 +7,16 @@
  */
 
 import { unzipSync } from 'fflate';
-import { objToGlb, type ImportStats } from './obj-to-glb';
+import { objToGlb, parseMtl, fileKey, type ImportStats } from './obj-to-glb';
+import {
+  estimateLighten, estimateGeometry, measureImage, downscaleImage, makeSimplifier, worthOffering,
+  MAX_TEXTURE, type LightenOffer, type TextureInfo,
+} from './lighten';
+import type { SimplifyFn } from './obj-to-glb';
 import { planImport, modelSlug, type DroppedFile } from './plan';
 import { uploadGlb, type UploadHass } from './upload';
 
-export type ImportStage = 'reading' | 'converting' | 'uploading';
+export type ImportStage = 'reading' | 'lightening' | 'converting' | 'uploading';
 
 export class ImportError extends Error {
   constructor(readonly reason: 'empty' | 'gltf-text' | 'no-model') {
@@ -96,6 +101,11 @@ export async function importModel(
   hass: UploadHass,
   source: FileSystemEntry[] | File[],
   onStage: (stage: ImportStage, fraction?: number) => void,
+  /**
+   * Propose l'allègement quand des textures dépassent `MAX_TEXTURE`. Rend le
+   * choix de l'utilisateur ; absent, rien n'est réduit.
+   */
+  chooseLighten?: (offer: LightenOffer) => Promise<boolean>,
 ): Promise<ImportResult> {
   onStage('reading');
   await nextFrame();
@@ -107,14 +117,40 @@ export async function importModel(
   if (plan.kind === 'glb') {
     glb = plan.glb;
   } else {
+    const decoder = new TextDecoder();
+    const objText = decoder.decode(plan.obj);
+    const mtlText = plan.mtl ? decoder.decode(plan.mtl) : null;
+    let images = plan.images;
+    let simplify: SimplifyFn | undefined;
+
+    if (chooseLighten) {
+      // Seules comptent les textures que le MTL utilise : un dossier d'export
+      // peut contenir d'autres images, qui ne partiront pas dans le modèle.
+      const used = new Set([...parseMtl(mtlText ?? '').values()].map((m) => m.map && fileKey(m.map)).filter(Boolean));
+      const infos = new Map<string, TextureInfo>();
+      for (const [key, img] of images) {
+        if (!used.has(key)) continue;
+        const info = await measureImage(img);
+        if (info) infos.set(key, info);
+      }
+      const offer: LightenOffer = { textures: estimateLighten(infos.values()), geometry: estimateGeometry(objText) };
+      if (worthOffering(offer) && await chooseLighten(offer)) {
+        onStage('lightening', 0);
+        simplify = await makeSimplifier();
+        const lighter = new Map(images);
+        let done = 0;
+        const heavy = [...infos].filter(([, i]) => Math.max(i.width, i.height) > MAX_TEXTURE);
+        for (const [key, info] of heavy) {
+          lighter.set(key, await downscaleImage(images.get(key)!, info));
+          onStage('lightening', ++done / heavy.length);
+        }
+        images = lighter;
+      }
+    }
+
     onStage('converting');
     await nextFrame();
-    const decoder = new TextDecoder();
-    const out = objToGlb(
-      decoder.decode(plan.obj),
-      plan.mtl ? decoder.decode(plan.mtl) : null,
-      plan.images,
-    );
+    const out = objToGlb(objText, mtlText, images, { simplify });
     glb = new Uint8Array(out.glb);
     stats = out.stats;
   }

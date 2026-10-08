@@ -8,8 +8,12 @@
 
 import { t } from '../i18n';
 import { droppedEntries, type ImportStage } from '../import/drop';
+import { MAX_TEXTURE, HEAVY_PLAN, type LightenOffer } from '../import/lighten';
 
 const FONT = 'font-family:var(--primary-font-family,sans-serif)';
+
+/** Dernier choix d'allègement, repris au prochain import. */
+const LIGHTEN_KEY = 'owlnest_lighten';
 
 /** Ce qu'accepte le sélecteur : l'export Sweet Home 3D en vrac, un zip ou un GLB. */
 const ACCEPT = '.glb,.obj,.mtl,.zip,.jpg,.jpeg,.png';
@@ -136,6 +140,7 @@ export class ImportProgress {
   stage(stage: ImportStage | 'loading', fraction?: number): void {
     const key = {
       reading: 'importReading',
+      lightening: 'importLightening',
       converting: 'importConverting',
       uploading: 'importUploading',
       loading: 'importLoading',
@@ -144,6 +149,76 @@ export class ImportProgress {
     this.label.textContent = t(key[stage]) + pct;
     this.bar.style.width = fraction === undefined ? '100%' : `${Math.round(fraction * 100)}%`;
     this.bar.style.opacity = fraction === undefined ? '0.45' : '1';
+  }
+
+  /**
+   * Propose d'alléger le plan, avec ce que ça change, et attend la réponse.
+   *
+   * La case reprend le dernier choix : quelqu'un qui importe pour sa tablette
+   * le fera à chaque retouche de son plan.
+   */
+  askLighten(offer: LightenOffer): Promise<boolean> {
+    const mb = (b: number) => (b / 1048576).toFixed(b < 10 * 1048576 ? 1 : 0);
+    // Arrondi au millier : « environ 240 000 », pas un faux chiffre précis.
+    const tri = (n: number) => (Math.round(n / 1000) * 1000).toLocaleString();
+    const lines: string[] = [];
+    const g = offer.geometry;
+    if (g.before > HEAVY_PLAN && g.dense > 0) {
+      lines.push(t('lightenGeometry').replace('{before}', tri(g.before)).replace('{after}', tri(g.after)));
+    }
+    const tx = offer.textures;
+    if (tx.heavy > 0) {
+      lines.push(t('lightenGain')
+        .replace('{n}', String(tx.heavy))
+        .replace('{px}', String(MAX_TEXTURE))
+        .replace('{before}', mb(tx.before))
+        .replace('{after}', mb(tx.after)));
+    }
+    let remembered = false;
+    try { remembered = localStorage.getItem(LIGHTEN_KEY) === '1'; } catch { /* stockage bloqué */ }
+
+    const box = document.createElement('div');
+    box.style.cssText = 'font-size:11.5px;color:#cbd5e1;line-height:1.5;';
+    const title = document.createElement('div');
+    title.style.cssText = 'font-size:12.5px;font-weight:700;color:#7dd3fc;margin-bottom:6px;';
+    title.textContent = t('lightenTitle');
+    const label = document.createElement('label');
+    label.style.cssText = 'display:flex;gap:8px;align-items:flex-start;cursor:pointer;margin:8px 0;';
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.checked = remembered;
+    check.style.cssText = 'margin-top:2px;cursor:pointer;';
+    const text = document.createElement('span');
+    const strong = document.createElement('b');
+    strong.textContent = t('lightenOption');
+    text.append(strong);
+    for (const line of lines) {
+      const li = document.createElement('div');
+      li.style.cssText = 'margin-top:3px;';
+      li.textContent = `• ${line}`;
+      text.append(li);
+    }
+    label.append(check, text);
+    const why = document.createElement('div');
+    why.style.cssText = 'font-size:10.5px;color:#94a3b8;margin-bottom:12px;';
+    why.textContent = t('lightenWhy');
+    const go = document.createElement('button');
+    go.textContent = t('lightenContinue');
+    go.style.cssText = 'display:block;margin-left:auto;background:rgba(125,209,252,0.2);border:1px solid rgba(125,209,252,0.45);border-radius:7px;color:#7dd3fc;padding:6px 14px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;';
+    box.append(title, label, why, go);
+
+    this.label.style.display = 'none';
+    this.bar.parentElement!.style.display = 'none';
+    this.el.appendChild(box);
+    return new Promise((resolve) => {
+      go.addEventListener('click', () => {
+        try { localStorage.setItem(LIGHTEN_KEY, check.checked ? '1' : '0'); } catch { /* stockage bloqué */ }
+        box.remove();
+        this.label.style.display = '';
+        this.bar.parentElement!.style.display = '';
+        resolve(check.checked);
+      });
+    });
   }
 
   /** Garde l'erreur affichée jusqu'à ce qu'on la ferme : on doit pouvoir la lire. */

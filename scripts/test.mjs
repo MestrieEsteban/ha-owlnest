@@ -39,6 +39,7 @@ const ENTRIES = [
   'src/import/plan.ts',
   'src/import/upload.ts',
   'src/import/sh3d.ts',
+  'src/import/lighten.ts',
 ];
 
 /**

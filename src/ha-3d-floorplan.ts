@@ -1001,7 +1001,11 @@ export class Ha3dFloorplan extends HTMLElement {
 
     const progress = new ImportProgress(this.overlayContainer);
     try {
-      const { url, stats } = await importModel(this._hass, source, (stage, f) => progress.stage(stage, f));
+      const { url, stats } = await importModel(
+        this._hass, source,
+        (stage, f) => progress.stage(stage, f),
+        (estimate) => progress.askLighten(estimate),
+      );
       progress.stage('loading');
 
       const wasDemo = this._isDemo;
