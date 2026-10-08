@@ -1220,6 +1220,34 @@ export class PartController {
   }
 
   /** Position d'un ouvrant, pour l'aperçu de l'éditeur. */
+  /**
+   * Sens d'ouverture qui fait entrer le battant dans la maison.
+   *
+   * Le modèle ne dit pas où est l'intérieur. On entrouvre le battant dans le
+   * sens réglé et on regarde s'il se rapproche du centre de la maison : une
+   * fenêtre ou une porte d'entrée s'ouvre vers l'intérieur. Mesuré, puis
+   * remis exactement en place.
+   */
+  inwardSide(id: string): 'front' | 'back' | null {
+    const item = this.items.find((i) => i.cfg.id === id);
+    if (!item || item.cfg.motion !== 'swing' || !this._root) return null;
+    const center = this._root.localToWorld(this._modelCenter().clone());
+    const p = item.pivotNode;
+    const saved = p.rotation[item.axis];
+    const distance = (angle: number) => {
+      p.rotation[item.axis] = angle;
+      p.updateMatrixWorld(true);
+      return new THREE.Box3().setFromObject(p).getCenter(new THREE.Vector3()).distanceTo(center);
+    };
+    const closed = distance(0);
+    const opened = distance(item.sign * item.span * 0.5);
+    p.rotation[item.axis] = saved;
+    p.updateMatrixWorld(true);
+    const current = item.cfg.swingSide ?? 'front';
+    if (opened <= closed) return current;
+    return current === 'front' ? 'back' : 'front';
+  }
+
   preview(id: string, fraction: number) {
     const item: Moving | undefined = this.items.find((i) => i.cfg.id === id) ?? this.anims.find((a) => a.cfg.id === id);
     if (item) item.goal = Math.min(1, Math.max(0, fraction));

@@ -18,6 +18,8 @@
  *   l'indexer divise la taille par trois ou quatre.
  */
 
+import { sh3dLeaves, boxOf, hingeSide, LEAF_PREFIX, type Sh3dLeafExtras } from './sh3d';
+
 export interface ImportImage {
   data: Uint8Array;
   mime: 'image/jpeg' | 'image/png';
@@ -26,6 +28,8 @@ export interface ImportImage {
 export interface ImportStats {
   triangles: number;
   groups: number;
+  /** Vantaux Sweet Home 3D reconnus, prêts à devenir des ouvrants. */
+  leaves: number;
   materials: number;
   textures: number;
   /** Textures citées par le MTL mais absentes des fichiers fournis. */
@@ -321,7 +325,10 @@ export function objToGlb(objText: string, mtlText: string | null, images: Map<st
 
   const meshes: Record<string, unknown>[] = [];
   const nodes: Record<string, unknown>[] = [];
+  /** Nœud de chaque groupe, -1 pour un groupe sans triangle. */
+  const nodeOfGroup: number[] = [];
   for (const g of groups) {
+    nodeOfGroup.push(-1);
     const primitives: Record<string, unknown>[] = [];
     g.prims.forEach((pr) => {
       if (!pr.idx.length) return;
@@ -337,12 +344,34 @@ export function objToGlb(objText: string, mtlText: string | null, images: Map<st
     if (!primitives.length) continue;
     meshes.push({ name: g.name, primitives });
     nodes.push({ name: g.name, mesh: meshes.length - 1 });
+    nodeOfGroup[nodeOfGroup.length - 1] = nodes.length - 1;
+  }
+
+  // Chaque vantail Sweet Home 3D devient un nœud parent de ce qui bouge avec
+  // lui (vantail, poignée, vitre) : un seul objet à animer, et le côté des
+  // gonds noté à côté, pour proposer l'ouvrant tout réglé.
+  const roots = new Set(nodes.map((_, i) => i));
+  const boxOfGroups = (ids: number[]) => boxOf(ids.flatMap((i) => [...groups[i].prims.values()].map((pr) => pr.pos)));
+  let leafCount = 0;
+  for (const leaf of sh3dLeaves(groups.map((g) => g.name))) {
+    const children = leaf.moving.map((i) => nodeOfGroup[i]).filter((i) => i >= 0);
+    const box = boxOfGroups(leaf.moving);
+    const axisBox = boxOfGroups(leaf.axis);
+    if (!children.length || !box || !axisBox) continue;
+    const size = [0, 1, 2].map((k) => box.max[k] - box.min[k]).sort((a, b) => b - a) as [number, number, number];
+    const extras: Sh3dLeafExtras = {
+      owlnestLeaf: { motion: leaf.motion, hinge: hingeSide(box, axisBox), pane: leaf.pane, size },
+    };
+    children.forEach((c) => roots.delete(c));
+    nodes.push({ name: `${LEAF_PREFIX}${leaf.piece}_${leaf.n}`, children, extras });
+    roots.add(nodes.length - 1);
+    leafCount++;
   }
 
   const json: Record<string, unknown> = {
     asset: { version: '2.0', generator: 'Owlnest OBJ import' },
     scene: 0,
-    scenes: [{ name: 'Imported', nodes: nodes.map((_, i) => i) }],
+    scenes: [{ name: 'Imported', nodes: [...roots].sort((a, b) => a - b) }],
     nodes,
     meshes,
     materials,
@@ -358,7 +387,8 @@ export function objToGlb(objText: string, mtlText: string | null, images: Map<st
     glb: w.finish(json),
     stats: {
       triangles,
-      groups: nodes.length,
+      groups: groups.length,
+      leaves: leafCount,
       materials: materials.length,
       textures: textures.length,
       missingTextures: [...missing],

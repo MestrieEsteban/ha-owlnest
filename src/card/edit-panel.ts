@@ -262,6 +262,10 @@ export class EditPanel {
    * carte, qui seule sait appliquer les actions sur la scène.
    */
   onTestRule?: (rule: OwlnestRule) => void;
+  /** Ouvrants Sweet Home 3D reconnus dans le modèle et pas encore ajoutés. */
+  countDetectedOpenings?: () => number;
+  /** Ajoute ces ouvrants à la scène. */
+  onAddDetectedOpenings?: () => Promise<void>;
   /** Ouvre le sélecteur de fichiers pour importer un plan (admin seulement). */
   onImportModel?: () => void;
 
@@ -3467,9 +3471,23 @@ export class EditPanel {
     const parts = this.getParts?.() ?? [];
     const hass = this.getHass();
 
+    // Portes et fenêtres reconnues dans un export Sweet Home 3D : un clic les
+    // ajoute toutes, réglées, au lieu de les désigner une à une.
+    const detected = this.countDetectedOpenings?.() ?? 0;
+    if (detected > 0) {
+      const add = document.createElement('button');
+      add.textContent = t('sh3dAddDetected').replace('{n}', String(detected));
+      add.style.cssText = 'display:block;width:calc(100% - 20px);margin:10px;background:rgba(125,209,252,0.15);border:1px solid rgba(125,209,252,0.35);border-radius:7px;color:#7dd3fc;padding:8px 10px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;text-align:left;line-height:1.4;';
+      add.addEventListener('click', () => {
+        add.disabled = true;
+        this.onAddDetectedOpenings?.().then(() => this._fillPartsList(pane));
+      });
+      pane.appendChild(add);
+    }
+
     if (parts.length === 0) {
       const empty = document.createElement('div');
-      empty.style.cssText = 'padding:22px 16px;text-align:center;color:#64748b;font-size:11px;line-height:1.65;';
+      empty.style.cssText = `padding:${detected ? 8 : 22}px 16px 22px;text-align:center;color:#64748b;font-size:11px;line-height:1.65;`;
       empty.innerHTML = `${t('partsEmpty')}`;
       pane.appendChild(empty);
       return;

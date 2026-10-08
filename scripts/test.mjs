@@ -38,6 +38,7 @@ const ENTRIES = [
   'src/import/obj-to-glb.ts',
   'src/import/plan.ts',
   'src/import/upload.ts',
+  'src/import/sh3d.ts',
 ];
 
 /**

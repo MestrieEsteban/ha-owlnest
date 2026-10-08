@@ -141,3 +141,28 @@ test('les fins de ligne Windows sont acceptées', () => {
   const { stats } = objToGlb(OBJ.replace(/\n/g, '\r\n'), MTL.replace(/\n/g, '\r\n'), new Map());
   assert.equal(stats.triangles, 4);
 });
+
+test('un vantail Sweet Home 3D devient un nœud parent, gonds notés', () => {
+  // Vantail de 80 × 200 en x/y ; gonds côté x = 80, poignée côté x = 5.
+  const obj = [
+    'v 0 0 0', 'v 80 0 0', 'v 80 200 0', 'v 0 200 0',
+    'v 79 10 0', 'v 81 10 0', 'v 81 190 0',
+    'v 4 100 1', 'v 6 100 1', 'v 6 104 1',
+    'g frame', 'f 1 2 3',
+    'g sweethome3d_hinge_1', 'f 5 6 7',
+    'g sweethome3d_opening_on_hinge_1_door', 'f 1 2 3', 'f 1 3 4',
+    'g sweethome3d_opening_on_hinge_1_handle', 'f 8 9 10',
+    'g sofa', 'f 1 2 4',
+  ].join('\n');
+  const { glb, stats } = objToGlb(obj, null, new Map());
+  const { json } = read(glb);
+  assert.equal(stats.leaves, 1);
+  const leafIdx = json.nodes.findIndex((n) => n.name === 'sweethome3d_leaf_0_1');
+  const leaf = json.nodes[leafIdx];
+  assert.deepEqual(leaf.children.map((c) => json.nodes[c].name),
+    ['sweethome3d_opening_on_hinge_1_door', 'sweethome3d_opening_on_hinge_1_handle']);
+  assert.equal(leaf.extras.owlnestLeaf.hinge, 'end');
+  assert.equal(leaf.extras.owlnestLeaf.motion, 'hinge');
+  const roots = json.scenes[0].nodes.map((i) => json.nodes[i].name);
+  assert.deepEqual(roots, ['frame', 'sweethome3d_hinge_1', 'sofa', 'sweethome3d_leaf_0_1']);
+});

@@ -13,7 +13,8 @@ import { AnchorEditor } from './editor';
 import { loadScene, saveScene, listScenes, sceneToEffectiveConfig, buildSceneFromEditor, normalizeViews, emptyScene, sceneUnreachable, forgetSceneFailure } from './scene';
 import { importModel, ImportError } from './import/drop';
 import { UploadError } from './import/upload';
-import { attachDropZone, pickFiles, ImportProgress } from './card/import-ui';
+import { attachDropZone, pickFiles, ImportProgress, askOpenings } from './card/import-ui';
+import { findLeaves, proposeParts } from './import/sh3d-parts';
 import { setLang, langFromLocale, t } from './i18n';
 import { demoModelUrl, isPlaceholder, seedDemoAnchors, type DemoAnchorId } from './demo';
 import { openEntityPicker } from './entities/picker';
@@ -1037,12 +1038,51 @@ export class Ha3dFloorplan extends HTMLElement {
       } else {
         this._showToast(t('importDone'));
       }
+
+      const found = this._detectedOpenings();
+      if (found.length && this.overlayContainer) {
+        // Une fenêtre à deux vantaux compte pour une fenêtre.
+        const count = (kind: 'door' | 'window') => new Set(found.filter((f) => f.kind === kind).map((f) => f.piece)).size;
+        askOpenings(this.overlayContainer, count('door'), count('window'), () => { this._addDetectedOpenings(); });
+      }
     } catch (err) {
       console.error('[Owlnest] import failed:', err);
       progress.fail(this._importErrorMessage(err));
     } finally {
       this._importing = false;
     }
+  }
+
+  /** Portes et fenêtres Sweet Home 3D du modèle, pas encore dans la scène. */
+  private _detectedOpenings() {
+    if (!this._modelRoot) return [];
+    return proposeParts(
+      findLeaves(this._modelRoot, this._modelSpan),
+      this._scene?.parts ?? [],
+      (kind, n, leaf, leaves) =>
+        `${t(kind === 'door' ? 'sh3dDoor' : 'sh3dWindow')} ${n}${leaves > 1 ? ` · ${t('sh3dLeaf')} ${leaf}` : ''}`,
+    );
+  }
+
+  private async _addDetectedOpenings() {
+    const found = this._detectedOpenings().map((f) => f.part);
+    if (!found.length) return;
+    await this._savePartsDirect([...(this._scene?.parts ?? []), ...found]);
+    // Une fois montés, on oriente chaque battant vers l'intérieur.
+    const added = new Set(found.map((p) => p.id));
+    let flipped = false;
+    const parts = (this._scene?.parts ?? []).map((p) => {
+      if (!added.has(p.id)) return p;
+      const side = this._parts.inwardSide(p.id);
+      if (!side || side === (p.swingSide ?? 'front')) return p;
+      flipped = true;
+      const next = { ...p, swingSide: side };
+      this._parts.configure(next);
+      return next;
+    });
+    if (flipped) await this._savePartsDirect(parts);
+    this._requestRender();
+    this._showToast(t('sh3dAdded'));
   }
 
   private _importErrorMessage(err: unknown): string {
@@ -1437,6 +1477,8 @@ export class Ha3dFloorplan extends HTMLElement {
     console.debug('[Owlnest] import:', {
       admin: this._hass?.user?.is_admin, scene: this._getActiveSceneId(), backendDown: this._backendDown,
     });
+    this._editPanel.countDetectedOpenings = () => this._detectedOpenings().length;
+    this._editPanel.onAddDetectedOpenings = () => this._addDetectedOpenings();
     if (this._canImport()) {
       this._editPanel.onImportModel = () => pickFiles((files) => this._importModel(files));
     }

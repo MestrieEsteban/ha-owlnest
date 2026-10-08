@@ -162,3 +162,46 @@ export class ImportProgress {
     this.el.remove();
   }
 }
+
+/**
+ * Propose d'ajouter les ouvrants reconnus, juste après l'import.
+ *
+ * Le moment où l'on vient de déposer sa maison est celui où l'on a envie de la
+ * voir s'animer : on demande là, une fois, sans rien imposer.
+ */
+export function askOpenings(
+  container: HTMLElement,
+  doors: number,
+  windows: number,
+  onAccept: () => void,
+): void {
+  const box = document.createElement('div');
+  box.style.cssText = [
+    'position:absolute', 'left:50%', 'bottom:16px', 'transform:translateX(-50%)',
+    'z-index:300', 'width:min(360px,calc(100% - 32px))', 'box-sizing:border-box',
+    'padding:14px 16px', 'border-radius:12px', 'pointer-events:auto',
+    'background:rgba(8,13,26,0.94)', 'backdrop-filter:blur(10px)',
+    'border:1px solid rgba(125,211,252,0.35)', 'color:#e2e8f0', FONT,
+  ].join(';');
+  const title = document.createElement('div');
+  title.style.cssText = 'font-size:12.5px;font-weight:700;color:#7dd3fc;margin-bottom:6px;';
+  title.textContent = t('sh3dFoundTitle')
+    .replace('{doors}', String(doors))
+    .replace('{windows}', String(windows));
+  const body = document.createElement('div');
+  body.style.cssText = 'font-size:11.5px;color:#94a3b8;line-height:1.5;margin-bottom:12px;';
+  body.textContent = t('sh3dFoundHint');
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;';
+  const later = document.createElement('button');
+  later.textContent = t('sh3dLater');
+  later.style.cssText = 'background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.14);border-radius:7px;color:#cbd5e1;padding:6px 12px;font-size:11px;font-family:inherit;cursor:pointer;';
+  later.addEventListener('click', () => box.remove());
+  const add = document.createElement('button');
+  add.textContent = t('sh3dAdd');
+  add.style.cssText = 'background:rgba(125,209,252,0.2);border:1px solid rgba(125,209,252,0.45);border-radius:7px;color:#7dd3fc;padding:6px 12px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;';
+  add.addEventListener('click', () => { box.remove(); onAccept(); });
+  row.append(later, add);
+  box.append(title, body, row);
+  container.appendChild(box);
+}
