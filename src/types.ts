@@ -82,6 +82,11 @@ export interface Hass {
   devices?: Record<string, unknown>;
   entities?: Record<string, unknown>;
   floors?: Record<string, unknown>;
+  /** Utilisateur connecté : seul un administrateur peut importer un plan. */
+  user?: { is_admin?: boolean };
+  /** `fetch` authentifié du frontend, pour l'envoi des modèles importés. */
+  fetchWithAuth?: (path: string, init?: RequestInit) => Promise<Response>;
+  auth?: { data?: { access_token?: string } };
 }
 
 /** Named camera preset — saved in OwlnestScene.camera_views */

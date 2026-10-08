@@ -36,6 +36,8 @@ const ENTRIES = [
   'src/i18n.ts',
   'src/demo.ts',
   'src/import/obj-to-glb.ts',
+  'src/import/plan.ts',
+  'src/import/upload.ts',
 ];
 
 /**

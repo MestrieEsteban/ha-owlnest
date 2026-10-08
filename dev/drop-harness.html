@@ -1,0 +1,93 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Owlnest — import par glisser-déposer</title>
+<style>
+  html, body { margin: 0; background: #0d1117; font-family: system-ui, sans-serif; }
+  pre { color: #7dd3fc; font: 11px monospace; padding: 8px 14px; white-space: pre-wrap; }
+</style>
+<div id="host"></div>
+<pre id="out">montage…</pre>
+<script type="module">
+  // La carte en maison de démonstration, un faux serveur qui assemble les
+  // tranches comme models.py, et un dépôt simulé du vrai export Sweet Home 3D.
+  //   /dev/drop-harness.html          → dépôt automatique de Modele3D/
+  //   /dev/drop-harness.html?manual   → on glisse soi-même
+  (globalThis).__OWLNEST_DEMO_URL = '/custom_components/owlnest/frontend/demo.glb';
+  import '/src/ha-3d-floorplan.ts';
+
+  customElements.define('ha-icon', class extends HTMLElement {});
+
+  const out = document.getElementById('out');
+  const log = [];
+  const say = (s) => { log.push(s); out.textContent = log.join('\n'); };
+
+  let scene = { version: 1, scene_id: 'drop', model_url: '', anchors: [], camera_views: [], cards: [], rules: [], parts: [] };
+  const uploads = [];
+  let file = new Uint8Array(0);
+
+  const hass = {
+    states: {},
+    user: { is_admin: true },
+    callService() {},
+    callWS: async (msg) => {
+      if (msg.type === 'owlnest/load_scene') return scene;
+      if (msg.type === 'owlnest/save_scene') { scene = msg.data; say(`scène enregistrée : model_url=${scene.model_url.slice(0, 40)}…, ${scene.anchors.length} ancres`); return { success: true }; }
+      if (msg.type === 'owlnest/list_scenes') return { scenes: ['drop'] };
+      if (String(msg.type).startsWith('config/')) return [];
+      throw new Error('inconnu: ' + msg.type);
+    },
+    fetchWithAuth: async (path, init) => {
+      const q = new URLSearchParams(path.split('?')[1]);
+      const offset = Number(q.get('offset'));
+      const body = new Uint8Array(init.body);
+      uploads.push(body.length);
+      const next = new Uint8Array(offset + body.length);
+      next.set(file.subarray(0, offset)); next.set(body, offset);
+      file = next;
+      if (q.get('final') !== '1') return new Response(JSON.stringify({ received: file.length }));
+      say(`envoi : ${uploads.length} tranches, ${(file.length / 1048576).toFixed(1)} Mo, nom ${q.get('name')}`);
+      const url = URL.createObjectURL(new Blob([file], { type: 'model/gltf-binary' }));
+      return new Response(JSON.stringify({ url }));
+    },
+  };
+
+  localStorage.setItem('owlnest_scene_id', 'drop');
+  const card = document.createElement('ha-3d-floorplan');
+  card.style.cssText = 'display:block;width:900px;height:520px;';
+  document.getElementById('host').appendChild(card);
+  card.setConfig({ scene_id: 'drop', height: 520 });
+  card.hass = hass;
+  window.__card = card;
+
+  await new Promise((r) => setTimeout(r, 2500));
+  say(`démo chargée : ${!!card.modelLoaded}, bandeau : ${!!card.querySelector('#owlnest-demo-banner')}, bouton import : ${!!card.querySelector('#owlnest-demo-banner button:not(:last-child)')}`);
+
+  if (!new URLSearchParams(location.search).has('manual')) {
+    // Tout le dossier, comme une sélection en vrac de l'explorateur.
+    const listing = await (await fetch('/Modele3D/')).text().catch(() => '');
+    const obj = 'Small-flat-35mq-compressed.obj';
+    const mtlText = await (await fetch('/Modele3D/Small-flat-35mq-compressed.mtl')).text();
+    const maps = [...new Set([...mtlText.matchAll(/^\s*map_Kd\s+(.+)$/gm)].map((m) => m[1].trim().split(/[\\/ ]/).pop()))];
+    const names = [obj, 'Small-flat-35mq-compressed.mtl', ...maps];
+    const files = [];
+    for (const n of names) {
+      const r = await fetch('/Modele3D/' + n);
+      if (r.ok) files.push(new File([await r.blob()], n));
+    }
+    say(`fichiers déposés : ${files.length}`);
+
+    const dt = new DataTransfer();
+    files.forEach((f) => dt.items.add(f));
+    const haCard = card.querySelector('ha-card');
+    const t0 = performance.now();
+    haCard.dispatchEvent(new DragEvent('dragenter', { dataTransfer: dt, bubbles: true, cancelable: true }));
+    say(`voile de dépôt affiché : ${haCard.textContent.includes('Sweet Home 3D') || haCard.textContent.includes('plan')}`);
+    haCard.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+
+    // Attend la fin : plus d'import en cours et un modèle chargé.
+    while (card._importing || !card.modelLoaded) await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 500));
+    say(`import terminé en ${((performance.now() - t0) / 1000).toFixed(1)} s, modèle chargé : ${!!card.modelLoaded}, démo : ${card._isDemo}`);
+    window.__done = true;
+  }
+</script>

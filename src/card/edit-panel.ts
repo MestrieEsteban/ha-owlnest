@@ -262,6 +262,8 @@ export class EditPanel {
    * carte, qui seule sait appliquer les actions sur la scène.
    */
   onTestRule?: (rule: OwlnestRule) => void;
+  /** Ouvre le sélecteur de fichiers pour importer un plan (admin seulement). */
+  onImportModel?: () => void;
 
   private _ruleUndoStack: OwlnestRule[][] = [];
   private _ruleRedoStack: OwlnestRule[][] = [];
@@ -1240,6 +1242,19 @@ export class EditPanel {
     // 0) SCENE — scene ID, model URL
     // ══════════════════════════════════════════════════════════════════════
     sec(t('cfgScene'));
+
+    // Importer son plan : le même chemin que le glisser-déposer sur la carte,
+    // pour qui ne pense pas à glisser ou n'a pas de souris (tablette).
+    if (this.onImportModel) {
+      const btn = document.createElement('button');
+      btn.textContent = t('importButton');
+      btn.style.cssText = 'width:100%;background:rgba(125,209,252,0.15);border:1px solid rgba(125,209,252,0.35);border-radius:7px;color:#7dd3fc;padding:8px 10px;font-size:11.5px;font-weight:600;font-family:inherit;cursor:pointer;margin-bottom:4px;';
+      btn.addEventListener('click', () => this.onImportModel?.());
+      const hint = document.createElement('div');
+      hint.style.cssText = 'font-size:9.5px;color:#64748b;margin-bottom:10px;line-height:1.4;';
+      hint.textContent = t('importHint');
+      root.append(btn, hint);
+    }
 
     {
       /**

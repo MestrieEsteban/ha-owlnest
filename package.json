@@ -25,6 +25,7 @@
     "test": "node scripts/test.mjs"
   },
   "dependencies": {
+    "fflate": "^0.8.3",
     "three": "^0.169.0"
   },
   "devDependencies": {

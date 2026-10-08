@@ -23,7 +23,7 @@ import type { Hass, CardConfig, OwlnestScene, OwlnestAnchor, CameraView, Editabl
  */
 const failedSceneFallbacks = new Map<string, OwlnestScene>();
 
-function emptyScene(sceneId: string): OwlnestScene {
+export function emptyScene(sceneId: string): OwlnestScene {
   return {
     version: 1,
     scene_id: sceneId,
@@ -250,7 +250,9 @@ export function buildSceneFromEditor(
   return {
     version: 1,
     scene_id: sceneId,
-    model_url: '',
+    // Le modèle de la scène survit à l'enregistrement : un modèle importé par
+    // glisser-déposer n'existe que là, pas dans la configuration de la carte.
+    model_url: current?.model_url ?? '',
     anchors,
     camera_views: cameraViews ?? (current?.camera_views ?? []),
     cards: current?.cards ?? [],

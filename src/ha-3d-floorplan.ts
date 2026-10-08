@@ -10,7 +10,10 @@ import { modelErrorKey, httpStatus } from './model-errors';
 import { AnchorOverlay, SensorOverlay, ClusterOverlay, LabelOverlay, CameraOverlay, pulseOverlay } from './overlay';
 import type { ClusterItem } from './overlay';
 import { AnchorEditor } from './editor';
-import { loadScene, saveScene, listScenes, sceneToEffectiveConfig, buildSceneFromEditor, normalizeViews } from './scene';
+import { loadScene, saveScene, listScenes, sceneToEffectiveConfig, buildSceneFromEditor, normalizeViews, emptyScene } from './scene';
+import { importModel, ImportError } from './import/drop';
+import { UploadError } from './import/upload';
+import { attachDropZone, pickFiles, ImportProgress } from './card/import-ui';
 import { setLang, langFromLocale, t } from './i18n';
 import { demoModelUrl, isPlaceholder, seedDemoAnchors, type DemoAnchorId } from './demo';
 import { openEntityPicker } from './entities/picker';
@@ -192,6 +195,8 @@ class Ha3dFloorplan extends HTMLElement {
   private _editor: AnchorEditor | null = null;
   private _modelRoot: THREE.Object3D | null = null;
   private _savePending = false;  // true while a callWS is in flight
+  private _importing = false;
+  private _detachDrop: (() => void) | null = null;
   private _saveQueued = false;   // une modification est arrivee pendant l'envoi
 
   // Modules
@@ -445,6 +450,13 @@ class Ha3dFloorplan extends HTMLElement {
     this.overlayContainer.style.cssText =
       'position:absolute;inset:0;pointer-events:none;overflow:hidden;';
     card.appendChild(this.overlayContainer);
+
+    this._detachDrop = attachDropZone(
+      card,
+      this.overlayContainer,
+      () => this._canImport(),
+      (source) => this._importModel(source),
+    );
 
     // Inject custom CSS if configured
     if (this._config?.custom_css) {
@@ -845,7 +857,15 @@ class Ha3dFloorplan extends HTMLElement {
     close.textContent = '✕';
     close.style.cssText = 'background:none;border:none;color:#94a3b8;cursor:pointer;font-size:12px;padding:2px 6px;';
     close.addEventListener('click', () => banner.remove());
-    banner.append(text, close);
+    banner.append(text);
+    if (this._canImport()) {
+      const importBtn = document.createElement('button');
+      importBtn.textContent = t('importButton');
+      importBtn.style.cssText = 'flex-shrink:0;background:rgba(125,209,252,0.18);border:1px solid rgba(125,209,252,0.4);border-radius:999px;color:#7dd3fc;cursor:pointer;font:600 11px var(--primary-font-family,sans-serif);padding:4px 10px;white-space:nowrap;';
+      importBtn.addEventListener('click', () => pickFiles((files) => this._importModel(files)));
+      banner.append(importBtn);
+    }
+    banner.append(close);
     this.overlayContainer.appendChild(banner);
   }
 
@@ -884,6 +904,75 @@ class Ha3dFloorplan extends HTMLElement {
         }
       },
     });
+  }
+
+  /** Importer un plan écrit sur le serveur : réservé aux administrateurs. */
+  private _canImport(): boolean {
+    return this._hass?.user?.is_admin === true && !!this._getActiveSceneId();
+  }
+
+  /**
+   * Importe un plan déposé ou choisi, et l'affiche à la place du modèle actuel.
+   *
+   * La scène garde ses ancres et ses ouvrants : réexporter sa maison après
+   * l'avoir retouchée ne doit pas obliger à tout replacer. Seule la maison de
+   * démonstration repart de zéro, ses emplacements n'ayant rien à voir avec le
+   * plan de l'utilisateur.
+   */
+  private async _importModel(source: FileSystemEntry[] | File[]) {
+    const sceneId = this._getActiveSceneId();
+    if (!this._hass || !this.overlayContainer || this._importing) return;
+    if (!sceneId) { this._showToast(t('importNoScene'), true); return; }
+    this._importing = true;
+    // Sortir d'édition tout de suite : la sortie enregistre la scène, et cet
+    // enregistrement doit être fini avant qu'on n'écrive la nôtre.
+    if (this._editMode) this._exitEditMode();
+    this.overlayContainer.querySelector('#owlnest-demo-banner')?.remove();
+
+    const progress = new ImportProgress(this.overlayContainer);
+    try {
+      const { url, stats } = await importModel(this._hass, source, (stage, f) => progress.stage(stage, f));
+      progress.stage('loading');
+
+      const wasDemo = this._isDemo;
+      const base = this._scene ?? emptyScene(sceneId);
+      const scene: OwlnestScene = wasDemo
+        ? { ...base, model_url: url, anchors: [], camera_views: [], parts: [] }
+        : { ...base, model_url: url };
+      await saveScene(this._hass, sceneId, scene);
+      this._scene = scene;
+      // Le point de vue enregistré visait l'ancien modèle.
+      localStorage.removeItem(this._storageKey);
+      progress.done();
+      await this._loadModel();
+
+      if (this._config?.model_url?.trim()) {
+        this._showToast(t('importYamlOverride'), true);
+      } else if (stats?.missingTextures.length) {
+        this._showToast(`${t('importMissingTextures')} (${stats.missingTextures.length})`, true);
+      } else {
+        this._showToast(t('importDone'));
+      }
+    } catch (err) {
+      console.error('[Owlnest] import failed:', err);
+      progress.fail(this._importErrorMessage(err));
+    } finally {
+      this._importing = false;
+    }
+  }
+
+  private _importErrorMessage(err: unknown): string {
+    if (err instanceof ImportError) {
+      return t(({ empty: 'importErrEmpty', 'gltf-text': 'importErrGltf', 'no-model': 'importErrNoModel' } as const)[err.reason]);
+    }
+    if (err instanceof UploadError) {
+      if (err.status === 403) return t('importErrAdmin');
+      if (err.status === 413) return t('importErrTooBig');
+      // Une intégration d'avant l'import ne connaît pas cette adresse.
+      if (err.status === 404 || err.status === 405) return t('importErrIntegration');
+      return `${t('importErrGeneric')} (${err.status}: ${err.message})`;
+    }
+    return `${t('importErrGeneric')} (${err instanceof Error ? err.message : String(err)})`;
   }
 
   /** Reconstruit ancres, lumières et pastilles depuis la configuration effective. */
@@ -1258,6 +1347,9 @@ class Ha3dFloorplan extends HTMLElement {
     );
 
     this._editPanel.onTestRule = (rule) => this.runRuleNow(rule);
+    if (this._canImport()) {
+      this._editPanel.onImportModel = () => pickFiles((files) => this._importModel(files));
+    }
 
     this._editor.onChanged = () => {
       this._requestShadowUpdate();
@@ -3293,6 +3385,8 @@ class Ha3dFloorplan extends HTMLElement {
 
   private _teardown() {
     cancelAnimationFrame(this.rafId);
+    this._detachDrop?.();
+    this._detachDrop = null;
     this.ro?.disconnect();
     window.removeEventListener('resize', this._onWindowResize);
     if (this._editMode) this._editor?.deactivate();
