@@ -21,6 +21,15 @@ tags: [backlog]
 - Regroupement par pièce, ce qui permettrait de **retirer `cluster_threshold`**.
 - Le même message « aucune vue enregistrée » pour l'action `go_to_view` que celui fait pour `highlight_anchor`. Voir [[Regles]].
 
+## En attente
+
+**Murs bas, à la Sims.** Essayé en octobre 2026, retiré avant la release : code gardé sur la branche `backlog/murs-bas`. Deux versions testées :
+
+- tous les murs coupés à mi-hauteur, mobilier compris : maquette jugée étrange, armoires coupées ;
+- seuls les murs entre la caméra et le centre descendent : mieux, mais vaisselle et portes de placard flottent quand leur meuble haut disparaît, et des murs intérieurs basculent au mauvais moment.
+
+La cause est la même : l'export OBJ ne dit pas quel meuble est contre quel mur, ni ce qui est rangé dedans, donc tout est deviné par proximité. **À reprendre avec le `.sh3d`**, qui contient l'élévation des meubles, leur position et ce qui est porte ou fenêtre : les mêmes données serviraient aux noms de pièces et aux lampes posées automatiquement. L'ancien curseur « voir à travers les murs » (cutaway.ts) reste en place, mais efface aussi le mobilier sur le trajet : pas une réponse non plus.
+
 ## Décisions prises
 
 **Les overlays traversent les murs, et c'est voulu.** Longtemps listé comme un bug, tranché en août 2026 : Owlnest est un tableau de bord, pas un jeu. On le regarde deux secondes en passant ; une pastille cachée derrière une cloison est une information perdue, et personne ne tournera la caméra pour la retrouver. C'est le comportement des mini-cartes et des HUD, pour la même raison.
