@@ -1334,7 +1334,6 @@ export class EditPanel {
             row.addEventListener('mouseenter', () => { row.style.background = '#151b2a'; });
             row.addEventListener('mouseleave', () => { row.style.background = '#0f1420'; });
             row.addEventListener('click', () => {
-              localStorage.setItem('owlnest_scene_id', sum.id);
               this.onSceneSettingsChange?.({ scene_id: sum.id } as SceneSettings, true);
             });
             (row as HTMLButtonElement).title = t('cfgSceneLoadTitle').replace('{id}', sum.id);
@@ -1428,7 +1427,6 @@ export class EditPanel {
       create.addEventListener('click', () => {
         const id = newInput.value.trim();
         if (!id) return;
-        localStorage.setItem('owlnest_scene_id', id);
         this.onSceneSettingsChange?.({ scene_id: id } as SceneSettings, true);
       });
       newRow.appendChild(create);

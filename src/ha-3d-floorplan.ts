@@ -77,6 +77,12 @@ function _formatSensorValue(raw: string, precision?: number): string {
  */
 const OWLNEST_BUILD = 'rules-engine-v2';
 
+/**
+ * Scène d'une carte qui n'en désigne aucune : celle que crée l'éditeur visuel.
+ * Absente du serveur, elle s'ouvre sur la maison de démonstration.
+ */
+const DEFAULT_SCENE_ID = 'main';
+
 export class Ha3dFloorplan extends HTMLElement {
   static readonly OWLNEST_BUILD = OWLNEST_BUILD;
 
@@ -246,7 +252,26 @@ export class Ha3dFloorplan extends HTMLElement {
   }
 
   private _getActiveSceneId(): string | undefined {
-    return localStorage.getItem('owlnest_scene_id') ?? this._config?.scene_id ?? undefined;
+    // Le choix fait depuis le panneau vaut pour cette carte seulement : il est
+    // rangé sous la scène que son YAML désigne. Une clé commune à toutes les
+    // cartes faisait qu'une carte neuve, sans réglage, ouvrait la maison
+    // importée sur une autre carte au lieu de la démo.
+    try {
+      const chosen = localStorage.getItem(this._sceneChoiceKey);
+      if (chosen) return chosen;
+    } catch { /* stockage bloqué */ }
+    return this._config?.scene_id || DEFAULT_SCENE_ID;
+  }
+
+  private get _sceneChoiceKey(): string {
+    return `owlnest_scene_id@${this._config?.scene_id ?? ''}`;
+  }
+
+  private _setActiveSceneId(id: string) {
+    try {
+      if (id === (this._config?.scene_id || DEFAULT_SCENE_ID)) localStorage.removeItem(this._sceneChoiceKey);
+      else localStorage.setItem(this._sceneChoiceKey, id);
+    } catch { /* stockage bloqué */ }
   }
 
   private _saveView() {
@@ -322,7 +347,7 @@ export class Ha3dFloorplan extends HTMLElement {
   }
 
   static getStubConfig() {
-    return { scene_id: 'main' };
+    return { scene_id: DEFAULT_SCENE_ID };
   }
 
   static getConfigElement() {
@@ -1110,7 +1135,7 @@ export class Ha3dFloorplan extends HTMLElement {
     loadBtn.addEventListener('click', () => {
       const id = input.value.trim();
       if (!id) return;
-      localStorage.setItem('owlnest_scene_id', id);
+      this._setActiveSceneId(id);
       overlay.remove();
       this._bootstrap();
     });
@@ -1369,7 +1394,7 @@ export class Ha3dFloorplan extends HTMLElement {
           // scene_id was changed — store in localStorage and fully reload
           const newId = (s as Record<string, unknown>)['scene_id'] as string | undefined;
           if (newId) {
-            localStorage.setItem('owlnest_scene_id', newId);
+            this._setActiveSceneId(newId);
             // Recharger, c'est relire le serveur, pas le repli gardé en mémoire.
             forgetSceneFailure(newId);
             this.overlayContainer?.querySelector('#owlnest-backend-down')?.remove();
@@ -3553,6 +3578,7 @@ const defineCard = () => {
  * charge alors à sa place, et reprend la main si le serveur ne répond plus.
  */
 const DEV_KEY = 'owlnest_dev_entry';
+
 let devEntry: string | null = null;
 try { devEntry = import.meta.env.DEV ? null : localStorage.getItem(DEV_KEY); } catch { /* stockage bloqué */ }
 if (devEntry) {
