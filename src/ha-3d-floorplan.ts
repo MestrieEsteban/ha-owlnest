@@ -1280,7 +1280,8 @@ export class Ha3dFloorplan extends HTMLElement {
     const low = this._wallsLow();
     // Les portes et fenêtres sont coupées par un plan : il faut l'autoriser.
     if (low && this.renderer) this.renderer.localClippingEnabled = true;
-    lw.set(low);
+    lw.setEnabled(low);
+    if (low && this.camera) lw.aim(this.camera.position);
     if (this._wallsBtn) {
       this._wallsBtn.style.borderColor = low ? 'rgba(125,211,252,0.6)' : 'rgba(255,255,255,0.1)';
       this._wallsBtn.title = t(low ? 'wallsFull' : 'wallsLow');
@@ -2361,6 +2362,12 @@ export class Ha3dFloorplan extends HTMLElement {
     // L'effacement à travers les murs dépend du point de vue : il doit suivre
     // la caméra, pas seulement les réglages.
     if (moved || this._camAnimTo) this._updateXray();
+    // Murs bas : ceux qui passent devant la caméra descendent, en douceur.
+    if (this._lowWalls?.active && this.camera && (moved || this._camAnimTo)) this._lowWalls.aim(this.camera.position);
+    if (this._lowWalls?.update(dt)) {
+      this._dirty = true;
+      this._requestShadowUpdate();
+    }
 
     if (this._editMode) this._dirty = true;
 
