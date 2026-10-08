@@ -1622,10 +1622,6 @@ export class EditPanel {
       (v) => (v <= 0 ? t('cutawayOff') : `${Math.round(v * 100)} %`),
       (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, xray: v } }));
 
-    toggleWithHelp(t('cfgLowWalls'), t('helpLowWalls'), rendering.walls === 'low', (v) => {
-      this.onSceneSettingsChange?.({ rendering: { ...rendering, walls: v ? 'low' : 'full' } });
-    });
-
     toggleWithHelp(t('cfgTransparent'), t('helpTransparent'), rendering.transparent_background === true, (v) => {
       this.onSceneSettingsChange?.({ rendering: { ...rendering, transparent_background: v } });
     });

@@ -41,7 +41,6 @@ const ENTRIES = [
   'src/import/sh3d.ts',
   'src/import/lighten.ts',
   'src/import/sh3d-parts.ts',
-  'src/low-walls.ts',
 ];
 
 /**

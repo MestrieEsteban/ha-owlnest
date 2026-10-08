@@ -43,7 +43,6 @@ import { PartHighlight, type HighlightSource, type HighlightSlot } from './part-
 import { modelScale } from './scale';
 import { partIndexOf, partFrame, guessPart, verticalAxis } from './parts';
 import { separateCoplanarSlabs } from './coplanar';
-import { LowWalls } from './low-walls';
 import { createUniforms, instrumentMaterials, updateXray, createGhost } from './cutaway';
 import type { CutawayUniforms } from './cutaway';
 import { evalCondition, RuleEngine } from './rules/engine';
@@ -205,9 +204,6 @@ export class Ha3dFloorplan extends HTMLElement {
   private _savePending = false;  // true while a callWS is in flight
   private _importing = false;
   private _backendRetryAt = 0;
-  /** Murs à mi-hauteur : voir low-walls.ts. */
-  private _lowWalls: LowWalls | null = null;
-  private _wallsBtn: HTMLButtonElement | null = null;
   private _detachDrop: (() => void) | null = null;
   private _saveQueued = false;   // une modification est arrivee pendant l'envoi
 
@@ -582,8 +578,6 @@ export class Ha3dFloorplan extends HTMLElement {
     this._hudRight = hudRight;
     bar.appendChild(hudRight);
 
-    this._wallsBtn = this._makeWallsBtn();
-    hudRight.appendChild(this._wallsBtn);
     if (ui.show_lock !== false) {
       this.lockBtn = this._makeLockBtn();
       hudRight.appendChild(this.lockBtn);
@@ -1020,12 +1014,9 @@ export class Ha3dFloorplan extends HTMLElement {
       // Les distances d'orbite sont absolues : réglées pour un modèle en
       // mètres, elles enfermeraient la caméra dans un modèle en centimètres.
       const orbit = base.settings?.orbit;
-      const settings = {
+      const settings = base.settings && {
         ...base.settings,
         orbit: orbit?.max_polar_angle !== undefined ? { max_polar_angle: orbit.max_polar_angle } : undefined,
-        // Un plan importé se regarde de l'intérieur : murs bas d'office, sauf
-        // si l'utilisateur a déjà choisi.
-        rendering: { ...base.settings?.rendering, walls: base.settings?.rendering?.walls ?? 'low' },
       };
       let scene: OwlnestScene = wasDemo
         ? { ...base, settings, model_url: url, anchors: [], camera_views: [], parts: [] }
@@ -1256,52 +1247,6 @@ export class Ha3dFloorplan extends HTMLElement {
     this.overlayContainer?.appendChild(overlay);
   }
 
-  /**
-   * Murs bas : réglage de la scène, que chaque écran peut basculer pour lui.
-   *
-   * La tablette du salon et le PC n'ont pas le même usage : l'un regarde la
-   * maison en maquette, l'autre l'intérieur. Le bouton ne modifie donc pas la
-   * scène, il retient le choix de cet appareil.
-   */
-  private get _wallsKey() { return `${this._storageKey}:walls`; }
-
-  private _wallsLow(): boolean {
-    try {
-      const local = localStorage.getItem(this._wallsKey);
-      if (local) return local === 'low';
-    } catch { /* stockage bloqué */ }
-    return this._effectiveConfig.rendering?.walls === 'low';
-  }
-
-  private _applyWalls() {
-    const lw = this._lowWalls;
-    if (this._wallsBtn) this._wallsBtn.style.display = lw?.available ? 'inline-flex' : 'none';
-    if (!lw?.available) return;
-    const low = this._wallsLow();
-    // Les portes et fenêtres sont coupées par un plan : il faut l'autoriser.
-    if (low && this.renderer) this.renderer.localClippingEnabled = true;
-    lw.set(low);
-    if (this._wallsBtn) {
-      this._wallsBtn.style.borderColor = low ? 'rgba(125,211,252,0.6)' : 'rgba(255,255,255,0.1)';
-      this._wallsBtn.title = t(low ? 'wallsFull' : 'wallsLow');
-    }
-    this._requestShadowUpdate();
-    this._requestRender();
-  }
-
-  private _makeWallsBtn(): HTMLButtonElement {
-    const btn = document.createElement('button');
-    btn.style.cssText = this._hudBtnStyle() + ';display:none';
-    btn.textContent = '🧱';
-    btn.title = t('wallsLow');
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      try { localStorage.setItem(this._wallsKey, this._wallsLow() ? 'full' : 'low'); } catch { /* stockage bloqué */ }
-      this._applyWalls();
-    });
-    return btn;
-  }
-
   private _makeLockBtn(): HTMLButtonElement {
     const btn = document.createElement('button');
     btn.style.cssText = this._hudBtnStyle();
@@ -1525,10 +1470,6 @@ export class Ha3dFloorplan extends HTMLElement {
       () => this._viewMgr,
       () => this._scene?.settings ?? {},
       (s: import('./types').SceneSettings, reloadScene?: boolean) => {
-        // Régler les murs depuis la scène reprend la main sur le bouton 🧱.
-        if (s.rendering?.walls !== undefined && s.rendering.walls !== this._scene?.settings?.rendering?.walls) {
-          try { localStorage.removeItem(this._wallsKey); } catch { /* stockage bloqué */ }
-        }
         if (!this._scene) this._scene = {
           version: 1, scene_id: this._getActiveSceneId() ?? '',
           model_url: this._config?.model_url ?? '',
@@ -2520,7 +2461,6 @@ export class Ha3dFloorplan extends HTMLElement {
     // Plan de coupe : relu à chaque changement de réglage, pour que le curseur
     // agisse en direct.
     this._applyCutaway();
-    this._applyWalls();
     // Shadows
     if (rl.shadows !== undefined) {
       this.renderer.shadowMap.enabled = rl.shadows;
@@ -2848,7 +2788,6 @@ export class Ha3dFloorplan extends HTMLElement {
   private _clearSceneContent() {
     // Exit edit mode cleanly
     if (this._editMode) this._exitEditMode();
-    this._lowWalls = null;
     this._highlight.clear();
     this._parts.dispose(this._modelRoot ?? undefined);
     if (this._ghost) { this.scene?.remove(this._ghost); this._ghost = null; }
@@ -2995,9 +2934,6 @@ export class Ha3dFloorplan extends HTMLElement {
     }
 
     this._buildParts();
-
-    this._lowWalls = new LowWalls(model, verticalAxis(this._modelBox));
-    this._applyWalls();
 
     this.anchors = detectAnchors(model, this.scene, ec, this._modelSpan);
     this._createOverlays();
