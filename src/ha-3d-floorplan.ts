@@ -979,16 +979,33 @@ export class Ha3dFloorplan extends HTMLElement {
       progress.stage('loading');
 
       const wasDemo = this._isDemo;
+      const oldSpan = this.modelLoaded ? this._modelSpan : 0;
       const base = this._scene ?? emptyScene(sceneId);
-      const scene: OwlnestScene = wasDemo
-        ? { ...base, model_url: url, anchors: [], camera_views: [], parts: [] }
-        : { ...base, model_url: url };
+      // Les distances d'orbite sont absolues : réglées pour un modèle en
+      // mètres, elles enfermeraient la caméra dans un modèle en centimètres.
+      const orbit = base.settings?.orbit;
+      const settings = base.settings && {
+        ...base.settings,
+        orbit: orbit?.max_polar_angle !== undefined ? { max_polar_angle: orbit.max_polar_angle } : undefined,
+      };
+      let scene: OwlnestScene = wasDemo
+        ? { ...base, settings, model_url: url, anchors: [], camera_views: [], parts: [] }
+        : { ...base, settings, model_url: url };
       await saveScene(this._hass, sceneId, scene);
       this._scene = scene;
       // Le point de vue enregistré visait l'ancien modèle.
       localStorage.removeItem(this._storageKey);
       progress.done();
       await this._loadModel();
+
+      // Pas la même taille : ce n'est pas une retouche du même plan, et les
+      // vues enregistrées regarderaient dans le vide.
+      const ratio = oldSpan > 0 ? this._modelSpan / oldSpan : 1;
+      if (scene.camera_views?.length && (ratio < 0.8 || ratio > 1.25)) {
+        scene = { ...scene, camera_views: [] };
+        this._scene = scene;
+        await saveScene(this._hass, sceneId, scene);
+      }
 
       if (stats?.missingTextures.length) {
         this._showToast(`${t('importMissingTextures')} (${stats.missingTextures.length})`, true);
@@ -2534,6 +2551,40 @@ export class Ha3dFloorplan extends HTMLElement {
     );
   }
 
+  /**
+   * Vue d'ensemble : tout le modèle dans le cadre, vu de trois quarts en
+   * plongée, comme on regarde une maquette posée sur une table.
+   *
+   * La distance se calcule depuis la sphère englobante et le champ de vision
+   * le plus étroit (vertical en paysage, horizontal en portrait) : le cadrage
+   * tient quelle que soit l'échelle du modèle, mètres comme centimètres.
+   */
+  private _frameModel() {
+    if (!this.camera || !this.controls) return;
+    const size = this._modelBox.getSize(new THREE.Vector3());
+    const radius = Math.max(size.length() / 2, 1e-3);
+    const vfov = (this.camera.fov * Math.PI) / 180;
+    const hfov = 2 * Math.atan(Math.tan(vfov / 2) * this.camera.aspect);
+    const dist = (radius / Math.sin(Math.min(vfov, hfov) / 2)) * 0.85;
+
+    const elevation = (50 * Math.PI) / 180;
+    const azimuth = (25 * Math.PI) / 180;
+    const dir = new THREE.Vector3(
+      Math.sin(azimuth) * Math.cos(elevation),
+      Math.sin(elevation),
+      Math.cos(azimuth) * Math.cos(elevation),
+    );
+    // Un modèle Z-up (export brut de Blender) se regarde d'au-dessus de Z.
+    if (verticalAxis(this._modelBox) === 2) dir.set(dir.x, -dir.z, dir.y);
+
+    // La borne d'orbite ne doit pas rogner la vue d'ensemble.
+    if (this.controls.maxDistance < dist * 1.2) this.controls.maxDistance = dist * 1.2;
+    this.controls.target.set(0, 0, 0);
+    this.camera.position.copy(dir.multiplyScalar(dist));
+    this.camera.lookAt(0, 0, 0);
+    this.controls.update();
+  }
+
   private _fitOrbitLimits() {
     if (!this.controls) return;
     const settings = this._scene?.settings?.orbit ?? {};
@@ -2746,11 +2797,7 @@ export class Ha3dFloorplan extends HTMLElement {
       this.controls!.target.fromArray(saved.target);
       this._toggleLock(saved.locked);
     } else {
-      const size = box.getSize(new THREE.Vector3());
-      const maxDim = Math.max(size.x, size.y, size.z);
-      this.camera!.position.set(0, maxDim * 0.6, maxDim * 1.4);
-      this.camera!.lookAt(0, 0, 0);
-      this.controls!.target.set(0, 0, 0);
+      this._frameModel();
       this.lockBtn!.textContent = '\uD83D\uDD13';
     }
 
