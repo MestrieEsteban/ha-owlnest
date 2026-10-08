@@ -23,6 +23,21 @@ import type { Hass, CardConfig, OwlnestScene, OwlnestAnchor, CameraView, Editabl
  */
 const failedSceneFallbacks = new Map<string, OwlnestScene>();
 
+/**
+ * Scènes que le serveur n'a pas pu lire, pour une autre raison que leur absence.
+ *
+ * Une scène absente est une scène neuve : la carte peut montrer la démo. Mais
+ * quand l'intégration ne répond pas (non chargée, stockage illisible), la vraie
+ * scène existe peut-être encore : la démo ferait croire qu'elle est perdue, et
+ * un enregistrement l'écraserait. On le retient pour l'éviter.
+ */
+const unreachableScenes = new Set<string>();
+
+/** L'intégration n'a pas pu lire cette scène : ne rien montrer ni écrire à sa place. */
+export function sceneUnreachable(sceneId: string): boolean {
+  return unreachableScenes.has(sceneId);
+}
+
 export function emptyScene(sceneId: string): OwlnestScene {
   return {
     version: 1,
@@ -43,8 +58,10 @@ export async function loadScene(hass: Hass, sceneId: string): Promise<OwlnestSce
   try {
     const scene = await hass.callWS<OwlnestScene>({ type: 'owlnest/load_scene', scene_id: sceneId });
     failedSceneFallbacks.delete(sceneId);
+    unreachableScenes.delete(sceneId);
     return scene;
   } catch (err) {
+    if ((err as { code?: string } | null)?.code !== 'not_found') unreachableScenes.add(sceneId);
     const scene = emptyScene(sceneId);
     failedSceneFallbacks.set(sceneId, scene);
     console.warn(
@@ -56,6 +73,8 @@ export async function loadScene(hass: Hass, sceneId: string): Promise<OwlnestSce
 }
 
 export async function saveScene(hass: Hass, sceneId: string, data: OwlnestScene): Promise<void> {
+  // La scène affichée n'est qu'un repli : l'écrire remplacerait la vraie.
+  if (unreachableScenes.has(sceneId)) throw new Error(`Scene "${sceneId}" could not be read; not overwriting it`);
   await hass.callWS<{ success: boolean }>({
     type: 'owlnest/save_scene',
     scene_id: sceneId,

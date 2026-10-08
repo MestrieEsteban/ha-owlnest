@@ -10,7 +10,7 @@ import { modelErrorKey, httpStatus } from './model-errors';
 import { AnchorOverlay, SensorOverlay, ClusterOverlay, LabelOverlay, CameraOverlay, pulseOverlay } from './overlay';
 import type { ClusterItem } from './overlay';
 import { AnchorEditor } from './editor';
-import { loadScene, saveScene, listScenes, sceneToEffectiveConfig, buildSceneFromEditor, normalizeViews, emptyScene } from './scene';
+import { loadScene, saveScene, listScenes, sceneToEffectiveConfig, buildSceneFromEditor, normalizeViews, emptyScene, sceneUnreachable } from './scene';
 import { importModel, ImportError } from './import/drop';
 import { UploadError } from './import/upload';
 import { attachDropZone, pickFiles, ImportProgress } from './card/import-ui';
@@ -333,7 +333,13 @@ class Ha3dFloorplan extends HTMLElement {
 
   /** La carte montre-t-elle la maison de démonstration ? */
   private get _isDemo(): boolean {
-    return !this._config?.model_url?.trim() && !this._scene?.model_url?.trim();
+    return !this._config?.model_url?.trim() && !this._scene?.model_url?.trim() && !this._backendDown;
+  }
+
+  /** L'intégration n'a pas pu lire la scène active : voir `sceneUnreachable`. */
+  private get _backendDown(): boolean {
+    const id = this._getActiveSceneId();
+    return !!id && sceneUnreachable(id);
   }
 
   private _fetchAndLoadScene(sceneId: string) {
@@ -906,9 +912,30 @@ class Ha3dFloorplan extends HTMLElement {
     });
   }
 
+  /** L'intégration ne répond pas : on le dit, et on rassure sur les scènes. */
+  private _showBackendDown() {
+    if (!this.overlayContainer || this.overlayContainer.querySelector('#owlnest-backend-down')) return;
+    const box = document.createElement('div');
+    box.id = 'owlnest-backend-down';
+    box.style.cssText = [
+      'position:absolute', 'inset:0', 'display:flex', 'flex-direction:column',
+      'align-items:center', 'justify-content:center', 'gap:8px', 'z-index:50',
+      'padding:24px', 'box-sizing:border-box', 'text-align:center', 'pointer-events:none',
+      'font-family:var(--primary-font-family,sans-serif)',
+    ].join(';');
+    const title = document.createElement('div');
+    title.style.cssText = 'font-size:14px;font-weight:700;color:#fbbf24;';
+    title.textContent = `⚠ ${t('backendDownTitle')}`;
+    const body = document.createElement('div');
+    body.style.cssText = 'font-size:12px;color:#94a3b8;max-width:380px;line-height:1.5;';
+    body.textContent = t('backendDownHint');
+    box.append(title, body);
+    this.overlayContainer.appendChild(box);
+  }
+
   /** Importer un plan écrit sur le serveur : réservé aux administrateurs. */
   private _canImport(): boolean {
-    return this._hass?.user?.is_admin === true && !!this._getActiveSceneId();
+    return this._hass?.user?.is_admin === true && !!this._getActiveSceneId() && !this._backendDown;
   }
 
   /**
@@ -2619,6 +2646,11 @@ class Ha3dFloorplan extends HTMLElement {
   private async _loadModel() {
     // Clean up any previous scene content before loading new model
     this._clearSceneContent();
+    // Sans réponse de l'intégration, la démo laisserait croire la scène perdue.
+    if (this._backendDown && !this._config?.model_url?.trim()) {
+      this._showBackendDown();
+      return;
+    }
     const ec = this._effectiveConfig;
     if (!ec.model_url || !this.scene) return;
 
