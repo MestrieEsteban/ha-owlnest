@@ -82,7 +82,11 @@ console.log('🔨 Build...');
 execSync('npm run build', { stdio: 'inherit' });
 
 console.log(`\n🏷️  Tag git: v${newVersion}`);
-execSync(`git add package.json ${MANIFEST}`);
+// La carte embarquée fait partie de la release : HACS installe l'intégration
+// depuis le dépôt au tag, sans passer par l'artefact de GitHub Actions.
+const NOTES = `docs/releases/v${newVersion}.md`;
+execSync(`git add package.json package-lock.json ${MANIFEST} custom_components/owlnest/frontend/ha-3d-floorplan.js`);
+try { execSync(`git add ${NOTES}`); } catch { console.log(`⚠️  ${NOTES} absent : la release GitHub n'aura pas de notes`); }
 execSync(`git commit -m "chore: release v${newVersion}"`);
 execSync(`git tag v${newVersion}`);
 
