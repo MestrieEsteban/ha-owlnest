@@ -1,6 +1,6 @@
 {
   "name": "ha-3d-floorplan",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "Custom Lovelace card â€” plan 3D interactif pour Home Assistant",
   "keywords": [
     "home-assistant",
