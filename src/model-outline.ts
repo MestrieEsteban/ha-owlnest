@@ -46,7 +46,7 @@ function triangleCount(mesh: THREE.Mesh): number {
 
 /** Objets créés par la carte : pivots d'ouvrants, surlignage. */
 function isRuntime(o: THREE.Object3D): boolean {
-  return !!(o.userData.owlnestPartId || o.userData.owlnestHelper);
+  return !!(o.userData.owlnestPartId || o.userData.owlnestHelper || o.userData.owlnestBatch);
 }
 
 /**

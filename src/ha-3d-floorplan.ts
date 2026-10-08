@@ -44,6 +44,7 @@ import { PartHighlight, type HighlightSource, type HighlightSlot } from './part-
 import { modelScale } from './scale';
 import { partIndexOf, partFrame, guessPart, verticalAxis } from './parts';
 import { separateCoplanarSlabs } from './coplanar';
+import { StaticBatch } from './batching';
 import { createUniforms, instrumentMaterials, updateXray, createGhost } from './cutaway';
 import type { CutawayUniforms } from './cutaway';
 import { evalCondition, RuleEngine } from './rules/engine';
@@ -205,6 +206,8 @@ export class Ha3dFloorplan extends HTMLElement {
   private _savePending = false;  // true while a callWS is in flight
   private _importing = false;
   private _backendRetryAt = 0;
+  /** Objets immobiles fusionnés par matériau, hors édition : voir batching.ts. */
+  private _batch: StaticBatch | null = null;
   private _detachDrop: (() => void) | null = null;
   private _saveQueued = false;   // une modification est arrivee pendant l'envoi
 
@@ -1400,6 +1403,8 @@ export class Ha3dFloorplan extends HTMLElement {
     // Les marqueurs et gizmos de l'éditeur modifient la géométrie de la scène.
     this._requestShadowUpdate();
     this._editMode = true;
+    // L'éditeur clique, survole et désigne les objets d'origine.
+    this._batch?.unmerge();
     if (this.editBtn) {
       this.editBtn.style.boxShadow = '0 0 0 2px rgba(59,130,246,0.9)';
       this.editBtn.title = t('exitEditMode');
@@ -1632,6 +1637,7 @@ export class Ha3dFloorplan extends HTMLElement {
     this._previewingRule = false;
     this._requestShadowUpdate();
     this._editMode = false;
+    this._mergeStatic();
     if (this.editBtn) {
       this.editBtn.style.boxShadow = 'none';
       this.editBtn.title = t('editAnchorsTitle');
@@ -2775,7 +2781,28 @@ export class Ha3dFloorplan extends HTMLElement {
    * l'éditeur — détacher une pièce modifie la géométrie de base, donc on repart
    * toujours d'un modèle propre plutôt que d'essayer de défaire un retrait.
    */
+  /** Fusionne les objets immobiles, sauf en édition. */
+  private _mergeStatic() {
+    if (!this._batch || this._editMode) return;
+    const n = this._batch.merge();
+    if (n) {
+      console.debug(`[Owlnest] ${n} static objects merged`);
+      this._requestShadowUpdate();
+    }
+  }
+
   private _buildParts() {
+    // Un ouvrant peut changer de pièce : on repart des objets d'origine, et on
+    // refusionne une fois les ouvrants montés.
+    this._batch?.unmerge();
+    try {
+      this._mountParts();
+    } finally {
+      this._mergeStatic();
+    }
+  }
+
+  private _mountParts() {
     const configs = this._scene?.parts ?? [];
     if (!this._modelRoot) return;
     // Les rangs de l'arborescence se relèvent sur le modèle tel que chargé,
@@ -2821,6 +2848,8 @@ export class Ha3dFloorplan extends HTMLElement {
   private _clearSceneContent() {
     // Exit edit mode cleanly
     if (this._editMode) this._exitEditMode();
+    this._batch?.unmerge();
+    this._batch = null;
     this._highlight.clear();
     this._parts.dispose(this._modelRoot ?? undefined);
     if (this._ghost) { this.scene?.remove(this._ghost); this._ghost = null; }
@@ -2966,6 +2995,7 @@ export class Ha3dFloorplan extends HTMLElement {
       this._env.addOcclusion(this._modelBox);
     }
 
+    this._batch = new StaticBatch(model);
     this._buildParts();
 
     this.anchors = detectAnchors(model, this.scene, ec, this._modelSpan);
