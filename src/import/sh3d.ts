@@ -30,6 +30,8 @@ export interface Sh3dLeaf {
 }
 
 const AXIS = /^sweethome3d_(hinge|rail)_(\d+)(?:_|$)/;
+/** Rail commun à tous les vantaux coulissants du meuble (baie, porte-fenêtre). */
+const UNIQUE_RAIL = /^sweethome3d_unique_rail(?:_|$)/;
 const MOVING = /^sweethome3d_(opening|window_pane)_on_(hinge|rail)_(\d+)(?:_|$)/;
 
 export function sh3dLeaves(names: readonly string[]): Sh3dLeaf[] {
@@ -54,7 +56,18 @@ export function sh3dLeaves(names: readonly string[]): Sh3dLeaf[] {
     current = new Map();
   };
 
+  /** Rail commun du meuble en cours, partagé par ses vantaux coulissants. */
+  let sharedRail: number[] = [];
+  const railsOf = new Map<number, number[]>();
+
   names.forEach((name, i) => {
+    if (UNIQUE_RAIL.test(name)) {
+      if (!inPiece) openPiece();
+      sharedRail = railsOf.get(piece) ?? [];
+      sharedRail.push(i);
+      railsOf.set(piece, sharedRail);
+      return;
+    }
     const axis = AXIS.exec(name);
     const moving = axis ? null : MOVING.exec(name);
     if (!axis && !moving) {
@@ -78,6 +91,10 @@ export function sh3dLeaves(names: readonly string[]): Sh3dLeaf[] {
     }
   });
 
+  // Un coulissant sans rail à lui glisse sur le rail commun du meuble.
+  for (const l of leaves) {
+    if (l.motion === 'rail' && !l.axis.length) l.axis.push(...(railsOf.get(l.piece) ?? []));
+  }
   // Sans pièce mobile, ou sans axe, il n'y a rien à animer de façon sûre.
   return leaves.filter((l) => l.moving.length > 0 && l.axis.length > 0);
 }
@@ -95,6 +112,77 @@ export function hingeSide(leaf: Box, axis: Box): 'start' | 'end' {
   const wide = order[1];
   const c = (axis.min[wide] + axis.max[wide]) / 2;
   return c - leaf.min[wide] <= leaf.max[wide] - c ? 'start' : 'end';
+}
+
+/**
+ * Sens de glissement d'un coulissant : vers les autres vantaux du meuble, là
+ * où il se range en s'ouvrant. Seul sur son rail, vers le milieu du rail.
+ *
+ * Même convention que le moteur : `end` avance le long de l'axe le plus étendu
+ * hors verticale, ici la largeur du vantail.
+ */
+export function slideSide(leaf: Box, others: readonly Box[], rail: Box): 'start' | 'end' {
+  const size = [0, 1, 2].map((k) => leaf.max[k] - leaf.min[k]);
+  const order = [0, 1, 2].sort((a, b) => size[b] - size[a]);
+  const wide = order[1];
+  const mid = (b: Box) => (b.min[wide] + b.max[wide]) / 2;
+  const target = others.length
+    ? others.reduce((s, b) => s + mid(b), 0) / others.length
+    : mid(rail);
+  return target >= mid(leaf) ? 'end' : 'start';
+}
+
+/**
+ * Orientation d'un vantail dans le plan horizontal, en radians autour de Y.
+ *
+ * Une porte posée dans un mur en biais a une boîte englobante presque carrée :
+ * impossible d'y lire sa largeur, son épaisseur ni le côté de ses gonds. On
+ * cherche l'angle qui la rend la plus mince (rectangle d'aire minimale), pour
+ * l'exprimer ensuite dans son propre repère. Sweet Home 3D exporte en Y-up.
+ */
+export function leafYaw(positions: readonly ArrayLike<number>[]): number {
+  const area = (a: number) => {
+    const c = Math.cos(a), s = Math.sin(a);
+    let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+    for (const pos of positions) {
+      for (let i = 0; i + 2 < pos.length; i += 3) {
+        const u = pos[i] * c + pos[i + 2] * s;
+        const v = -pos[i] * s + pos[i + 2] * c;
+        if (u < minU) minU = u; if (u > maxU) maxU = u;
+        if (v < minV) minV = v; if (v > maxV) maxV = v;
+      }
+    }
+    return (maxU - minU) * (maxV - minV);
+  };
+  // Un rectangle se répète tous les quarts de tour : un degré, puis affinage.
+  let best = 0, bestArea = area(0);
+  for (let d = 1; d < 90; d++) {
+    const a = (d * Math.PI) / 180, v = area(a);
+    if (v < bestArea - 1e-9) { best = a; bestArea = v; }
+  }
+  for (let step = 0.5; step > 0.01; step /= 2) {
+    for (const a of [best - (step * Math.PI) / 180, best + (step * Math.PI) / 180]) {
+      const v = area(a);
+      if (v < bestArea - 1e-9) { best = a; bestArea = v; }
+    }
+  }
+  // Moins d'un demi-degré : le vantail est dans les axes, inutile de tourner.
+  return Math.abs(best) < (0.5 * Math.PI) / 180 || Math.abs(best - Math.PI / 2) < (0.5 * Math.PI) / 180 ? 0 : best;
+}
+
+/** Positions tournées de `yaw` autour de Y (convention three.js) : le vantail dans son propre repère. */
+export function unrotate(positions: readonly ArrayLike<number>[], yaw: number): number[][] {
+  if (!yaw) return positions.map((p) => Array.from(p));
+  const c = Math.cos(yaw), s = Math.sin(yaw);
+  return positions.map((pos) => {
+    const out = new Array<number>(pos.length);
+    for (let i = 0; i + 2 < pos.length; i += 3) {
+      out[i] = pos[i] * c + pos[i + 2] * s;
+      out[i + 1] = pos[i + 1];
+      out[i + 2] = -pos[i] * s + pos[i + 2] * c;
+    }
+    return out;
+  });
 }
 
 /** Boîte englobante d'une liste de positions (x, y, z à plat). */
@@ -123,6 +211,8 @@ export interface Sh3dLeafExtras {
     pane: boolean;
     /** Taille du vantail du plus grand axe au plus petit, en unités du modèle. */
     size: [number, number, number];
+    /** Boîte des gonds ou du rail, dans le repère du modèle exporté. */
+    axisBox?: Box;
   };
 }
 

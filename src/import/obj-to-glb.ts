@@ -18,7 +18,7 @@
  *   l'indexer divise la taille par trois ou quatre.
  */
 
-import { sh3dLeaves, boxOf, hingeSide, LEAF_PREFIX, type Sh3dLeafExtras } from './sh3d';
+import { sh3dLeaves, boxOf, hingeSide, slideSide, leafYaw, unrotate, LEAF_PREFIX, type Sh3dLeafExtras, type Box } from './sh3d';
 
 export interface ImportImage {
   data: Uint8Array;
@@ -351,22 +351,44 @@ export function objToGlb(objText: string, mtlText: string | null, images: Map<st
   // lui (vantail, poignée, vitre) : un seul objet à animer, et le côté des
   // gonds noté à côté, pour proposer l'ouvrant tout réglé.
   const roots = new Set(nodes.map((_, i) => i));
-  const boxOfGroups = (ids: number[]) => boxOf(ids.flatMap((i) => [...groups[i].prims.values()].map((pr) => pr.pos)));
+  const positionsOf = (ids: number[]) => ids.flatMap((i) => [...groups[i].prims.values()].map((pr) => pr.pos));
   let leafCount = 0;
-  for (const leaf of sh3dLeaves(groups.map((g) => g.name))) {
+  const leaves = sh3dLeaves(groups.map((g) => g.name));
+  // Un meuble posé en biais a tous ses vantaux dans le même biais : l'angle se
+  // mesure par vantail, chacun dans son propre repère.
+  const yaws = leaves.map((l) => leafYaw(positionsOf(l.moving)));
+  const boxes = leaves.map((l, k) => boxOf(unrotate(positionsOf(l.moving), yaws[k])));
+  leaves.forEach((leaf, k) => {
     const children = leaf.moving.map((i) => nodeOfGroup[i]).filter((i) => i >= 0);
-    const box = boxOfGroups(leaf.moving);
-    const axisBox = boxOfGroups(leaf.axis);
-    if (!children.length || !box || !axisBox) continue;
-    const size = [0, 1, 2].map((k) => box.max[k] - box.min[k]).sort((a, b) => b - a) as [number, number, number];
+    const box = boxes[k];
+    const yaw = yaws[k];
+    const axisBox = boxOf(unrotate(positionsOf(leaf.axis), yaw));
+    if (!children.length || !box || !axisBox) return;
+    const size = [0, 1, 2].map((d) => box.max[d] - box.min[d]).sort((a, b) => b - a) as [number, number, number];
+    const others = leaves
+      .map((l, j) => (j !== k && l.piece === leaf.piece && l.motion === 'rail'
+        ? boxOf(unrotate(positionsOf(l.moving), yaw)) : null))
+      .filter((b): b is Box => !!b);
+    const side = leaf.motion === 'rail' ? slideSide(box, others, axisBox) : hingeSide(box, axisBox);
     const extras: Sh3dLeafExtras = {
-      owlnestLeaf: { motion: leaf.motion, hinge: hingeSide(box, axisBox), pane: leaf.pane, size },
+      owlnestLeaf: { motion: leaf.motion, hinge: side, pane: leaf.pane, size, axisBox: boxOf(positionsOf(leaf.axis)) ?? undefined },
     };
     children.forEach((c) => roots.delete(c));
-    nodes.push({ name: `${LEAF_PREFIX}${leaf.piece}_${leaf.n}`, children, extras });
+    const name = `${LEAF_PREFIX}${leaf.piece}_${leaf.n}`;
+    if (!yaw) {
+      nodes.push({ name, children, extras });
+    } else {
+      // Le vantail tourne de +yaw sous un support tourné de -yaw : rien ne
+      // bouge à l'écran, mais vu de son support il est dans les axes (voir
+      // `unrotate`), et le moteur d'ouvrants y lit largeur, épaisseur et gonds
+      // comme d'habitude.
+      const q = (a: number) => [0, Math.sin(a / 2), 0, Math.cos(a / 2)];
+      nodes.push({ name, children, extras, rotation: q(yaw) });
+      nodes.push({ name: `${name}_frame`, children: [nodes.length - 1], rotation: q(-yaw) });
+    }
     roots.add(nodes.length - 1);
     leafCount++;
-  }
+  });
 
   const json: Record<string, unknown> = {
     asset: { version: '2.0', generator: 'Owlnest OBJ import' },
