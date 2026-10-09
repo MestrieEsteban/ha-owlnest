@@ -23,7 +23,7 @@ tags: [backlog]
 
 ## En attente
 
-**Murs bas, à la Sims : repris sur les plans le 9 octobre 2026** (`src/plan/low-walls.ts`, bouton 🧱 de la carte, éteint par défaut, retenu par appareil). Seuls les murs devant le point visé descendent à 18 % de leur hauteur, en 0,3 s, avec une marge de 40 cm contre le clignotement ; rien ne descend vu d'en haut. Un meuble adossé qui dépasse 1,40 m ou accroché au-dessus de la coupe disparaît avec son mur, et ce qui est posé dessus aussi. Tout se fait dans le shader (numéro de mur par sommet, texture des abaissements) : les murs et les meubles restent regroupés, le mode coûte 3 appels de dessin sur MaisonHA (97 → 100). Les modèles GLB importés n'ont pas ce mode. Historique ci-dessous. Premier essai, sur l'export OBJ : retiré avant la release, code gardé sur la branche `backlog/murs-bas`. Deux versions testées :
+**Murs bas, à la Sims : repris sur les plans le 9 octobre 2026**, puis repensés le même jour : vues debout, coupés, fantômes, bas, voir [[Vues des murs]]. Les modèles GLB importés n'ont pas ces vues. Historique ci-dessous. Premier essai, sur l'export OBJ : retiré avant la release, code gardé sur la branche `backlog/murs-bas`. Deux versions testées :
 
 - tous les murs coupés à mi-hauteur, mobilier compris : maquette jugée étrange, armoires coupées ;
 - seuls les murs entre la caméra et le centre descendent : mieux, mais vaisselle et portes de placard flottent quand leur meuble haut disparaît, et des murs intérieurs basculent au mauvais moment.
