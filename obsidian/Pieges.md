@@ -20,6 +20,10 @@ Deux occurrences distinctes :
 > [!tip] Réflexe
 > Avant de chercher un bug logique, vérifier que la page exécute bien le code écrit. `constructor.OWLNEST_BUILD` est là pour ça.
 
+### Deux retouches de shader sur la même matière
+
+`cutaway.ts` fixait `customProgramCacheKey` à une valeur constante. Les murs bas, branchés ensuite sur les mêmes matières, avaient leur propre clé : la coupe passant après l'a écrasée, et three.js a resservi le programme compilé sans les murs bas. Shader modifié, image identique, aucune erreur. Désormais chaque retouche **ajoute** sa marque à la clé précédente au lieu de la remplacer. Diagnostic : lire le source du programme compilé (`gl.getShaderSource`) et y chercher l'injection.
+
 ### Le cache qui ment
 
 Home Assistant sert ses **404** avec `Cache-Control: public, max-age=2678400` — trente et un jours.
