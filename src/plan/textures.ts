@@ -43,29 +43,41 @@ function draw(kind: Exclude<FloorMaterial, 'plain'>): HTMLCanvasElement {
   ctx.fillRect(0, 0, size, size);
   const r = rng(7);
   if (kind === 'wood') {
-    // Dix lames de 20 cm, coupées à des longueurs variées.
+    // Dix lames de 20 cm, coupées à des longueurs variées. Chaque rangée fait
+    // exactement la largeur du motif, et une lame qui déborde à droite est
+    // redessinée à gauche : le motif se répète sans couture tous les 2 m.
     const rows = 10, h = size / rows;
     for (let i = 0; i < rows; i++) {
-      let x = -r() * size;
-      while (x < size) {
+      const widths: number[] = [];
+      let total = 0;
+      while (total < size) {
         const w = size * (0.45 + r() * 0.55);
+        widths.push(w);
+        total += w;
+      }
+      // La dernière lame absorbe l'écart ; trop courte, elle rejoint la précédente.
+      const excess = total - size;
+      widths[widths.length - 1] -= excess;
+      if (widths.length > 1 && widths[widths.length - 1] < size * 0.2) widths[widths.length - 2] += widths.pop()!;
+      let x = r() * size;
+      for (const w of widths) {
         const v = Math.round(222 + r() * 33);
-        ctx.fillStyle = `rgb(${v},${v},${v})`;
-        ctx.fillRect(x, i * h, w, h);
-        // Veinage
-        ctx.strokeStyle = 'rgba(0,0,0,0.05)';
-        for (let k = 0; k < 4; k++) {
-          const y = i * h + r() * h;
-          ctx.beginPath(); ctx.moveTo(x, y); ctx.bezierCurveTo(x + w / 3, y + 3, x + (2 * w) / 3, y - 3, x + w, y); ctx.stroke();
+        const veins = Array.from({ length: 4 }, () => i * h + r() * h);
+        for (const at of [x, x - size]) {
+          ctx.fillStyle = `rgb(${v},${v},${v})`;
+          ctx.fillRect(at, i * h, w, h);
+          ctx.strokeStyle = 'rgba(0,0,0,0.05)';
+          for (const y of veins) {
+            ctx.beginPath(); ctx.moveTo(at, y); ctx.bezierCurveTo(at + w / 3, y + 3, at + (2 * w) / 3, y - 3, at + w, y); ctx.stroke();
+          }
+          ctx.fillStyle = 'rgba(0,0,0,0.28)';
+          ctx.fillRect(at, i * h, 2, h);
         }
-        ctx.fillStyle = 'rgba(0,0,0,0.28)';
-        ctx.fillRect(x, i * h, 2, h);
         x += w;
       }
       ctx.fillStyle = 'rgba(0,0,0,0.3)';
       ctx.fillRect(0, i * h, size, 2);
     }
-    // Les lames qui débordent à gauche reviennent à droite : le motif se répète sans couture.
   } else if (kind === 'tiles') {
     const n = 2, s = size / n;
     for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
