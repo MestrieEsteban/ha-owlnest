@@ -3,7 +3,7 @@ import * as THREE from 'three';
 
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
-import type { Hass, CardConfig, AnchorEntry, SavedView, EditableAnchor, OwlnestScene } from './types';
+import type { Hass, CardConfig, AnchorEntry, SavedView, EditableAnchor, OwlnestScene, OwlnestPart } from './types';
 import { syncLights, stepTransitions } from './lights';
 import { loadGLTF, detectAnchors, buildAnchorsFromEditable, rebuildAnchorLight, lightTargetPos } from './model';
 import { modelErrorKey, httpStatus } from './model-errors';
@@ -12,6 +12,11 @@ import type { ClusterItem } from './overlay';
 import { AnchorEditor } from './editor';
 import { loadScene, saveScene, listScenes, sceneToEffectiveConfig, buildSceneFromEditor, normalizeViews, emptyScene, sceneUnreachable, forgetSceneFailure } from './scene';
 import { importModel, ImportError } from './import/drop';
+import { unzipSync, strFromU8 } from 'fflate';
+import { readHome, homeToPlan, type Sh3dHome } from './import/sh3d-home';
+import { importSh3dFurniture } from './import/sh3d-furniture';
+import { fitSh3d, makeMover, matchNearest, type Box as FitBox, type Vec3 } from './import/sh3d-migrate';
+import { makeSimplifier } from './import/lighten';
 import { UploadError, type UploadHass } from './import/upload';
 import { attachDropZone, pickFiles, ImportProgress, askOpenings } from './card/import-ui';
 import { assignScene } from './card/lovelace-config';
@@ -1344,6 +1349,9 @@ export class Ha3dFloorplan extends HTMLElement {
    * plan de l'utilisateur.
    */
   private async _importModel(source: FileSystemEntry[] | File[]) {
+    // Un fichier Sweet Home 3D devient un plan modifiable, pas un modèle figé.
+    const sh3d = await sh3dFileOf(source);
+    if (sh3d) { await this._importSh3d(sh3d); return; }
     const sceneId = this._getActiveSceneId();
     if (!this._hass || !this.overlayContainer || this._importing) return;
     if (!sceneId) { this._showToast(t('importNoScene'), true); return; }
@@ -1404,6 +1412,166 @@ export class Ha3dFloorplan extends HTMLElement {
     } finally {
       this._importing = false;
     }
+  }
+
+  /**
+   * Importe un fichier Sweet Home 3D : la maison devient un plan qu'on modifie
+   * dans l'éditeur, ses meubles rejoignent « Mes meubles ».
+   *
+   * Si la scène affichait déjà ce logement importé à l'ancienne (l'export
+   * OBJ), tout ce qui y était posé est recalé sur le nouveau plan : ancres,
+   * vues et ouvrants, avec leurs capteurs. Rien n'est à refaire.
+   */
+  private async _importSh3d(file: File) {
+    const sceneId = this._getActiveSceneId();
+    if (!this._hass || !this.overlayContainer || this._importing) return;
+    if (!sceneId) { this._showToast(t('importNoScene'), true); return; }
+    this._importing = true;
+    const reopen = !!this._planEditor;
+    this._planEditor?.close();
+    if (this._editMode) this._exitEditMode();
+    this.overlayContainer.querySelector('#owlnest-demo-banner')?.remove();
+
+    const progress = new ImportProgress(this.overlayContainer);
+    try {
+      progress.stage('reading');
+      const zip = unzipSync(new Uint8Array(await file.arrayBuffer()));
+      if (!zip['Home.xml']) throw new Error(t('sh3dFileOld'));
+      const home = readHome(strFromU8(zip['Home.xml']));
+      let n = 0;
+      const conv = homeToPlan(home, {
+        room: () => `${t('planRoom')} ${++n}`,
+        floor: () => '#d8c3a5',
+      });
+      if (!conv.plan.walls.length) throw new Error(t('sh3dFileEmpty'));
+
+      progress.stage('uploading', 0);
+      const simplify = await makeSimplifier().catch(() => undefined);
+      const furniture = await importSh3dFurniture(this._hass as unknown as UploadHass, zip, conv.items, {
+        simplify, onProgress: (f) => progress.stage('uploading', f),
+      });
+      const plan: PlanDoc = { ...conv.plan, items: furniture.items, library: furniture.library };
+      progress.stage('loading');
+
+      // Ce qui était posé sur l'ancien modèle suit le logement.
+      const base = this._scene ?? emptyScene(sceneId);
+      const moved = this._isDemo ? null : this._sh3dMigration(home, conv.level?.id, plan, base);
+      const orbit = base.settings?.orbit;
+      const settings = base.settings && {
+        ...base.settings,
+        orbit: orbit?.max_polar_angle !== undefined ? { max_polar_angle: orbit.max_polar_angle } : undefined,
+      };
+      const scene: OwlnestScene = this._isDemo
+        ? { ...base, settings, plan, anchors: [], camera_views: [], parts: [] }
+        : { ...base, settings, plan, ...(moved ?? {}) };
+      await saveScene(this._hass, sceneId, scene);
+      this._scene = scene;
+      try { localStorage.removeItem(this._storageKey); } catch { /* stockage bloqué */ }
+      this._syncPlanPartsAfterLoad = true;
+      progress.done();
+      await this._loadModel();
+
+      const notes: string[] = [];
+      if (conv.levels > 1) notes.push(t('sh3dOneLevel').replace('{name}', conv.level?.name ?? ''));
+      if (furniture.failed) notes.push(t('sh3dFurnitureFailed').replace('{n}', String(furniture.failed)));
+      if (conv.skipped.openings) notes.push(t('sh3dOpeningsSkipped').replace('{n}', String(conv.skipped.openings)));
+      if (moved?.lost) notes.push(t('sh3dPartsLost').replace('{n}', String(moved.lost)));
+      if (moved === null && !this._isDemo && (base.anchors?.length ?? 0) && !base.plan) notes.push(t('sh3dAnchorsUnmoved'));
+      this._showToast([t('sh3dImported')
+        .replace('{walls}', String(plan.walls.length))
+        .replace('{openings}', String(plan.openings.length))
+        .replace('{items}', String(plan.items?.length ?? 0)), ...notes].join(' '), notes.length > 0);
+      if (reopen) this.openPlanEditor();
+    } catch (err) {
+      console.error('[Owlnest] Sweet Home 3D import failed:', err);
+      progress.fail(this._importErrorMessage(err));
+    } finally {
+      this._importing = false;
+    }
+  }
+
+  /**
+   * Recale ancres, vues et ouvrants de l'ancien modèle sur le plan importé.
+   * `null` quand il n'y a rien à recaler, ou que l'ancien modèle n'est pas ce
+   * logement (alors on ne touche à rien plutôt que de tout déplacer de travers).
+   */
+  private _sh3dMigration(home: Sh3dHome, level: string | undefined, plan: PlanDoc, base: OwlnestScene):
+    (Pick<OwlnestScene, 'anchors' | 'camera_views' | 'parts'> & { lost: number }) | null {
+    const root = this._modelRoot;
+    if (!root || base.plan || root.name === 'owlnest_plan') return null;
+
+    // Les murs de l'ancien modèle (l'export OBJ les nomme), dans son propre repère.
+    root.updateMatrixWorld(true);
+    const walls = new THREE.Box3(), rest = new THREE.Box3();
+    root.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || o.userData.owlnestHelper || o.userData.owlnestBatch) return;
+      const b = new THREE.Box3().setFromObject(m);
+      let named = false;
+      for (let q: THREE.Object3D | null = m; q && q !== root; q = q.parent) if (/^wall/i.test(q.name)) named = true;
+      if (named) walls.union(b);
+      else if (!/ground|terrain/i.test(m.name)) rest.union(b);
+    });
+    const used = walls.isEmpty() ? rest : walls;
+    if (used.isEmpty()) return null;
+    const oldRoot: Vec3 = [root.position.x, root.position.y, root.position.z];
+    const model: FitBox = {
+      min: [used.min.x - oldRoot[0], used.min.y - oldRoot[1], used.min.z - oldRoot[2]],
+      max: [used.max.x - oldRoot[0], used.max.y - oldRoot[1], used.max.z - oldRoot[2]],
+    };
+    const own = home.walls.filter((w) => !level || w.level === level || !w.level);
+    const box: FitBox = { min: [Infinity, Infinity, 0], max: [-Infinity, -Infinity, 0] };
+    for (const w of own) {
+      const half = w.thickness / 2;
+      box.min[0] = Math.min(box.min[0], Math.min(w.xStart, w.xEnd) - half);
+      box.max[0] = Math.max(box.max[0], Math.max(w.xStart, w.xEnd) + half);
+      box.min[1] = Math.min(box.min[1], Math.min(w.yStart, w.yEnd) - half);
+      box.max[1] = Math.max(box.max[1], Math.max(w.yStart, w.yEnd) + half);
+      box.max[2] = Math.max(box.max[2], w.height ?? home.wallHeight, w.heightAtEnd ?? 0);
+    }
+    const fit = fitSh3d(box, model);
+    if (!fit) return null;
+
+    // Où le nouveau plan se posera : même calcul que `_loadModel`.
+    const built = buildPlan(plan);
+    const centre = new THREE.Box3().setFromObject(built).getCenter(new THREE.Vector3());
+    const o = this._planOrigin(plan);
+    const newRoot: Vec3 = [-o.x, -centre.y, -o.y];
+    const move = makeMover(fit, oldRoot, newRoot);
+
+    const anchors = (base.anchors ?? []).map((a) => ({
+      ...a,
+      position: move.point(a.position),
+      ...(a.lightDirection ? { lightDirection: move.direction(a.lightDirection) } : {}),
+    }));
+    const camera_views = (base.camera_views ?? []).map((v) => ({ ...v, position: move.point(v.position), target: move.point(v.target) }));
+
+    // Chaque ancien ouvrant passe au vantail du plan le plus proche, avec ses réglages.
+    const olds: { item: OwlnestPart; at: Vec3 }[] = [];
+    for (const part of base.parts ?? []) {
+      const b = this._parts.boxOf(part.id);
+      if (!b || b.isEmpty()) continue;
+      const c = b.getCenter(new THREE.Vector3());
+      olds.push({ item: part, at: move.point([c.x, c.y, c.z]) });
+    }
+    const leaves: { item: string; at: Vec3 }[] = [];
+    built.updateMatrixWorld(true);
+    built.traverse((n) => {
+      if (!n.userData.owlnestLeaf) return;
+      const c = new THREE.Box3().setFromObject(n).getCenter(new THREE.Vector3());
+      leaves.push({ item: n.name, at: [c.x + newRoot[0], c.y + newRoot[1], c.z + newRoot[2]] });
+    });
+    const match = matchNearest(olds, leaves, 0.8);
+    const parts: OwlnestPart[] = [];
+    for (const [old, node] of match) {
+      // Seuls les réglages de l'utilisateur passent : la géométrie vient du plan.
+      const { id, entity, label, angle, travel, openWhen, invert, duration, closedColor, openColor, tintStrength } = old;
+      parts.push({
+        id, entity, label, angle, travel, openWhen, invert, duration, closedColor, openColor, tintStrength,
+        node, mesh: '', triangle: 0, motion: old.motion,
+      });
+    }
+    return { anchors, camera_views, parts, lost: (base.parts?.length ?? 0) - parts.length };
   }
 
   /** Portes et fenêtres Sweet Home 3D du modèle, pas encore dans la scène. */
@@ -4119,3 +4287,14 @@ if (devEntry) {
   defineCard();
 }
 
+/** Le fichier Sweet Home 3D d'un dépôt ou d'une sélection, s'il y en a un. */
+async function sh3dFileOf(source: FileSystemEntry[] | File[]): Promise<File | null> {
+  for (const item of source) {
+    if (item instanceof File) {
+      if (/\.sh3d$/i.test(item.name)) return item;
+    } else if (item.isFile && /\.sh3d$/i.test(item.name)) {
+      return new Promise<File>((res, rej) => (item as FileSystemFileEntry).file(res, rej));
+    }
+  }
+  return null;
+}

@@ -16,7 +16,7 @@ const FONT = 'font-family:var(--primary-font-family,sans-serif)';
 const LIGHTEN_KEY = 'owlnest_lighten';
 
 /** Ce qu'accepte le sélecteur : l'export Sweet Home 3D en vrac, un zip ou un GLB. */
-const ACCEPT = '.glb,.obj,.mtl,.zip,.jpg,.jpeg,.png';
+const ACCEPT = '.sh3d,.glb,.obj,.mtl,.zip,.jpg,.jpeg,.png';
 
 /**
  * Accepte les fichiers glissés sur la carte.
