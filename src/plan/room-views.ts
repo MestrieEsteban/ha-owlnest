@@ -52,11 +52,17 @@ export function planRooms(plan: PlanDoc): RoomView[] {
   return out;
 }
 
-/** La pièce qui contient un point de la scène, s'il y en a une. */
+/**
+ * La pièce qui contient un point de la scène, s'il y en a une. `rooms` vient
+ * de `planRooms`, déjà triée de la plus grande à la plus petite : on la lit à
+ * rebours, la plus petite d'abord (une pièce peut être dessinée dans une
+ * autre), sans rien trier à chaque appel. Appelée pour chaque pastille à
+ * chaque changement d'état, sur une tablette.
+ */
 export function roomOfPoint(rooms: RoomView[], origin: Pt, x: number, z: number): RoomView | null {
   const p = { x: x + origin.x, y: z + origin.y };
-  // La plus petite d'abord : une pièce peut être dessinée dans une autre.
-  return [...rooms].sort((a, b) => a.area - b.area).find((r) => pointInPolygon(p, r.poly)) ?? null;
+  for (let i = rooms.length - 1; i >= 0; i--) if (pointInPolygon(p, rooms[i].poly)) return rooms[i];
+  return null;
 }
 
 export interface CameraPose {
