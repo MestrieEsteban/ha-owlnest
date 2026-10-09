@@ -50,6 +50,14 @@ function isRuntime(o: THREE.Object3D): boolean {
 }
 
 /**
+ * Oublie la numérotation : pour un modèle reconstruit sur place (plan dessiné),
+ * les rangs se relèvent sur le nouveau contenu.
+ */
+export function resetOrder(root: THREE.Object3D) {
+  delete root.userData[OUTLINE];
+}
+
+/**
  * Numérote le graphe s'il ne l'est pas encore, et en garde l'arborescence.
  *
  * À appeler sur le modèle fraîchement chargé. Les appels suivants ne font

@@ -1,0 +1,65 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Owlnest — plan dessiné</title>
+<style>
+  html, body { margin: 0; background: #0d1117; font-family: system-ui, sans-serif; }
+  pre { color: #7dd3fc; font: 11px monospace; padding: 8px 14px; white-space: pre-wrap; }
+</style>
+<div id="host"></div>
+<pre id="out">montage…</pre>
+<script type="module">
+  // Une scène dont la maison est un plan dessiné : deux pièces, une porte,
+  // une fenêtre double et une baie coulissante. On vérifie la 3D et les
+  // ouvrants créés depuis le plan.
+  import '/src/ha-3d-floorplan.ts';
+  customElements.define('ha-icon', class extends HTMLElement {});
+
+  const out = document.getElementById('out');
+  const say = (s) => { out.textContent += '\n' + s; };
+
+  const plan = {
+    version: 1, wallHeight: 2.5, wallThickness: 0.15,
+    rooms: [
+      { id: 'salon', name: 'Salon', x: 0, y: 0, w: 5, d: 4, floor: '#c9b08a' },
+      { id: 'chambre', name: 'Chambre', x: 5, y: 0, w: 3.5, d: 4, floor: '#b7c4cf' },
+    ],
+    openings: [
+      { id: 'd1', kind: 'door', x: 5, y: 2, width: 0.83, height: 2.04, sill: 0, hinge: 'start', swing: 'front' },
+      { id: 'w1', kind: 'window', x: 2.5, y: 0, width: 1.4, height: 1.25, sill: 0.9, hinge: 'start', swing: 'back', double: true },
+      { id: 's1', kind: 'slider', x: 2.5, y: 4, width: 2.2, height: 2.15, sill: 0, hinge: 'start', swing: 'front' },
+      { id: 'd2', kind: 'door', x: 8.5, y: 3, width: 0.9, height: 2.04, sill: 0, hinge: 'end', swing: 'back' },
+    ],
+  };
+  let scene = { version: 1, scene_id: 'plan', model_url: '', anchors: [], camera_views: [], cards: [], rules: [], parts: [], plan };
+
+  const hass = {
+    states: {}, user: { is_admin: true }, callService() {},
+    callWS: async (msg) => {
+      if (msg.type === 'owlnest/load_scene') return scene;
+      if (msg.type === 'owlnest/save_scene') { scene = msg.data; return { success: true }; }
+      if (msg.type === 'owlnest/list_scenes') return { scenes: ['plan'] };
+      if (String(msg.type).startsWith('config/')) return [];
+      throw new Error('inconnu: ' + msg.type);
+    },
+  };
+
+  localStorage.setItem('owlnest_scene_id@plan', 'plan');
+  const card = document.createElement('ha-3d-floorplan');
+  card.style.cssText = 'display:block;width:900px;height:520px;';
+  document.getElementById('host').appendChild(card);
+  card.setConfig({ scene_id: 'plan', height: 520 });
+  // Le plan arrive sans ouvrants : la carte les crée au premier chargement.
+  card._syncPlanPartsAfterLoad = true;
+  card.hass = hass;
+  window.__card = card;
+
+  for (let i = 0; i < 40 && !card.modelLoaded; i++) await new Promise((r) => setTimeout(r, 200));
+  await new Promise((r) => setTimeout(r, 300));
+  let walls = 0, meshes = 0;
+  card._modelRoot.traverse((o) => { if (o.isMesh) { meshes++; if (o.name.startsWith('wall_')) walls++; } });
+  say(`modèle : ${card._modelRoot.name}, ${meshes} mailles dont ${walls} morceaux de mur, démo : ${card._isDemo}`);
+  const parts = card._scene.parts ?? [];
+  say(`ouvrants créés : ${parts.length} → ${parts.map((p) => `${p.label} (${p.motion}, ${p.hinge})`).join(', ')}`);
+  say(`montés : ${parts.filter((p) => card._parts.items.some((i) => i.cfg.id === p.id)).length}`);
+  window.__done = true;
+</script>

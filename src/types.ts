@@ -411,6 +411,11 @@ export interface OwlnestScene {
   rules: import('./rules/types').OwlnestRule[];
   parts?: OwlnestPart[];
   settings?: SceneSettings;
+  /**
+   * Logement dessiné dans la carte (voir plan/). Quand il a des pièces, c'est
+   * lui qui fait la maison, à la place de `model_url`.
+   */
+  plan?: import('./plan/types').PlanDoc;
 }
 
 // ── Lovelace card config ───────────────────────────────────────────────────

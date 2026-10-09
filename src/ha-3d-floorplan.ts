@@ -39,12 +39,15 @@ import { PanelGizmo } from './panels/gizmo';
 import type { SceneCard, SceneCardType } from './cards/types';
 import { PartController, meshOrder, partTargetKey } from './parts-runtime';
 import { clipInfos } from './parts-clips';
-import { stampOrder, nodeOrder } from './model-outline';
+import { stampOrder, nodeOrder, resetOrder } from './model-outline';
 import { PartHighlight, type HighlightSource, type HighlightSlot } from './part-highlight';
 import { modelScale } from './scale';
 import { partIndexOf, partFrame, guessPart, verticalAxis } from './parts';
 import { separateCoplanarSlabs } from './coplanar';
 import { StaticBatch } from './batching';
+import { buildPlan } from './plan/build';
+import { syncPlanParts } from './plan/parts';
+import type { PlanDoc } from './plan/types';
 import { createUniforms, instrumentMaterials, updateXray, createGhost } from './cutaway';
 import type { CutawayUniforms } from './cutaway';
 import { evalCondition, RuleEngine } from './rules/engine';
@@ -398,13 +401,96 @@ export class Ha3dFloorplan extends HTMLElement {
     const cfg = this._scene ? sceneToEffectiveConfig(this._scene, this._config!) : this._config!;
     // Sans modèle, ni dans la carte ni dans la scène, la carte montre la maison
     // de démonstration plutôt qu'un cadre vide : voir demo.ts.
-    if (cfg.model_url?.trim()) return cfg;
+    if (cfg.model_url?.trim() || this._plan) return cfg;
     return { ...cfg, model_url: demoModelUrl() };
   }
 
+  /** Le logement dessiné dans la carte, s'il a au moins une pièce : il fait alors la maison. */
+  private get _plan(): PlanDoc | null {
+    const p = this._scene?.plan;
+    return p && p.rooms.length ? p : null;
+  }
+
+  /**
+   * Point du plan au centre de la scène : fixé une fois pour toutes (voir
+   * PlanDoc.origin), au centre des pièces du premier dessin.
+   */
+  private _planOrigin(plan: PlanDoc): { x: number; y: number } {
+    if (!plan.origin) {
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      for (const r of plan.rooms) {
+        x0 = Math.min(x0, r.x); x1 = Math.max(x1, r.x + r.w);
+        y0 = Math.min(y0, r.y); y1 = Math.max(y1, r.y + r.d);
+      }
+      plan.origin = { x: Math.round(((x0 + x1) / 2) * 10) / 10, y: Math.round(((y0 + y1) / 2) * 10) / 10 };
+    }
+    return plan.origin;
+  }
+
+  /** Libellé d'un ouvrant créé depuis le plan : « Porte 1 », « Fenêtre 2 · vantail 1 ». */
+  private _planPartLabel = (kind: 'door' | 'window' | 'slider', n: number, leaf: number, leaves: number) =>
+    `${t(kind === 'door' ? 'sh3dDoor' : kind === 'window' ? 'sh3dWindow' : 'planSlider')} ${n}${leaves > 1 && kind === 'window' ? ` · ${t('sh3dLeaf')} ${leaf}` : ''}`;
+
+  /**
+   * Le plan a changé (éditeur) : la maison se reconstruit sur place.
+   *
+   * Pas de rechargement : la caméra, les ancres et le mode en cours restent
+   * tels quels. Seul le contenu du modèle est remplacé, puis les ouvrants sont
+   * remis d'accord avec le plan (voir plan/parts.ts).
+   */
+  applyPlan(plan: PlanDoc) {
+    if (!this._scene) return;
+    this._scene = { ...this._scene, plan };
+    const root = this._modelRoot;
+    // Premier dessin, ou passage de la démo (ou d'un import) au plan : on charge.
+    if (!root || root.name !== 'owlnest_plan' || !plan.rooms.length) {
+      this._syncPlanPartsAfterLoad = true;
+      void this._loadModel();
+      return;
+    }
+    this._batch?.unmerge();
+    this._highlight.clear();
+    this._parts.dispose(root);
+    for (const c of [...root.children]) {
+      root.remove(c);
+      c.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        mesh.geometry.dispose();
+        (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach((m) => m.dispose());
+      });
+    }
+    resetOrder(root);
+    const fresh = buildPlan(plan);
+    for (const c of [...fresh.children]) root.add(c);
+    root.updateMatrixWorld(true);
+    this._afterPlanBuilt(root);
+  }
+
+  /** Bornes, ouvrants, ombres et rendu, après une (re)construction du plan. */
+  private _afterPlanBuilt(root: THREE.Object3D) {
+    this._modelBox.setFromObject(root);
+    const span = this._modelBox.getSize(new THREE.Vector3());
+    this._modelSpan = Math.max(span.x, span.y, span.z, 1e-3);
+    this._fitSunShadow();
+    this._applyCutaway();
+    if (this._scene?.plan) {
+      this._scene = {
+        ...this._scene,
+        parts: syncPlanParts(root, this._scene.plan, this._scene.parts ?? [], this._planPartLabel),
+      };
+    }
+    this._buildParts();
+    this._requestShadowUpdate();
+    this._requestRender();
+  }
+
+  /** Après un chargement déclenché par l'éditeur : accorder les ouvrants au plan. */
+  private _syncPlanPartsAfterLoad = false;
+
   /** La carte montre-t-elle la maison de démonstration ? */
   private get _isDemo(): boolean {
-    return !this._effectiveModelUrl() && !this._backendDown;
+    return !this._effectiveModelUrl() && !this._plan && !this._backendDown;
   }
 
   /** Le modèle configuré, scène et YAML confondus, sans le repli de la démo. */
@@ -2905,7 +2991,8 @@ export class Ha3dFloorplan extends HTMLElement {
       return;
     }
     const ec = this._effectiveConfig;
-    if (!ec.model_url || !this.scene) return;
+    const plan = this._plan;
+    if ((!ec.model_url && !plan) || !this.scene) return;
 
     // Show loading indicator
     const loadingEl = document.createElement('div');
@@ -2925,7 +3012,7 @@ export class Ha3dFloorplan extends HTMLElement {
 
     let model: THREE.Group;
     try {
-      model = await loadGLTF(ec.model_url);
+      model = plan ? buildPlan(plan) : await loadGLTF(ec.model_url!);
     } catch (err) {
       console.error('[Owlnest] model load failed:', err);
       // Le code HTTP dit s'il faut corriger le chemin ou regarder le serveur ;
@@ -2951,6 +3038,13 @@ export class Ha3dFloorplan extends HTMLElement {
 
     const box = new THREE.Box3().setFromObject(model);
     const centre = box.getCenter(new THREE.Vector3());
+    if (plan) {
+      // Un plan garde son origine : le recentrer à chaque retouche ferait
+      // glisser les ancres déjà posées (voir PlanDoc.origin).
+      const o = this._planOrigin(plan);
+      centre.x = o.x;
+      centre.z = o.y;
+    }
     model.position.sub(centre);
     this._modelBox.copy(box).translate(centre.negate());
     const span = this._modelBox.getSize(new THREE.Vector3());
@@ -2996,6 +3090,13 @@ export class Ha3dFloorplan extends HTMLElement {
     }
 
     this._batch = new StaticBatch(model);
+    if (plan && this._syncPlanPartsAfterLoad && this._scene) {
+      this._syncPlanPartsAfterLoad = false;
+      this._scene = {
+        ...this._scene,
+        parts: syncPlanParts(model, plan, this._scene.parts ?? [], this._planPartLabel),
+      };
+    }
     this._buildParts();
 
     this.anchors = detectAnchors(model, this.scene, ec, this._modelSpan);

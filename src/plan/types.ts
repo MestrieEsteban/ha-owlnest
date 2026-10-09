@@ -68,6 +68,12 @@ export interface PlanDoc {
   openings: PlanOpening[];
   walls?: Record<string, WallOverride>;
   background?: PlanBackground;
+  /**
+   * Point du plan placé au centre de la scène 3D. Fixé au premier dessin et
+   * plus jamais recalculé : les ancres sont posées en coordonnées de la scène,
+   * et ne doivent pas glisser quand on agrandit la maison.
+   */
+  origin?: { x: number; y: number };
 }
 
 export function emptyPlan(): PlanDoc {
