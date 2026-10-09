@@ -160,6 +160,10 @@ Un `<dialog>` ouvert avec `showModal()` vit dans le **top layer** du navigateur 
 
 Une popup `<select>` native se dessine avec les couleurs du **système**, pas celles du `<select>`. Texte clair sur fond blanc. Corrigé par `color-scheme: dark` **plus** des styles sur chaque `<option>`, pour les navigateurs qui ignorent le premier.
 
+### Le menu visible mais incliquable
+
+Le calque `overlayContainer` est en `pointer-events:none` pour laisser passer les gestes vers la scène ; **chaque élément cliquable posé dedans doit remettre `pointer-events:auto`**. Le menu des [[Vues des murs]] l'avait oublié : il s'affichait, les clics traversaient. Même oubli sur l'écran de choix de scène (`_showSetupOverlay`). Mon banc ne l'avait pas vu parce qu'il cliquait avec `element.click()`, qui ignore `pointer-events` : **tester un menu avec `page.mouse.click` aux coordonnées de l'élément.**
+
 ## Outillage
 
 ### `npm run dev:ha -- --restore` lançait le mode dev
@@ -175,6 +179,7 @@ Une popup `<select>` native se dessine avec les couleurs du **système**, pas ce
 À relire avant d'accuser le code.
 
 - Dispatcher `mousedown`/`mouseup` là où le code écoute `click`.
+- Cliquer un menu avec `element.click()` : il passe à travers `pointer-events:none`, donc le banc valide un menu que la souris ne peut pas atteindre.
 - Placer une ancre **derrière la caméra** dans un banc, puis conclure à un bug de rendu.
 - Lire `leaf.parent` en croyant tenir le nœud pivot, alors que `leaf` **était** le pivot → un test rouge sur du code juste.
 - Conclure « modèle fusionné inexploitable » sur la foi d'**un nom de nœud unique**, sans regarder le contenu. La plus coûteuse : elle a failli faire renoncer aux [[Ouvrants]].

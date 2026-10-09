@@ -1714,7 +1714,7 @@ export class Ha3dFloorplan extends HTMLElement {
       'display:flex', 'flex-direction:column', 'align-items:center', 'justify-content:center',
       'background:rgba(6,10,20,0.92)',
       'backdrop-filter:blur(12px)', '-webkit-backdrop-filter:blur(12px)',
-      'z-index:50', 'padding:24px', 'box-sizing:border-box',
+      'z-index:50', 'padding:24px', 'box-sizing:border-box', 'pointer-events:auto',
       'font-family:var(--primary-font-family,sans-serif)',
     ].join(';');
 
@@ -1816,7 +1816,7 @@ export class Ha3dFloorplan extends HTMLElement {
       'position:absolute', 'z-index:60', 'display:flex', 'flex-direction:column', 'gap:2px', 'padding:6px',
       'border-radius:12px', 'background:rgba(8,12,24,0.92)', 'backdrop-filter:blur(10px)',
       'border:1px solid rgba(255,255,255,0.12)', 'box-shadow:0 10px 28px rgba(0,0,0,0.35)',
-      'font-family:var(--primary-font-family,sans-serif)', 'min-width:220px',
+      'font-family:var(--primary-font-family,sans-serif)', 'min-width:220px', 'pointer-events:auto',
     ].join(';');
     const title = document.createElement('div');
     title.textContent = t('wallViewTitle');
