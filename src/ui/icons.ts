@@ -76,6 +76,13 @@ export const ICONS: Record<string, string> = {
   nav: '<path d="M12 3l7 18-7-4-7 4z"/>',
   play: '<path d="M7 4l13 8-13 8z"/>',
   cloud: '<path d="M7 18a5 5 0 1 1 1-9.9A6 6 0 0 1 19.5 10 4 4 0 0 1 18 18z"/>',
+  rain: '<path d="M7 15a4.5 4.5 0 1 1 1-8.9A5.5 5.5 0 0 1 18.5 8 3.5 3.5 0 0 1 18 15z"/><path d="M8 18l-1 2M12 18l-1 2M16 18l-1 2"/>',
+  storm: '<path d="M7 14a4.5 4.5 0 1 1 1-8.9A5.5 5.5 0 0 1 18.5 7 3.5 3.5 0 0 1 18 14z"/><path d="M12 14l-2 4h3l-2 4"/>',
+  hail: '<path d="M7 15a4.5 4.5 0 1 1 1-8.9A5.5 5.5 0 0 1 18.5 8 3.5 3.5 0 0 1 18 15z"/><circle cx="8" cy="19" r="1" fill="currentColor"/><circle cx="12" cy="20" r="1" fill="currentColor"/><circle cx="16" cy="19" r="1" fill="currentColor"/>',
+  snow: '<path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9"/><path d="M10 5l2 2 2-2M10 19l2-2 2 2"/>',
+  fog: '<path d="M4 9h16M3 13h18M5 17h14"/>',
+  wind: '<path d="M3 9h11a3 3 0 1 0-3-3M3 15h15a3 3 0 1 1-3 3M3 12h7"/>',
+  partly: '<circle cx="8" cy="8" r="3"/><path d="M8 2v1M2 8h1M3.8 3.8l.7.7M12.2 3.8l-.7.7"/><path d="M9 19a4 4 0 1 1 .9-7.9A5 5 0 0 1 19.5 13 3 3 0 0 1 19 19z"/>',
   layout: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M10 10v10"/>',
   hand: '<path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V12M11 11V4.5a1.5 1.5 0 0 1 3 0V11M14 11V6a1.5 1.5 0 0 1 3 0v8a7 7 0 0 1-7 7h-.5a6 6 0 0 1-5-2.7L3 15a1.5 1.5 0 0 1 2.4-1.8L8 15"/>',
 };

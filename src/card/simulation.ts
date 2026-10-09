@@ -3,6 +3,7 @@ import type { Hass, AnchorEntry, CardConfig } from '../types';
 import { EnvironmentController } from './environment';
 import type { WeatherEffect } from './environment';
 import { t } from '../i18n';
+import { icon } from '../ui/icons';
 
 export class SimulationPanel {
   private _simActive = false;
@@ -124,32 +125,36 @@ export class SimulationPanel {
 
     // Weather presets — 2 rows of 4
     type SimWeather = 'clear' | 'cloudy' | 'rain' | 'storm' | 'hail' | 'snow' | 'fog' | 'wind';
-    const presets: { emoji: string; label: string; value: SimWeather }[] = [
-      { emoji: '☀️', label: t('simWeatherClear'),  value: 'clear'  },
-      { emoji: '⛅', label: t('simWeatherCloudy'), value: 'cloudy' },
-      { emoji: '🌧️', label: t('simWeatherRain'),   value: 'rain'   },
-      { emoji: '⛈️', label: t('simWeatherStorm'),  value: 'storm'  },
-      { emoji: '🌨️', label: t('simWeatherHail'),   value: 'hail'   },
-      { emoji: '❄️', label: t('simWeatherSnow'),   value: 'snow'   },
-      { emoji: '🌫️', label: t('simWeatherFog'),    value: 'fog'    },
-      { emoji: '💨', label: t('simWeatherWind'),   value: 'wind'   },
+    const presets: { icon: string; label: string; value: SimWeather }[] = [
+      { icon: 'sun',    label: t('simWeatherClear'),  value: 'clear'  },
+      { icon: 'partly', label: t('simWeatherCloudy'), value: 'cloudy' },
+      { icon: 'rain',   label: t('simWeatherRain'),   value: 'rain'   },
+      { icon: 'storm',  label: t('simWeatherStorm'),  value: 'storm'  },
+      { icon: 'hail',   label: t('simWeatherHail'),   value: 'hail'   },
+      { icon: 'snow',   label: t('simWeatherSnow'),   value: 'snow'   },
+      { icon: 'fog',    label: t('simWeatherFog'),    value: 'fog'    },
+      { icon: 'wind',   label: t('simWeatherWind'),   value: 'wind'   },
     ];
     const weatherBtns: HTMLButtonElement[] = [];
     const syncWeather = () => {
       weatherBtns.forEach((b, i) => {
         const on = presets[i].value === this._simWeather;
-        b.style.background = on ? 'rgba(245,158,11,0.35)' : 'rgba(255,255,255,0.07)';
+        b.style.background = on ? 'rgba(245,158,11,0.22)' : 'var(--ow-chrome2, rgba(255,255,255,0.07))';
         b.style.boxShadow  = on ? '0 0 0 1.5px rgba(245,158,11,0.7)' : 'none';
+        b.style.color = on ? '#fbbf24' : 'var(--ow-text, #fff)';
       });
     };
     const weatherGrid = document.createElement('div');
     weatherGrid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:4px;';
     for (const p of presets) {
       const wb = document.createElement('button');
-      wb.title = p.label; wb.textContent = p.emoji;
+      wb.type = 'button';
+      wb.title = p.label;
+      wb.setAttribute('aria-label', p.label);
+      wb.append(icon(p.icon, 20));
       wb.style.cssText = [
-        'border:none', 'border-radius:8px',
-        'font-size:16px', 'padding:5px 0',
+        'border:none', 'border-radius:9px', 'display:grid', 'place-items:center',
+        'padding:7px 0',
         'cursor:pointer', 'color:#fff',
         'background:rgba(255,255,255,0.07)',
         'transition:background .15s, box-shadow .15s',

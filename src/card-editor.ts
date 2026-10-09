@@ -202,7 +202,7 @@ class Ha3dFloorplanEditor extends HTMLElement {
     infoBox.innerHTML = [
       'Other settings (lights, camera, rendering, weather, clustering…)',
       'can be configured directly in the <strong>3D edit panel</strong>',
-      'by clicking the ✏️ icon on the card.',
+      'with the pencil button of the card.',
       '<br><br>',
       'Active scene: <strong>' + (c.scene_id ? `<code>${c.scene_id}</code>` : '(none, set one above)') + '</strong>',
     ].join(' ');

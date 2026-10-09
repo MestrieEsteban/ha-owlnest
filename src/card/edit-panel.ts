@@ -154,7 +154,7 @@ function ruleSummary(
     v ? stateLabel(id, v, hass?.states[id]?.attributes ?? {}) : null;
 
   const triggers = (r.triggers ?? []).map((tr) => {
-    if (tr.type === 'time') return `⏰ ${tr.at}`;
+    if (tr.type === 'time') return `${t('ruleSummaryAt')} ${tr.at}`;
     if (tr.type === 'numeric_state') {
       const parts: string[] = [];
       if (tr.above !== undefined) return `${nameOf(tr.entity_id)} > ${tr.above}`;
@@ -168,10 +168,10 @@ function ruleSummary(
 
   const actions = (r.actions ?? []).map((a) => {
     if (a.type === 'go_to_view') {
-      return `▶ ${views.find((v) => v.id === a.view_id)?.label ?? '?'}`;
+      return `${t('ruleSummaryGo')} ${views.find((v) => v.id === a.view_id)?.label ?? '?'}`;
     }
-    if (a.type === 'highlight_anchor') return `✦ ${nameOf(a.anchor)}`;
-    if (a.type === 'toast') return `💬 ${a.message || '…'}`;
+    if (a.type === 'highlight_anchor') return `${t('ruleSummaryHighlight')} ${nameOf(a.anchor)}`;
+    if (a.type === 'toast') return `« ${a.message || '…'} »`;
     return `${a.domain}.${a.service}`;
   });
 

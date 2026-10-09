@@ -2259,7 +2259,7 @@ export class Ha3dFloorplan extends HTMLElement {
         'opacity:0', 'transition:opacity .2s ease',
         'white-space:nowrap',
       ].join(';');
-      badge.innerHTML = `<span style="font-size:13px">🙈</span> ${t('overlaysHidden')}`;
+      badge.append(uiIcon('eyeOff', 14), document.createTextNode(t('overlaysHidden')));
       this.overlayContainer.appendChild(badge);
       this._overlayHideBadge = badge;
       requestAnimationFrame(() => { badge.style.opacity = '1'; });

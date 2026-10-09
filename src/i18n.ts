@@ -1083,6 +1083,11 @@ const STRINGS = {
     sh3dLevelHint: 'This home has several levels. Floors are not supported yet: pick the one you want on the card. You can import the file again for another one.',
     sh3dLevelUnnamed: 'Unnamed level',
     sh3dLevelWalls: '{n} walls',
+    // Interface de la carte
+    ruleSummaryAt: 'at',
+    ruleSummaryHighlight: 'highlight',
+    // Interface de la carte
+    ruleSummaryGo: 'go to',
   },
 
   fr: {
@@ -2152,6 +2157,11 @@ const STRINGS = {
     sh3dLevelHint: 'Cette maison a plusieurs niveaux. Les étages ne sont pas encore gérés : choisis celui que tu veux sur la carte. Tu pourras réimporter le fichier pour un autre.',
     sh3dLevelUnnamed: 'Niveau sans nom',
     sh3dLevelWalls: '{n} murs',
+    // Interface de la carte
+    ruleSummaryAt: 'à',
+    ruleSummaryHighlight: 'mettre en avant',
+    // Interface de la carte
+    ruleSummaryGo: 'aller à',
   },
 } as const;
 
