@@ -49,6 +49,19 @@ Vérifier qu'un rendu change vraiment, sans capture d'écran : comparer deux `ge
 
 **Vérifier les six onglets de l'éditeur** après toute modification du panneau. Ils ont déjà tous disparu d'un coup à cause d'un `return` mal placé, voir [[Pieges]].
 
+## Sans fenêtre, sans demande d'autorisation
+
+Dans l'appli Claude, le navigateur intégré demande une confirmation à chaque exécution de JavaScript sur `192.168.1.5` et `192.168.1.135` (autorisations par site désactivées). Le skill `browser-automation` (patchright, sans fenêtre) passe outre et sait faire du WebGL : c'est lui qu'on utilise pour piloter `plan-harness.html`.
+
+> [!danger] `page.evaluate` s'exécute dans un monde isolé
+> Patchright isole `evaluate` : `window.__card` y est **introuvable**, sans erreur. Passer par une balise `<script>` injectée (`page.addScriptTag`) qui écrit son résultat dans un attribut du document, puis le relire.
+
+> [!warning] Une erreur de syntaxe dans le script injecté ne remonte pas
+> Le script ne tourne pas, et l'attente expire en silence. Les barres obliques inverses s'y perdent facilement (`/plan\/furniture/` écrit dans un gabarit JS) : préférer `includes()` à une expression régulière.
+
+> [!note] Le module vu par la carte n'est pas celui qu'on importe
+> `import('/src/plan/furniture.ts')` depuis la page donne une **autre instance** que celle de la carte, dont le cache de meubles est vide. Retrouver l'URL exacte (avec son `?t=`) dans `performance.getEntriesByType('resource')`.
+
 ## Question ouverte
 
 Faut-il garder ces pages dans le dépôt ? Elles ne sont pas incluses dans le bundle et ont une valeur de diagnostic réelle. Non tranché.

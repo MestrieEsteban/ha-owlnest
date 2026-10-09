@@ -36,6 +36,20 @@ interface QualityProfile {
 - **Frustum d'ombre ajusté au modèle** : `_fitSunShadow()`.
 - Flux caméra cadencé par `cameraRefreshMs`.
 
+## Les meubles de l'éditeur de plan
+
+Ils se chargent **après** la maison, donc après la fusion des objets immobiles (`StaticBatch`). Sans refaire la fusion, chaque meuble coûte environ **3 appels de dessin** (612 maillages pour les 217 meubles du catalogue).
+
+Mesuré dans `dev/plan-harness.html`, maison « Maison » et 40 meubles :
+
+| | appels de dessin |
+|---|---|
+| maison seule | 75 |
+| 40 meubles, sans refusion | 284 |
+| 40 meubles, refusionnés | **79** |
+
+La refusion coûte **6 ms**, une fois par reconstruction du plan.
+
 ## Le principe qui guide les nouveautés
 
 **Le calcul lourd va dans l'éditeur ; la tablette lit un résultat.**

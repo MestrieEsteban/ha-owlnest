@@ -121,6 +121,17 @@ assombrissait la scène un peu plus à chaque cycle.
 Les facteurs sont désormais des **assignations** depuis la configuration relue.
 Vérifié sur douze changements consécutifs : six retours au repos, tous identiques.
 
+### Le triangle vide au milieu d'un T
+
+Dans l'éditeur de plan, un mur qui arrive au milieu d'un mur droit laissait un petit triangle sans mur, visible en 3D comme une encoche sur le dessus. Les deux morceaux du mur droit étaient coupés en biais vers le mur qui arrive, et ce mur s'arrêtait à leur bord : rien ne couvrait le centre. Corrigé en faisant passer chaque extrémité de mur par le coin lui-même (`footprint.ts`). Les tests de `footprint.test.mjs` sondent un petit cercle autour de chaque coin des quatre modèles de logement.
+
+> [!warning] Sonder sur un bord ne prouve rien
+> Le premier test sondait le coin lui-même : il tombe pile sur le bord de toutes les semelles, et `pointInPolygon` y répond au hasard. Sonder à côté, sur des angles qui évitent les bords.
+
+### `project` borne sa position au segment
+
+`project(p, a, b)` de `geometry.ts` renvoie un `t` **ramené entre 0 et 1**. Tester `t < 0` pour savoir si un point est « en face » d'un mur ne marche donc jamais. Pris au piège par l'aimant des meubles : un mur intérieur lointain passait pour le mur voisin et décalait le meuble. Calculer la position sans borne (`dot(p - a, direction)`) quand on veut savoir si on dépasse.
+
 ## Bugs de sémantique
 
 ### Le capteur qui laissait la porte béante
