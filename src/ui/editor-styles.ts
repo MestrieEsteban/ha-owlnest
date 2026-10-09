@@ -15,6 +15,10 @@ export const EDITOR_STYLES = `
 .ow-ed *, .ow-ed *::before, .ow-ed *::after { box-sizing: border-box; }
 .ow-edbar { position: absolute; top: 0; left: 0; right: 0; height: ${BAR_H}px; z-index: 25; pointer-events: auto; display: flex; align-items: center;
   gap: 10px; padding: 0 10px; background: var(--ow-chrome); border-bottom: 1px solid var(--ow-line); min-width: 0; }
+/* La barre cède la place peu à peu : le titre d'abord, puis les libellés des onglets. */
+.ow-edbar { container-type: inline-size; }
+@container (max-width: 1320px) { .ow-edtitle span { display: none; } }
+@container (max-width: 1080px) { .ow-tab span, .ow-steps span { display: none; } .ow-tab { padding: 7px 9px; } }
 .ow-edtitle { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; color: #7dd3fc; white-space: nowrap; flex-shrink: 0; }
 .ow-tabs { display: flex; gap: 2px; padding: 3px; border-radius: 11px; background: var(--ow-chrome2); border: 1px solid var(--ow-line);
   overflow-x: auto; scrollbar-width: none; min-width: 0; margin-inline: auto; }
@@ -27,6 +31,19 @@ export const EDITOR_STYLES = `
 .ow-edact .ow-ib { width: 34px; height: 34px; border-radius: 9px; border: 1px solid var(--ow-line); background: var(--ow-chrome2); }
 .ow-edact .ow-ib:disabled { opacity: .35; cursor: default; }
 .ow-save { font-size: 11px; white-space: nowrap; color: #22c55e; }
+.ow-steps { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 10px; border-radius: 9px; border: 1px solid color-mix(in srgb, var(--ow-acc) 50%, transparent);
+  background: color-mix(in srgb, var(--ow-acc) 12%, transparent); color: var(--ow-acc); font: 600 12px ${FONT}; cursor: pointer; white-space: nowrap; }
+.ow-edbar.ow-narrow .ow-steps span { display: none; }
+.ow-setup { width: min(330px, calc(100vw - 24px)); padding: 10px; gap: 4px; }
+.ow-setup-t { font-size: 14px; font-weight: 700; padding: 2px 4px; }
+.ow-setup-i { font-size: 12px; color: var(--ow-muted); padding: 0 4px 6px; line-height: 1.45; }
+.ow-popmenu button.ow-setup-row { align-items: center; gap: 10px; padding: 8px; }
+.ow-setup-mark { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; flex-shrink: 0; background: var(--ow-chrome2); color: var(--ow-muted); }
+.ow-done .ow-setup-mark { background: color-mix(in srgb, #34d399 22%, transparent); color: #34d399; }
+.ow-setup-nm { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ow-setup-nm b { font-size: 13px; }
+.ow-setup-nm span { font-size: 11.5px; color: var(--ow-muted); line-height: 1.35; }
+.ow-done .ow-setup-nm b { text-decoration: line-through; color: var(--ow-muted); }
 .ow-edpanel { position: absolute; top: ${BAR_H}px; right: 0; bottom: 0; width: ${PANEL_W}px; z-index: 15; pointer-events: auto; display: flex;
   flex-direction: column; background: var(--ow-chrome); border-left: 1px solid var(--ow-line); overflow: hidden; }
 .ow-edpanel.ow-narrow { width: min(${PANEL_W}px, 92%); box-shadow: var(--ow-shadow); transform: translateX(105%); transition: transform .25s ease; }

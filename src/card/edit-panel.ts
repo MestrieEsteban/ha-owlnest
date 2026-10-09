@@ -95,6 +95,12 @@ function anchorSubtitle(a: { entity: string; kind?: AnchorKind }): string {
   return KIND_LABEL[a.kind ?? 'entity']();
 }
 
+/** Une étape des premiers pas. `go` : l'onglet où la faire, ou une action propre. */
+export interface SetupStep {
+  id: 'plan' | 'device' | 'opening' | 'view' | 'custom';
+  done: boolean;
+}
+
 /** Les onglets de l'éditeur de la maison, dans l'ordre. Le plan ouvre son propre éditeur. */
 export function editorTabs(withPlan: boolean): { id: string; icon: string; label: string }[] {
   return [
@@ -304,6 +310,13 @@ export class EditPanel {
   onReplaceDetectedOpenings?: () => Promise<void>;
   /** Ouvre l'éditeur de plan, pour dessiner son logement dans la carte. */
   onDrawPlan?: () => void;
+  /**
+   * Les premiers pas : ce qui est déjà fait, et où aller pour la suite. Fourni
+   * par la carte, qui seule voit le plan, les vues et la personnalisation.
+   */
+  getSetupSteps?: () => SetupStep[];
+  /** Quitter l'éditeur et ouvrir « Personnaliser » sur la carte. */
+  onCustomize?: () => void;
   /** Ouvre le sélecteur de fichiers pour importer un plan (admin seulement). */
   onImportModel?: () => void;
 
@@ -547,13 +560,91 @@ export class EditPanel {
     done.title = t('doneBtnTitle');
     done.append(icon('check', 16), document.createTextNode(t('doneBtn')));
     done.addEventListener('click', () => this.onClose());
-    act.append(save, panelBtn, undo, redo, help, done);
+    const steps = document.createElement('button');
+    steps.type = 'button';
+    steps.className = 'ow-steps';
+    steps.dataset.act = 'steps';
+    steps.addEventListener('click', () => this._openSetupMenu(steps));
+    act.append(save, steps, panelBtn, undo, redo, help, done);
 
     bar.append(title, tabs, act);
     this.overlayContainer.appendChild(bar);
     this._bar = bar;
     this._paintTabs();
     this._updateSaveIndicator();
+    this._paintSteps();
+  }
+
+  /** La pastille « Premiers pas » : la progression, cachée une fois tout fait. */
+  private _paintSteps() {
+    const btn = this._bar?.querySelector<HTMLButtonElement>('[data-act="steps"]');
+    if (!btn) return;
+    const steps = this.getSetupSteps?.() ?? [];
+    const done = steps.filter((s) => s.done).length;
+    // `hidden` ne suffit pas : la classe impose un `display`.
+    btn.style.display = !steps.length || done === steps.length ? 'none' : '';
+    btn.innerHTML = '';
+    const ring = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    ring.setAttribute('viewBox', '0 0 20 20');
+    ring.setAttribute('width', '18');
+    ring.setAttribute('height', '18');
+    const frac = steps.length ? done / steps.length : 0;
+    ring.innerHTML = `<circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" stroke-opacity=".25" stroke-width="2.5"/>`
+      + `<circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="${(frac * 50.3).toFixed(1)} 50.3" transform="rotate(-90 10 10)"/>`;
+    const label = document.createElement('span');
+    label.textContent = `${t('setupTitle')} ${done}/${steps.length}`;
+    btn.append(ring, label);
+    btn.title = t('setupTitle');
+  }
+
+  /** La liste des premiers pas : chaque étape cochée ou à faire, et où la faire. */
+  private _openSetupMenu(btn: HTMLElement) {
+    const steps = this.getSetupSteps?.() ?? [];
+    const LABEL: Record<SetupStep['id'], [StringKey, StringKey, string]> = {
+      plan: ['setupPlan', 'setupPlanHint', 'plan'],
+      device: ['setupDevice', 'setupDeviceHint', 'bulb'],
+      opening: ['setupOpening', 'setupOpeningHint', 'door'],
+      view: ['setupView', 'setupViewHint', 'camera'],
+      custom: ['setupCustom', 'setupCustomHint', 'brush'],
+    };
+    const go = (id: SetupStep['id']) => {
+      if (id === 'plan') { this.onDrawPlan?.(); return; }
+      if (id === 'custom') { this.onCustomize?.(); return; }
+      const tab = id === 'device' ? 'anchors' : id === 'opening' ? 'parts' : 'camera';
+      this._switchTab?.(tab);
+      if (this._narrow) this._setPanelOpen(true);
+      if (id === 'device') this.getEditor()?.setTool('add');
+    };
+    this._openPopmenu(btn, (menu) => {
+      menu.classList.add('ow-setup');
+      const title = document.createElement('div');
+      title.className = 'ow-setup-t';
+      title.textContent = t('setupTitle');
+      const intro = document.createElement('div');
+      intro.className = 'ow-setup-i';
+      intro.textContent = t('setupIntro');
+      menu.append(title, intro);
+      for (const step of steps) {
+        const [label, hint, ic] = LABEL[step.id];
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = `ow-setup-row${step.done ? ' ow-done' : ''}`;
+        const mark = document.createElement('span');
+        mark.className = 'ow-setup-mark';
+        mark.append(icon(step.done ? 'check' : ic, 15));
+        const col = document.createElement('span');
+        col.className = 'ow-setup-nm';
+        const nm = document.createElement('b');
+        nm.textContent = t(label);
+        const sub = document.createElement('span');
+        sub.textContent = t(hint);
+        col.append(nm, sub);
+        b.append(mark, col);
+        if (!step.done) b.append(icon('chevron', 15));
+        b.addEventListener('click', () => { this._closePopmenu(); go(step.id); });
+        menu.appendChild(b);
+      }
+    });
   }
 
   private _paintTabs() {
@@ -2564,6 +2655,7 @@ export class EditPanel {
   private _sheetFold: Record<string, boolean> = {};
 
   updateAnchorList() {
+    this._paintSteps();
     if (!this._panel) return;
     const listView = this._panel.querySelector<HTMLDivElement>('#inspector-list');
     const detailView = this._panel.querySelector<HTMLDivElement>('#inspector-detail');
@@ -2609,6 +2701,7 @@ export class EditPanel {
       await this.onSave();
       this._saveStatus = 'saved';
       this._updateSaveIndicator();
+      this._paintSteps();
     }, 2000);
   }
 

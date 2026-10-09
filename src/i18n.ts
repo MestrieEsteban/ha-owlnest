@@ -1065,6 +1065,19 @@ const STRINGS = {
     actTypeEntity: 'Device',
     actTypeService: 'Service',
     actTypeView: 'View',
+    // Interface de la carte
+    setupTitle: 'First steps',
+    setupIntro: 'A few steps to a home that works. Each one ticks itself when it is done.',
+    setupPlan: 'Your home',
+    setupPlanHint: 'Draw it, start from a template, or import a Sweet Home 3D file',
+    setupDevice: 'A first device',
+    setupDeviceHint: 'Place a light or a sensor on the house',
+    setupOpening: 'A door that moves',
+    setupOpeningHint: 'Link a door or a window to its sensor',
+    setupView: 'A saved view',
+    setupViewHint: 'A button that takes the camera to a room',
+    setupCustom: 'Your card',
+    setupCustomHint: 'Pick a theme and place the modules',
   },
 
   fr: {
@@ -2116,6 +2129,19 @@ const STRINGS = {
     actTypeEntity: 'Appareil',
     actTypeService: 'Service',
     actTypeView: 'Vue',
+    // Interface de la carte
+    setupTitle: 'Premiers pas',
+    setupIntro: 'Quelques étapes pour une maison qui marche. Chacune se coche toute seule une fois faite.',
+    setupPlan: 'Ta maison',
+    setupPlanHint: 'Dessine-la, pars d\'un modèle, ou importe un fichier Sweet Home 3D',
+    setupDevice: 'Un premier appareil',
+    setupDeviceHint: 'Pose une lampe ou un capteur sur la maison',
+    setupOpening: 'Une porte qui bouge',
+    setupOpeningHint: 'Relie une porte ou une fenêtre à son capteur',
+    setupView: 'Une vue enregistrée',
+    setupViewHint: 'Un bouton qui emmène la caméra dans une pièce',
+    setupCustom: 'Ta carte',
+    setupCustomHint: 'Choisis un thème et place les modules',
   },
 } as const;
 

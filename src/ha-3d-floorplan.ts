@@ -1908,6 +1908,27 @@ export class Ha3dFloorplan extends HTMLElement {
     });
   }
 
+  /**
+   * Les premiers pas, lus sur la scène : une maison (plan ou modèle importé),
+   * un appareil relié, une porte reliée (s'il y a des ouvrants), une vue
+   * enregistrée, une carte personnalisée.
+   */
+  private _setupSteps(): import('./card/edit-panel').SetupStep[] {
+    const sc = this._scene;
+    const anchors = this._editor ? [...this._editor.anchors.values()] : [];
+    const parts = sc?.parts ?? [];
+    const steps: import('./card/edit-panel').SetupStep[] = [
+      { id: 'plan', done: !this._isDemo },
+      { id: 'device', done: anchors.some((a) => !!a.entity) },
+    ];
+    if (parts.length) steps.push({ id: 'opening', done: parts.some((p) => !!p.entity) });
+    steps.push(
+      { id: 'view', done: (sc?.camera_views ?? []).length > 0 },
+      { id: 'custom', done: !!sc?.settings?.ui },
+    );
+    return steps;
+  }
+
   /** Les pièces du plan, recalculées seulement quand le plan change. */
   private _roomsCache: { plan: PlanDoc; rooms: RoomView[] } | null = null;
   private _rooms(): RoomView[] {
@@ -2478,6 +2499,8 @@ export class Ha3dFloorplan extends HTMLElement {
       admin: this._hass?.user?.is_admin, scene: this._getActiveSceneId(), backendDown: this._backendDown,
     });
     this._editPanel.onDrawPlan = () => this.openPlanEditor();
+    this._editPanel.getSetupSteps = () => this._setupSteps();
+    this._editPanel.onCustomize = () => { this._exitEditMode(); this._ui?.openSheet(); };
     this._editPanel.countDetectedOpenings = () => this._detectedOpenings().length;
     this._editPanel.onAddDetectedOpenings = () => this._addDetectedOpenings();
     this._editPanel.countAllDetectedOpenings = () => this._detectedOpenings(true).length;
