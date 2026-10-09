@@ -102,6 +102,7 @@ export function editorTabs(withPlan: boolean): { id: string; icon: string; label
     ...(CARDS_ENABLED ? [{ id: 'cards', icon: 'layout', label: t('tabCards') }] : []),
     ...(PARTS_ENABLED ? [{ id: 'parts', icon: 'door', label: t('tabParts') }] : []),
     { id: 'rules', icon: 'bolt', label: t('tabRules') },
+    { id: 'camera', icon: 'camera', label: t('tabCamera') },
     { id: 'weather', icon: 'sun', label: t('tabAmbiance') },
     { id: 'settings', icon: 'gear', label: t('tabSettings') },
   ];
@@ -123,6 +124,9 @@ function anchorIcon(a: { entity: string; kind?: AnchorKind }): string {
   };
   return ICON[domain] ?? 'sensor';
 }
+
+/** Le dessin d'un ouvrant, d'après son mouvement. */
+const PART_ICON: Record<string, string> = { swing: 'door', slide: 'slider', extend: 'awning', animation: 'play' };
 
 const KIND_LABEL: Record<AnchorKind, () => string> = {
   entity: () => t('anchorKindEntity'),
@@ -345,7 +349,7 @@ export class EditPanel {
     private saveRules?: (rules: OwlnestRule[]) => Promise<void>,
     private getViews?: () => CameraView[],
     private getSim?: () => { buildContentInto: (c: HTMLElement) => void } | null,
-    private getViewMgr?: () => { buildViewsSection: (c: HTMLElement) => void } | null,
+    private getViewMgr?: () => import('./view-manager').ViewManager | null,
     private getSceneSettings?: () => SceneSettings,
     private onSceneSettingsChange?: (s: SceneSettings, reloadScene?: boolean) => void,
     private listScenesFn?: () => Promise<string[]>,
@@ -436,7 +440,7 @@ export class EditPanel {
   /** L'onglet à ouvrir en entrant, par exemple en revenant de l'éditeur de plan. */
   setInitialTab(id?: string) {
     if (!id || id === 'plan') return;
-    this._activeInspectorTab = id === 'camera' || id === 'config' ? 'settings' : id;
+    this._activeInspectorTab = id === 'config' ? 'settings' : id;
   }
 
   private _tabs() { return editorTabs(!!this.onDrawPlan); }
@@ -697,11 +701,10 @@ export class EditPanel {
       steps.push({ target: inPane('.ow-ph'), title: 'tourEdRulesTitle', text: 'tourEdRulesText', anim: 'rule' });
     } else if (tab === 'weather') {
       steps.push({ target: pane, title: 'tourEdMoodTitle', text: 'tourEdMoodText', anim: 'sun' });
+    } else if (tab === 'camera') {
+      steps.push({ target: inPane('.ow-ph'), title: 'tourEdViewsTitle', text: 'tourEdViewsText', anim: 'views' });
     } else if (tab === 'settings') {
-      steps.push(
-        { target: inPane('[data-sec="views"]'), title: 'tourEdViewsTitle', text: 'tourEdViewsText', anim: 'views' },
-        { target: pane, title: 'tourEdSettingsTitle', text: 'tourEdSettingsText', anim: 'gear' },
-      );
+      steps.push({ target: pane, title: 'tourEdSettingsTitle', text: 'tourEdSettingsText', anim: 'gear' });
     } else {
       steps.push({ target: pane, title: 'tourEdTabsTitle', text: 'tourEdTabsText', anim: 'gear' });
     }
@@ -814,7 +817,7 @@ export class EditPanel {
     const rulesCount = (this.getRules?.() ?? []).length;
     const partsCount = (this.getParts?.() ?? []).length;
 
-    const TAB_IDS = ['anchors', 'cards', 'parts', 'rules', 'weather', 'settings'] as const;
+    const TAB_IDS = ['anchors', 'cards', 'parts', 'rules', 'camera', 'weather', 'settings'] as const;
     type TabId = typeof TAB_IDS[number];
     // Un onglet masqué mémorisé d'un précédent rendu ne doit pas être restauré :
     // aucun bouton ne permettrait d'en sortir.
@@ -884,7 +887,7 @@ export class EditPanel {
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'ow-btn ow-primary';
-        btn.append(icon('plus', 16), document.createTextNode(action.label.replace(/^\+\s*/, '')));
+        btn.append(icon('plus', 16), document.createTextNode(action.label.replace(/^[+＋]\s*/, '')));
         btn.addEventListener('click', action.onClick);
         hdr.appendChild(btn);
       }
@@ -1102,7 +1105,6 @@ export class EditPanel {
       onClick: () => this._startPartPick(),
     }, partsCount);
     const partsBody = document.createElement('div');
-    partsBody.className = 'ow-legacy';
     partsBody.style.cssText = 'overflow-y:auto;flex:1;min-height:0;';
     partsPane.appendChild(partsBody);
     this._partsBody = partsBody;
@@ -1117,28 +1119,51 @@ export class EditPanel {
     weatherPane.appendChild(weatherBody);
     this._buildWeatherTab(weatherBody);
 
-    // ── Réglages : les vues enregistrées, puis la configuration ───────
+    // ── Caméra : les vues enregistrées ─────────────────────────────────
+    const cameraPane = tabPanes.get('camera')!;
+    const viewMgr = this.getViewMgr?.();
+    const viewCount = viewMgr ? (this.getViews?.() ?? []).length : 0;
+    const camList = document.createElement('div');
+    camList.className = 'ow-list';
+    const capture = document.createElement('div');
+    capture.style.cssText = 'display:none;gap:6px;padding:10px 14px;border-bottom:1px solid var(--ow-line);';
+    const capInput = document.createElement('input');
+    capInput.placeholder = t('viewNamePh');
+    capInput.setAttribute('aria-label', t('viewNamePh'));
+    capInput.style.cssText = 'flex:1;min-width:0;background:var(--ow-chrome2);border:1px solid var(--ow-acc);border-radius:9px;color:var(--ow-text);padding:7px 10px;font:13px inherit;outline:none;';
+    const capOk = document.createElement('button');
+    capOk.type = 'button';
+    capOk.className = 'ow-btn ow-primary ow-small';
+    capOk.textContent = t('camSave');
+    const capCancel = document.createElement('button');
+    capCancel.type = 'button';
+    capCancel.className = 'ow-btn ow-ghost ow-small';
+    capCancel.textContent = t('cancel');
+    capture.append(capInput, capOk, capCancel);
+    const closeCapture = () => { capture.style.display = 'none'; capInput.value = ''; };
+    const doCapture = async () => {
+      const ok = await viewMgr?.captureView(capInput.value);
+      closeCapture();
+      if (ok) { viewMgr?.buildViewsTab(camList); this.showStatusBar(t('camSaved')); setTimeout(() => this.hideStatusBar(), 1500); }
+    };
+    capOk.addEventListener('click', () => void doCapture());
+    capCancel.addEventListener('click', closeCapture);
+    capInput.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') void doCapture();
+      if (e.key === 'Escape') closeCapture();
+    });
+    buildTabHeader(cameraPane, t('tabCamera'), t('tabCameraDesc'), {
+      label: t('cfgSaveView'),
+      onClick: () => { capture.style.display = 'flex'; capInput.focus(); },
+    }, viewCount);
+    cameraPane.append(capture, camList);
+    viewMgr?.buildViewsTab(camList);
+
+    // ── Réglages : la configuration ──────────────────────────────────
     const settingsPane = tabPanes.get('settings')!;
     settingsPane.style.cssText += ';overflow-y:auto;';
     buildTabHeader(settingsPane, t('tabSettings'), t('tabSettingsDesc'));
-    const viewsSec = document.createElement('div');
-    viewsSec.dataset.sec = 'views';
-    viewsSec.style.cssText = 'padding:12px 12px 4px;border-bottom:1px solid var(--ow-line);';
-    const viewsTitle = document.createElement('div');
-    viewsTitle.style.cssText = 'font-size:13px;font-weight:700;margin:0 2px 2px;';
-    viewsTitle.textContent = t('tabCamera');
-    const viewsDesc = document.createElement('div');
-    viewsDesc.style.cssText = 'font-size:12px;color:var(--ow-muted);margin:0 2px 10px;line-height:1.4;';
-    viewsDesc.textContent = t('tabCameraDesc');
-    const viewsContainer = document.createElement('div');
-    viewsContainer.className = 'ow-legacy';
-    viewsContainer.style.cssText = 'padding:0 0 8px;';
-    viewsSec.append(viewsTitle, viewsDesc, viewsContainer);
-    settingsPane.appendChild(viewsSec);
-    const viewMgr = this.getViewMgr?.();
-    if (viewMgr) {
-      viewMgr.buildViewsSection(viewsContainer);
-    }
     const configBody = document.createElement('div');
     configBody.className = 'ow-legacy';
     settingsPane.appendChild(configBody);
@@ -1912,6 +1937,7 @@ export class EditPanel {
       setLang(lang);
       this.onSceneSettingsChange?.({ language: lang });
       // Rebuild inspector to apply new language
+      this._buildBar();
       this.buildAnchorList();
     });
     root.appendChild(langSelect);
@@ -2048,6 +2074,54 @@ export class EditPanel {
 
     wrap.append(input, btn);
     return { wrap, input };
+  }
+
+  /**
+   * Le capteur d'un ouvrant : un grand bouton qui montre ce qui est relié (nom,
+   * état) et ouvre la liste des entités. Plus d'identifiant à taper.
+   */
+  private _sensorPicker(value: string, onChange: (entityId: string) => void): HTMLElement {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'ow-picker';
+    const paint = (id: string) => {
+      btn.innerHTML = '';
+      const hass = this.getHass();
+      const st = id ? hass?.states[id] : undefined;
+      const tile = document.createElement('span');
+      tile.className = 'ow-tile';
+      tile.append(icon(id ? anchorIcon({ entity: id }) : 'plus', 18));
+      const col = document.createElement('span');
+      col.className = 'ow-nm';
+      const name = document.createElement('b');
+      const sub = document.createElement('span');
+      if (!id) {
+        btn.classList.add('ow-empty-pick');
+        name.textContent = t('partPickSensor');
+        sub.textContent = t('partPickSensorHint');
+      } else {
+        btn.classList.remove('ow-empty-pick');
+        const friendly = st?.attributes?.friendly_name;
+        name.textContent = typeof friendly === 'string' && friendly ? friendly : id;
+        sub.textContent = st ? `${id} · ${stateLabel(id, st.state, st.attributes ?? {})}` : `${id} · ${t('partEntityUnknown')}`;
+      }
+      col.append(name, sub);
+      const change = document.createElement('span');
+      change.className = 'ow-picker-act';
+      change.textContent = id ? t('partChangeSensor') : '';
+      btn.append(tile, col, change);
+    };
+    btn.addEventListener('click', () => {
+      const hass = this.getHass();
+      if (!hass) return;
+      openEntityPicker({
+        container: this.overlayContainer,
+        hass,
+        onPick: (entityId) => { paint(entityId); onChange(entityId); },
+      });
+    });
+    paint(value);
+    return btn;
   }
 
   private _buildPropsSection(container: HTMLDivElement, key: string, anchor: EditableAnchor, goBack?: () => void) {
@@ -3676,117 +3750,139 @@ export class EditPanel {
     // Portes et fenêtres reconnues dans un export Sweet Home 3D : un clic les
     // ajoute toutes, réglées, au lieu de les désigner une à une.
     const detected = this.countDetectedOpenings?.() ?? 0;
+    const tools = document.createElement('div');
+    tools.style.cssText = 'display:flex;flex-direction:column;gap:6px;padding:10px 14px 0;';
     if (detected > 0) {
       const add = document.createElement('button');
-      add.textContent = t('sh3dAddDetected').replace('{n}', String(detected));
-      add.style.cssText = 'display:block;width:calc(100% - 20px);margin:10px;background:rgba(125,209,252,0.15);border:1px solid rgba(125,209,252,0.35);border-radius:7px;color:#7dd3fc;padding:8px 10px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;text-align:left;line-height:1.4;';
+      add.type = 'button';
+      add.className = 'ow-btn ow-primary';
+      add.style.cssText = 'justify-content:flex-start;white-space:normal;text-align:left;';
+      add.append(icon('sparkle', 16), document.createTextNode(t('sh3dAddDetected').replace('{n}', String(detected))));
       add.addEventListener('click', () => {
         add.disabled = true;
         this.onAddDetectedOpenings?.().then(() => this._fillPartsList(pane));
       });
-      pane.appendChild(add);
+      tools.appendChild(add);
     }
     // Des ouvrants existent déjà (ancien modèle, ajout à la main) : on peut
     // repartir de ceux reconnus, sans perdre les capteurs déjà reliés.
     const all = this.countAllDetectedOpenings?.() ?? 0;
     if (parts.length > 0 && all > 0) {
       const replace = document.createElement('button');
-      replace.textContent = t('sh3dReplaceDetected').replace('{n}', String(all));
-      replace.style.cssText = 'display:block;width:calc(100% - 20px);margin:' + (detected ? '0' : '10px') + ' 10px 10px;background:none;border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#94a3b8;padding:6px 10px;font-size:10.5px;font-family:inherit;cursor:pointer;text-align:left;';
+      replace.type = 'button';
+      replace.className = 'ow-btn ow-ghost ow-small';
+      replace.style.cssText = 'justify-content:flex-start;white-space:normal;text-align:left;';
+      replace.append(icon('swap', 15), document.createTextNode(t('sh3dReplaceDetected').replace('{n}', String(all))));
       replace.addEventListener('click', () => {
         if (!confirm(t('sh3dReplaceConfirm').replace('{n}', String(parts.length)).replace('{m}', String(all)))) return;
         replace.disabled = true;
         this.onReplaceDetectedOpenings?.().then(() => this._fillPartsList(pane));
       });
-      pane.appendChild(replace);
+      tools.appendChild(replace);
     }
+    if (tools.children.length) pane.appendChild(tools);
 
     if (parts.length === 0) {
       const empty = document.createElement('div');
-      empty.style.cssText = `padding:${detected ? 8 : 22}px 16px 22px;text-align:center;color:#64748b;font-size:11px;line-height:1.65;`;
-      empty.innerHTML = `${t('partsEmpty')}`;
+      empty.className = 'ow-empty';
+      const b = document.createElement('b');
+      b.textContent = t('partsEmptyTitle');
+      empty.append(b, document.createTextNode(t('partsEmpty')));
       pane.appendChild(empty);
       return;
     }
 
-    for (const part of parts) {
-      const row = document.createElement('div');
-      row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer;';
-      row.addEventListener('mouseenter', () => { row.style.background = 'rgba(255,255,255,0.03)'; });
-      row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
+    // Ceux qui attendent un capteur d'abord : c'est ce qui reste à faire.
+    const groups: [string, OwlnestPart[]][] = [
+      [t('partsToLink'), parts.filter((p) => !p.entity)],
+      [t('partsLinked'), parts.filter((p) => !!p.entity)],
+    ];
+    for (const [title, list] of groups) {
+      if (!list.length) continue;
+      const head = document.createElement('div');
+      head.className = 'ow-room';
+      const hb = document.createElement('b');
+      hb.textContent = title;
+      const hn = document.createElement('span');
+      hn.textContent = String(list.length);
+      head.append(hb, hn);
+      pane.appendChild(head);
 
-      const icon = document.createElement('span');
-      icon.style.cssText = 'font-size:13px;flex-shrink:0;';
-      icon.textContent = part.motion === 'slide' ? '🪟' : part.motion === 'extend' ? '⛱' : part.motion === 'animation' ? '🎞' : '🚪';
-      row.appendChild(icon);
-
-      const text = document.createElement('div');
-      text.style.cssText = 'flex:1;min-width:0;';
-      const name = document.createElement('div');
-      name.style.cssText = 'font-size:11px;color:#e2e8f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-      const friendly = hass?.states[part.entity]?.attributes?.friendly_name;
-      name.textContent = part.label
-        || (typeof friendly === 'string' ? friendly : '')
-        || part.entity
-        || t('partNoEntity');
-      const sub = document.createElement('div');
-      sub.style.cssText = 'font-size:9px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-      sub.textContent = `${MOTION_LABEL[part.motion]?.() ?? part.motion}${part.entity ? ` · ${part.entity}` : ''}`;
-      text.append(name, sub);
-      row.appendChild(text);
-
-      if (!part.entity) {
-        const warn = document.createElement('span');
-        warn.style.cssText = 'font-size:10px;color:#fbbf24;flex-shrink:0;';
-        warn.textContent = '⚠';
-        warn.title = t('partNoEntity');
-        row.appendChild(warn);
-      }
-
-      const del = document.createElement('button');
-      const delIdle = 'background:none;border:1px solid transparent;border-radius:6px;color:rgba(248,113,113,0.5);cursor:pointer;font-size:11px;font-family:inherit;padding:2px 6px;flex-shrink:0;white-space:nowrap;transition:all .15s;';
-      del.style.cssText = delIdle;
-      del.textContent = '✕';
-      del.title = t('partDelete');
-      const disarm = () => {
-        del.dataset.confirm = '';
-        del.textContent = '✕';
-        del.title = t('partDelete');
-        del.style.cssText = delIdle;
-      };
-      del.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (del.dataset.confirm === '1') {
-          // Le formulaire encore ouvert réenregistrerait l'ouvrant en se fermant.
-          if (this._partModalId === part.id) this._discardPartModal?.();
-          const next = (this.getParts?.() ?? []).filter((p) => p.id !== part.id);
-          this.saveParts?.(next).then(() => this._fillPartsList(pane));
-          return;
+      for (const part of list) {
+        const row = document.createElement('div');
+        row.className = `ow-dev${this._partModalId === part.id ? ' ow-on' : ''}`;
+        row.tabIndex = 0;
+        row.setAttribute('role', 'button');
+        const tile = document.createElement('span');
+        tile.className = 'ow-tile';
+        const st = part.entity ? hass?.states[part.entity] : undefined;
+        let frac = 0;
+        if (st) {
+          frac = openFraction(part.entity, st.state, st.attributes, part.openWhen);
+          if (part.invert) frac = 1 - frac;
         }
-        del.dataset.confirm = '1';
-        del.textContent = t('anchorBtnConfirm');
-        del.title = t('partDeleteConfirm');
-        del.style.background = 'rgba(239,68,68,0.35)';
-        del.style.borderColor = 'rgba(239,68,68,0.65)';
-        del.style.color = '#f87171';
-        setTimeout(() => { if (del.dataset.confirm === '1') disarm(); }, 3000);
-      });
-      row.appendChild(del);
-
-      row.addEventListener('click', () => this._openPartModal(part, null));
-      pane.appendChild(row);
+        if (frac > 0.5) tile.style.cssText = 'background:color-mix(in srgb, #34d399 22%, transparent);color:#34d399;';
+        tile.append(icon(PART_ICON[part.motion] ?? 'door', 18));
+        const col = document.createElement('span');
+        col.className = 'ow-nm';
+        const name = document.createElement('b');
+        const friendly = st?.attributes?.friendly_name;
+        name.textContent = part.label || (typeof friendly === 'string' ? friendly : '') || part.entity || t('partTitle');
+        const sub = document.createElement('span');
+        if (!part.entity) {
+          sub.textContent = t('partNoEntity');
+          sub.style.color = '#fbbf24';
+        } else {
+          const sensor = typeof friendly === 'string' && friendly !== name.textContent ? `${friendly} · ` : '';
+          sub.textContent = st ? `${sensor}${stateLabel(part.entity, st.state, st.attributes ?? {})}` : `${part.entity} · ${t('partEntityUnknown')}`;
+        }
+        col.append(name, sub);
+        const btns = document.createElement('span');
+        btns.className = 'ow-rowbtns';
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'ow-ib';
+        del.title = t('partDelete');
+        del.setAttribute('aria-label', t('partDelete'));
+        del.append(icon('trash', 16));
+        del.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (del.dataset.armed) {
+            // Le formulaire encore ouvert réenregistrerait l'ouvrant en se fermant.
+            if (this._partModalId === part.id) this._discardPartModal?.();
+            const next = (this.getParts?.() ?? []).filter((p) => p.id !== part.id);
+            this.saveParts?.(next).then(() => this._fillPartsList(pane));
+            return;
+          }
+          del.dataset.armed = '1';
+          del.style.color = '#f87171';
+          del.title = t('partDeleteConfirm');
+          setTimeout(() => { delete del.dataset.armed; del.style.color = ''; del.title = t('partDelete'); }, 3000);
+        });
+        btns.appendChild(del);
+        row.append(tile, col, btns);
+        const open = () => this._openPartModal(part, null);
+        row.addEventListener('click', open);
+        row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+        pane.appendChild(row);
+      }
     }
   }
 
   /**
-   * Formulaire d'un ouvrant.
+   * La fiche d'un ouvrant, dans le panneau de droite : la maison reste
+   * visible à côté, pour voir chaque réglage agir.
    *
-   * Le curseur d'aperçu est le cœur de l'écran : le seul moyen fiable de savoir
-   * si les gonds sont du bon côté est de voir le vantail bouger.
+   * L'ordre suit ce qu'on fait vraiment : relier le capteur, vérifier que ça
+   * bouge dans le bon sens, ajuster le mouvement. Les couleurs et le choix de
+   * l'objet dans l'arborescence du modèle sont repliés : on y vient rarement.
    */
   private _openPartModal(part: OwlnestPart, hit: PickedPart | null) {
     this._closePartModal?.();
-    document.getElementById('owlnest-part-modal')?.remove();
+    this._panel?.querySelector('#owlnest-part-modal')?.remove();
+    const host = this._panel;
+    if (!host) return;
+    if (this._narrow) this._setPanelOpen(true);
     const draft: OwlnestPart = JSON.parse(JSON.stringify(part));
     this._pieceTris = hit?.triangles ?? null;
     // Les réglages s'appliquent en direct : « Annuler » doit pouvoir revenir à
@@ -3794,8 +3890,7 @@ export class EditPanel {
     const original: OwlnestPart = JSON.parse(JSON.stringify(part));
     const isNew = !(this.getParts?.() ?? []).some((p) => p.id === part.id);
 
-    const inputStyle = 'width:100%;box-sizing:border-box;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#e2e8f0;padding:5px 8px;font-size:11px;outline:none;font-family:inherit;';
-    const lblStyle = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;display:block;';
+    const inputStyle = 'width:100%;box-sizing:border-box;background:var(--ow-chrome2);border:1px solid var(--ow-line);border-radius:9px;color:var(--ow-text);padding:8px 10px;font-size:13px;outline:none;font-family:inherit;';
 
     /**
      * Chaque réglage prend effet tout de suite.
@@ -3821,145 +3916,158 @@ export class EditPanel {
       refreshDigests();
     };
 
-    // Non modal (`show()`, pas `showModal()`) : le modèle doit rester
-    // manipulable derrière, pour viser la pièce qu'on est en train de régler.
-    const dialog = document.createElement('dialog');
-    dialog.id = 'owlnest-part-modal';
-    dialog.style.cssText = [
-      'position:fixed', 'inset:auto', 'margin:0', 'z-index:9999',
-      'top:50%', 'left:50%', 'transform:translate(-50%,-50%)',
-      'width:min(420px,94vw)', 'max-height:86vh',
-      'background:rgba(6,10,22,0.97)', 'backdrop-filter:blur(20px)',
-      'border:1px solid rgba(255,255,255,0.1)', 'border-radius:14px',
-      'box-shadow:0 20px 60px rgba(0,0,0,0.8)', 'padding:0',
-      'color:#e2e8f0', 'font-family:var(--primary-font-family,sans-serif)',
-      'display:flex', 'flex-direction:column', 'overflow:hidden',
-    ].join(';');
-    dialog.addEventListener('keydown', (e) => {
+    const form = document.createElement('div');
+    form.id = 'owlnest-part-modal';
+    form.className = 'ow-ed ow-form';
+    form.setAttribute('role', 'dialog');
+    form.setAttribute('aria-label', t('partTitle'));
+    form.addEventListener('keydown', (e) => {
       e.stopPropagation();
       if (e.key === 'Escape') { e.preventDefault(); void cancel(); }
     });
 
+    // ── En-tête : retour, nom, ce qu'on regarde ──────────────────────────
     const hdr = document.createElement('div');
-    hdr.style.cssText = 'display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.08);flex-shrink:0;gap:8px;';
-
-    makeDraggable(dialog, hdr, {
-      get: () => this._partModalPos,
-      set: (pos) => { this._partModalPos = pos; },
-    });
-    const title = document.createElement('div');
-    title.style.cssText = 'font-size:12px;font-weight:700;flex:1;';
-    title.textContent = t('partTitle');
-    hdr.appendChild(title);
-    let dimsEl: HTMLElement | null = null;
-    if (hit) {
-      const dims = document.createElement('div');
-      dims.style.cssText = 'font-size:9px;color:#64748b;font-variant-numeric:tabular-nums;';
-      dims.textContent = `${hit.size.map((v) => v.toFixed(0)).join(' × ')} cm`;
-      if (draft.node) dims.style.display = 'none';
-      hdr.appendChild(dims);
-      dimsEl = dims;
-    }
-    dialog.appendChild(hdr);
+    hdr.className = 'ow-form-h';
+    const back = document.createElement('button');
+    back.type = 'button';
+    back.className = 'ow-ib';
+    back.title = t('partBack');
+    back.setAttribute('aria-label', t('partBack'));
+    back.append(icon('back', 18));
+    const titleCol = document.createElement('div');
+    titleCol.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;';
+    const title = document.createElement('b');
+    title.style.cssText = 'font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    const subtitle = document.createElement('span');
+    subtitle.style.cssText = 'font-size:12px;color:var(--ow-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    titleCol.append(title, subtitle);
+    hdr.append(back, titleCol);
+    const dims = hit ? `${hit.size.map((v) => v.toFixed(0)).join(' × ')} cm` : '';
 
     const body = document.createElement('div');
-    body.style.cssText = 'padding:14px 16px;overflow-y:auto;flex:1;min-height:0;';
-    dialog.appendChild(body);
+    body.className = 'ow-form-b';
+    form.append(hdr, body);
 
-    // ── Objet du modèle ───────────────────────────────────────────────────
-    // Les cotes du clic ne décrivent plus rien une fois un autre objet choisi.
-    const objectSection = this._partObjectSection(draft, inputStyle, () => {
-      if (dimsEl) dimsEl.style.display = draft.node ? 'none' : '';
-      // Autre objet : les suiveurs de l'ancien n'ont plus de sens.
-      if (draft.motion === 'extend') draft.followers = undefined;
-      apply();
-      if (draft.motion === 'extend') { redetect(false); rebuildSpecific(); }
-    });
-
-    /**
-     * Section repliable, avec un resume a droite quand elle est fermee.
-     *
-     * Onze reglages a plat ne s'apprennent pas : on ne sait pas lesquels vont
-     * ensemble, ni lesquels on peut ignorer. Quatre questions, si — ce qui
-     * bouge, comment, quand, et de quelle couleur.
-     *
-     * Le resume evite le defaut des sections repliees : devoir tout ouvrir
-     * pour retrouver un reglage. Ferme, chaque bandeau dit deja l'essentiel.
-     */
-    const section = (key: string, label: string, openByDefault: boolean) => {
-      const box = document.createElement('details');
-      box.open = this._partFold[key] ?? openByDefault;
-      box.style.cssText = 'margin-bottom:10px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;background:rgba(255,255,255,0.02);';
-
-      const head = document.createElement('summary');
-      head.style.cssText = 'cursor:pointer;list-style:none;display:flex;align-items:center;gap:6px;padding:7px 9px;user-select:none;';
-      const chevron = document.createElement('span');
-      chevron.textContent = '\u25b8';
-      chevron.style.cssText = 'font-size:8px;color:#475569;transition:transform .15s;display:inline-block;';
-      const name = document.createElement('span');
-      name.style.cssText = 'font-size:9px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:.06em;flex-shrink:0;';
+    // ── Briques du formulaire ────────────────────────────────────────────
+    /** Une carte de réglages ; `fold` la rend repliable (et retient son état). */
+    const card = (label: string, iconName: string, fold?: { key: string; open: boolean }) => {
+      const box = document.createElement(fold ? 'details' : 'section');
+      box.className = 'ow-card';
+      const head = document.createElement(fold ? 'summary' : 'div');
+      head.className = 'ow-card-h';
+      const name = document.createElement('b');
       name.textContent = label;
       const digest = document.createElement('span');
-      digest.style.cssText = 'flex:1;min-width:0;text-align:right;font-size:10px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-      head.append(chevron, name, digest);
-      box.appendChild(head);
-
+      digest.className = 'ow-digest';
+      head.append(icon(iconName, 17), name, digest);
+      if (fold) head.append(Object.assign(document.createElement('span'), { className: 'ow-chev' }));
       const inner = document.createElement('div');
-      inner.style.cssText = 'padding:0 9px 9px;';
-      box.appendChild(inner);
-
-      const paint = () => { chevron.style.transform = box.open ? 'rotate(90deg)' : 'none'; };
-      box.addEventListener('toggle', () => { this._partFold[key] = box.open; paint(); });
-      paint();
-
+      inner.className = 'ow-card-b';
+      box.append(head, inner);
+      if (fold && box instanceof HTMLDetailsElement) {
+        box.open = this._partFold[fold.key] ?? fold.open;
+        box.addEventListener('toggle', () => { this._partFold[fold.key] = box.open; });
+      }
       body.appendChild(box);
-      return { inner, digest };
+      return { inner, digest, box };
     };
 
-    const secWhat = section('what', t('partSecWhat'), true);
-    const secMotion = section('motion', t('partSecMotion'), true);
-    const secEntity = section('entity', t('partSecEntity'), true);
-    const secLook = section('look', t('partSecLook'), false);
-    if (objectSection) secWhat.inner.appendChild(objectSection.el);
-
-    /**
-     * Ce que chaque section affiche quand elle est fermee.
-     *
-     * On montre ce qui distingue cet ouvrant des autres, pas le nom du reglage.
-     */
-    refreshDigests = () => {
-      const extras = draft.extra?.length ?? 0;
-      const object = draft.node ?? t('partSecPiece');
-      // Une animation désigne elle-même ce qui bouge : ses pistes, pas l'objet cliqué.
-      secWhat.digest.textContent = draft.motion === 'animation' ? (draft.clips ?? []).join(', ')
-        : extras ? `${object} + ${extras}` : object;
-
-      const motion = draft.motion === 'swing' ? t('partSwing')
-        : draft.motion === 'slide' ? t('partSlide')
-        : draft.motion === 'animation' ? t('partAnimation') : t('partExtend');
-      const detail = draft.motion === 'swing' ? `${draft.angle ?? 90}\u00b0`
-        : draft.motion === 'slide' ? `${Math.round((draft.travel ?? 1) * 100)} %` : '';
-      secMotion.digest.textContent = [motion.split(' (')[0], detail, `${draft.duration ?? 1.2} s`]
-        .filter(Boolean).join(' \u00b7 ');
-
-      secEntity.digest.textContent = draft.entity || t('partSecNoEntity');
-
-      const colours = [draft.closedColor, draft.openColor].filter(Boolean) as string[];
-      secLook.digest.textContent = colours.length ? colours.join(' \u2192 ') : t('partSecNoColour');
-    };
-
-    // Les bandeaux doivent parler des l'ouverture, pas au premier reglage.
-    refreshDigests();
-
-    const field = (label: string, control: HTMLElement, into: HTMLElement = body) => {
+    const field = (label: string, control: HTMLElement, into: HTMLElement) => {
       const wrap = document.createElement('div');
-      wrap.style.cssText = 'margin-bottom:12px;';
+      wrap.className = 'ow-field';
       const l = document.createElement('label');
-      l.style.cssText = lblStyle;
       l.textContent = label;
       wrap.append(l, control);
       into.appendChild(wrap);
       return wrap;
+    };
+
+    const hintLine = (into: HTMLElement, text: string) => {
+      const h = document.createElement('div');
+      h.className = 'ow-hint-line';
+      h.textContent = text;
+      into.appendChild(h);
+    };
+
+    /** Des boutons côte à côte plutôt qu'une liste déroulante : tout se voit d'un coup d'œil. */
+    const segmented = (
+      options: ReadonlyArray<readonly [string, string, string?]>,
+      value: string, onChange: (v: string) => void,
+    ) => {
+      const seg = document.createElement('div');
+      seg.className = 'ow-seg';
+      seg.setAttribute('role', 'radiogroup');
+      for (const [v, lab, ic] of options) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.setAttribute('role', 'radio');
+        const on = v === value;
+        b.setAttribute('aria-checked', String(on));
+        b.classList.toggle('ow-on', on);
+        if (ic) b.append(icon(ic, 16));
+        b.append(document.createTextNode(lab));
+        b.addEventListener('click', () => {
+          seg.querySelectorAll('button').forEach((x) => { x.classList.toggle('ow-on', x === b); x.setAttribute('aria-checked', String(x === b)); });
+          onChange(v);
+          apply();
+        });
+        seg.appendChild(b);
+      }
+      return seg;
+    };
+
+    const choice = (
+      into: HTMLElement, label: string, options: ReadonlyArray<readonly [string, string]>,
+      value: string, onChange: (v: string) => void,
+    ) => field(label, segmented(options, value, onChange), into);
+
+    const slider = (
+      into: HTMLElement, label: string,
+      min: number, max: number, step: number, value: number,
+      format: (v: number) => string, onInput: (v: number) => void,
+    ) => {
+      const range = document.createElement('input');
+      range.type = 'range';
+      range.min = String(min); range.max = String(max); range.step = String(step);
+      range.value = String(value);
+      range.setAttribute('aria-label', label);
+      const out = document.createElement('span');
+      out.className = 'ow-range-v';
+      out.textContent = format(value);
+      range.addEventListener('input', () => {
+        out.textContent = format(range.valueAsNumber);
+        onInput(range.valueAsNumber);
+        apply();
+      });
+      const row = document.createElement('div');
+      row.className = 'ow-range';
+      row.append(range, out);
+      return field(label, row, into);
+    };
+
+    /** Un interrupteur avec son libellé, sur une ligne. */
+    const toggle = (into: HTMLElement, label: string, on: boolean, onChange: (v: boolean) => void, hint?: string) => {
+      const row = document.createElement('div');
+      row.className = 'ow-row-opt';
+      const text = document.createElement('span');
+      text.textContent = label;
+      const sw = document.createElement('button');
+      sw.type = 'button';
+      sw.className = `ow-switch${on ? ' ow-on' : ''}`;
+      sw.setAttribute('role', 'switch');
+      sw.setAttribute('aria-checked', String(on));
+      sw.setAttribute('aria-label', label);
+      if (hint) sw.title = hint;
+      sw.addEventListener('click', () => {
+        const next = !sw.classList.contains('ow-on');
+        sw.classList.toggle('ow-on', next);
+        sw.setAttribute('aria-checked', String(next));
+        onChange(next);
+      });
+      row.append(text, sw);
+      into.appendChild(row);
+      return { row, set: (v: boolean) => { sw.classList.toggle('ow-on', v); sw.setAttribute('aria-checked', String(v)); } };
     };
 
     // ── Nom ───────────────────────────────────────────────────────────────
@@ -3980,30 +4088,36 @@ export class EditPanel {
       refreshName();
       apply();
     });
-    // En tête du formulaire, au-dessus de la section « Objet ».
-    secWhat.inner.prepend(field(t('partName'), nameInput, secWhat.inner));
+    const nameBox = document.createElement('div');
+    nameBox.style.cssText = 'padding:2px 2px 0;';
+    field(t('partName'), nameInput, nameBox);
+    body.appendChild(nameBox);
     refreshName();
 
-    // ── Entité ────────────────────────────────────────────────────────────
-    const { wrap: entityWrap } = this._entityField(draft.entity, inputStyle, (id) => {
+    // ── Capteur ───────────────────────────────────────────────────────────
+    const secEntity = card(t('partSecEntity'), 'sensor');
+    secEntity.inner.appendChild(this._sensorPicker(draft.entity, (id) => {
       draft.entity = id;
       refreshName();
       // L'entité change : les états proposés ne sont plus les mêmes.
       draft.openWhen = undefined;
       rebuildStates();
       apply();
-    });
-    field(t('partEntity'), entityWrap, secEntity.inner);
+    }));
 
-    // ── Ce que la carte lit de cette entité ───────────────────────────────
-    // Sans ça, une entité mal interprétée ressemble à une panne : on montre
-    // l'état courant et la conclusion qu'en tire la carte.
+    // Ce que la carte lit de cette entité : sans ça, une entité mal
+    // interprétée ressemble à une panne.
     const readout = document.createElement('div');
-    readout.style.cssText = 'background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:7px;padding:7px 9px;margin-bottom:12px;font-size:10px;line-height:1.6;';
+    readout.className = 'ow-readout';
     secEntity.inner.appendChild(readout);
 
     const statesBox = document.createElement('div');
     secEntity.inner.appendChild(statesBox);
+
+    const invToggle = toggle(secEntity.inner, t('partInvert'), !!draft.invert, (v) => {
+      draft.invert = v || undefined;
+      apply();
+    });
 
     const currentFraction = (): { state: string | undefined; frac: number } => {
       const st = this.getHass()?.states[draft.entity];
@@ -4015,139 +4129,129 @@ export class EditPanel {
 
     const refreshReadout = () => {
       const { state, frac } = currentFraction();
-      if (!draft.entity) {
-        readout.innerHTML = `<span style="color:#fbbf24;">⚠ ${t('partNoEntity')}</span>`;
-        return;
-      }
-      if (state === undefined) {
-        readout.innerHTML = `<span style="color:#fbbf24;">⚠ ${t('partEntityUnknown')}</span>`;
-        return;
-      }
+      readout.innerHTML = '';
+      // Sans capteur, le bouton du dessus le dit déjà.
+      readout.style.display = draft.entity ? '' : 'none';
+      const line = (text: string, cls = '') => {
+        const d = document.createElement('div');
+        if (cls) d.className = cls;
+        d.textContent = text;
+        readout.appendChild(d);
+        return d;
+      };
+      if (!draft.entity) { line(t('partNoEntity'), 'ow-warn-t'); return; }
+      if (state === undefined) { line(t('partEntityUnknown'), 'ow-warn-t'); return; }
       const label = stateLabel(draft.entity, state, this.getHass()?.states[draft.entity]?.attributes ?? {});
       const verdict = frac > 0.99 ? t('partReadOpen') : frac < 0.01 ? t('partReadClosed') : `${Math.round(frac * 100)} %`;
-      const colour = frac > 0.5 ? '#4ade80' : '#94a3b8';
+      const row = document.createElement('div');
+      row.className = 'ow-readout-row';
+      const now = document.createElement('span');
+      now.textContent = `${t('partReadNow')} ${label}`;
+      const pill = document.createElement('span');
+      pill.className = `ow-state${frac > 0.5 ? ' ow-open' : ''}`;
+      pill.textContent = verdict;
+      row.append(now, pill);
+      readout.appendChild(row);
       // Un domaine sans notion d'ouverture doit être signalé, pas subi : sinon
       // l'ouvrant reste immobile et rien n'explique pourquoi.
-      const mute = !hasOpenSemantics(draft.entity) && !draft.openWhen?.length;
-      readout.innerHTML =
-        `<div style="color:#64748b;">${t('partReadNow')}</div>` +
-        `<div><span style="color:#e2e8f0;">${label}</span>` +
-        `<span style="color:#64748b;"> → </span>` +
-        `<span style="color:${colour};font-weight:700;">${verdict}</span></div>` +
-        (mute ? `<div style="color:#fbbf24;margin-top:4px;">⚠ ${t('partNeedsStates')}</div>` : '');
+      if (!hasOpenSemantics(draft.entity) && !draft.openWhen?.length) line(t('partNeedsStates'), 'ow-warn-t');
     };
 
-    // ── Quels états valent « ouvert » ─────────────────────────────────────
+    // Quels états valent « ouvert ».
     const rebuildStates = () => {
       statesBox.innerHTML = '';
       if (!draft.entity) return;
       const st = this.getHass()?.states[draft.entity];
       const options = knownStates(draft.entity, st?.state);
       if (options.length < 2) return;
-
       const chips = document.createElement('div');
-      chips.style.cssText = 'display:flex;flex-wrap:wrap;gap:5px;';
+      chips.className = 'ow-chips';
       // Aucune sélection = lecture automatique par le descripteur. Le premier
       // clic bascule en choix explicite.
       for (const value of options) {
         const chip = document.createElement('button');
-        const on = () => !!draft.openWhen?.includes(value);
-        const paint = () => {
-          chip.style.cssText = [
-            'padding:3px 8px', 'border-radius:99px', 'font-size:10px',
-            'cursor:pointer', 'font-family:inherit',
-            on() ? 'background:rgba(74,222,128,0.18)' : 'background:rgba(255,255,255,0.05)',
-            on() ? 'color:#4ade80' : 'color:#94a3b8',
-            on() ? 'border:1px solid rgba(74,222,128,0.45)' : 'border:1px solid rgba(255,255,255,0.1)',
-          ].join(';');
-        };
+        chip.type = 'button';
+        chip.className = `ow-chip2${draft.openWhen?.includes(value) ? ' ow-on' : ''}`;
         chip.textContent = stateLabel(draft.entity, value, st?.attributes ?? {});
-        paint();
-        chip.addEventListener('click', (e) => {
-          e.preventDefault();
+        chip.addEventListener('click', () => {
           const set = new Set(draft.openWhen ?? []);
           if (set.has(value)) set.delete(value); else set.add(value);
           draft.openWhen = set.size ? [...set] : undefined;
-          chips.querySelectorAll('button').forEach(() => undefined);
           rebuildStates();
           apply();
         });
         chips.appendChild(chip);
       }
-      const hint = document.createElement('div');
-      hint.style.cssText = 'font-size:9px;color:#64748b;line-height:1.5;margin-top:4px;';
-      hint.textContent = draft.openWhen?.length ? t('partOpenWhenSet') : t('partOpenWhenAuto');
       const wrap = document.createElement('div');
-      wrap.append(chips, hint);
+      wrap.appendChild(chips);
+      hintLine(wrap, draft.openWhen?.length ? t('partOpenWhenSet') : t('partOpenWhenAuto'));
       field(t('partOpenWhen'), wrap, statesBox);
     };
 
+    // ── Essayer : faire bouger l'ouvrant sans toucher à la maison ─────────
+    const secTry = card(t('partPreview'), 'play');
+    const previewRange = document.createElement('input');
+    previewRange.type = 'range'; previewRange.min = '0'; previewRange.max = '100'; previewRange.step = '1';
+    previewRange.value = '0';
+    previewRange.setAttribute('aria-label', t('partPreview'));
+    const preview = (f: number) => this.onPreviewPart?.(draft.id, f);
+    previewRange.addEventListener('input', () => preview(previewRange.valueAsNumber / 100));
+    const ends = document.createElement('div');
+    ends.className = 'ow-ends';
+    ends.append(
+      Object.assign(document.createElement('span'), { textContent: t('partReadClosed') }),
+      Object.assign(document.createElement('span'), { textContent: t('partReadOpen') }),
+    );
+    const tryRow = document.createElement('div');
+    tryRow.className = 'ow-range ow-big-range';
+    tryRow.appendChild(previewRange);
+    secTry.inner.append(tryRow, ends);
+    hintLine(secTry.inner, t('partPreviewNote'));
+
     // ── Mouvement ─────────────────────────────────────────────────────────
-    const motionSel = document.createElement('select');
-    motionSel.style.cssText = inputStyle + SELECT_STYLE;
+    const secMotion = card(t('partSecMotion'), 'move');
     const clips = this.getClips?.() ?? [];
-    const motions: [OwlnestPart['motion'], string][] = [
-      ['swing', t('partSwing')], ['slide', t('partSlide')], ['extend', t('partExtend')],
+    const motions: [OwlnestPart['motion'], string, string, string][] = [
+      ['swing', t('partSwingShort'), 'door', t('partSwing')],
+      ['slide', t('partSlideShort'), 'slider', t('partSlide')],
+      ['extend', t('partExtendShort'), 'awning', t('partExtend')],
     ];
     // Proposé seulement si le fichier en contient : sinon c'est un choix sans issue.
-    if (clips.length || draft.motion === 'animation') motions.push(['animation', t('partAnimation')]);
-    for (const [value, label] of motions) {
-      const o = document.createElement('option');
-      o.value = value; o.textContent = label;
-      motionSel.appendChild(styleOption(o));
+    if (clips.length || draft.motion === 'animation') motions.push(['animation', t('partAnimationShort'), 'play', t('partAnimation')]);
+    const tiles = document.createElement('div');
+    tiles.className = 'ow-tiles';
+    tiles.setAttribute('role', 'radiogroup');
+    tiles.setAttribute('aria-label', t('partMotion'));
+    const paintTiles = () => tiles.querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
+      const on = b.dataset.motion === draft.motion;
+      b.classList.toggle('ow-on', on);
+      b.setAttribute('aria-checked', String(on));
+    });
+    for (const [value, label, ic, long] of motions) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.dataset.motion = value;
+      b.setAttribute('role', 'radio');
+      b.title = long;
+      b.append(icon(ic, 22), document.createTextNode(label));
+      b.addEventListener('click', () => {
+        if (draft.motion === value) return;
+        draft.motion = value;
+        if (draft.motion !== 'animation') draft.clips = undefined;
+        // Monté d'abord en déroulant : la détection lit l'ouvrant tel qu'il est.
+        if (draft.motion === 'extend') { apply(); redetect(false); }
+        paintTiles();
+        rebuildSpecific();
+        apply();
+        objectSection?.refresh();
+      });
+      tiles.appendChild(b);
     }
-    motionSel.value = draft.motion;
-    field(t('partMotion'), motionSel, secMotion.inner);
+    secMotion.inner.appendChild(tiles);
+    paintTiles();
 
     const specific = document.createElement('div');
     secMotion.inner.appendChild(specific);
-
-    const slider = (
-      into: HTMLElement, label: string,
-      min: number, max: number, step: number, value: number,
-      format: (v: number) => string, onInput: (v: number) => void,
-    ) => {
-      const range = document.createElement('input');
-      range.type = 'range';
-      range.min = String(min); range.max = String(max); range.step = String(step);
-      range.value = String(value);
-      range.style.cssText = 'flex:1;';
-      const out = document.createElement('span');
-      out.style.cssText = 'font-size:10px;color:#94a3b8;margin-left:8px;min-width:38px;text-align:right;font-variant-numeric:tabular-nums;';
-      out.textContent = format(value);
-      range.addEventListener('input', () => {
-        out.textContent = format(range.valueAsNumber);
-        onInput(range.valueAsNumber);
-        apply();
-      });
-      const row = document.createElement('div');
-      row.style.cssText = 'display:flex;align-items:center;';
-      row.append(range, out);
-      field(label, row, into);
-    };
-
-    const hintStyle = 'font-size:9px;color:#64748b;line-height:1.5;margin:-8px 0 12px;';
-    const hintLine = (into: HTMLElement, text: string) => {
-      const h = document.createElement('div');
-      h.style.cssText = hintStyle;
-      h.textContent = text;
-      into.appendChild(h);
-    };
-    const choice = (
-      into: HTMLElement, label: string, options: ReadonlyArray<readonly [string, string]>,
-      value: string, onChange: (v: string) => void,
-    ) => {
-      const sel = document.createElement('select');
-      sel.style.cssText = inputStyle + SELECT_STYLE;
-      for (const [v, lab] of options) {
-        const o = document.createElement('option');
-        o.value = v; o.textContent = lab;
-        sel.appendChild(styleOption(o));
-      }
-      sel.value = value;
-      sel.addEventListener('change', () => { onChange(sel.value); apply(); });
-      return field(label, sel, into);
-    };
 
     // ── Déroulant ─────────────────────────────────────────────────────────
     // Les valeurs par défaut viennent de la géométrie montée : seuls les
@@ -4223,7 +4327,7 @@ export class EditPanel {
         ['0', t('partExtendClosedAt0')], ['100', t('partExtendClosedAt100')],
       ], draft.invert ? '100' : '0', (v) => {
         draft.invert = v === '100' || undefined;
-        inv.checked = !!draft.invert;
+        invToggle.set(!!draft.invert);
       });
 
       // ── Suiveurs ──
@@ -4238,25 +4342,23 @@ export class EditPanel {
       };
       const box = document.createElement('div');
       const chips = document.createElement('div');
-      chips.style.cssText = 'display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px;';
+      chips.className = 'ow-chips';
       if (!list.length) {
         const none = document.createElement('span');
-        none.style.cssText = 'font-size:10px;color:#64748b;';
+        none.className = 'ow-hint-line';
         none.textContent = t('partFollowersNone');
         chips.appendChild(none);
       }
       for (const f of list) {
         const chip = document.createElement('button');
-        chip.style.cssText = 'padding:3px 8px;border-radius:99px;font-size:10px;cursor:pointer;font-family:inherit;background:rgba(56,189,248,0.15);color:#7dd3fc;border:1px solid rgba(56,189,248,0.45);';
+        chip.type = 'button';
+        chip.className = 'ow-chip2 ow-on';
         chip.textContent = `${f.node} ✕`;
-        chip.addEventListener('click', (e) => {
-          e.preventDefault();
-          setFollowers(list.filter((x) => x !== f));
-        });
+        chip.addEventListener('click', () => setFollowers(list.filter((x) => x !== f)));
         chips.appendChild(chip);
       }
       const add = document.createElement('select');
-      add.style.cssText = inputStyle + SELECT_STYLE;
+      add.style.cssText = inputStyle + SELECT_STYLE + 'margin-top:6px;';
       const first = document.createElement('option');
       first.value = ''; first.textContent = t('partFollowersAdd');
       add.appendChild(styleOption(first));
@@ -4273,17 +4375,14 @@ export class EditPanel {
         setFollowers([...list, { node: c.node, nodeIndex: c.nodeIndex }]);
       });
       const again = document.createElement('button');
-      again.textContent = t('partExtendRedetect');
-      again.style.cssText = 'margin-top:6px;width:100%;padding:5px;border-radius:6px;font-size:10px;cursor:pointer;font-family:inherit;background:rgba(255,255,255,0.06);color:#cbd5e1;border:1px solid rgba(255,255,255,0.12);';
-      again.addEventListener('click', (e) => {
-        e.preventDefault();
-        redetect(true);
-        rebuildSpecific();
-      });
-      const note = document.createElement('div');
-      note.style.cssText = 'font-size:9px;color:#64748b;line-height:1.5;margin-top:4px;';
-      note.textContent = t('partFollowersHint');
-      box.append(chips, add, note, again);
+      again.type = 'button';
+      again.className = 'ow-btn ow-small';
+      again.style.cssText = 'margin-top:8px;width:100%;';
+      again.append(icon('rotl', 15), document.createTextNode(t('partExtendRedetect')));
+      again.addEventListener('click', () => { redetect(true); rebuildSpecific(); });
+      box.append(chips, add);
+      hintLine(box, t('partFollowersHint'));
+      box.append(again);
       field(t('partFollowers'), box, specific);
     };
 
@@ -4298,27 +4397,20 @@ export class EditPanel {
         draft.clips = next.size ? [...next] : undefined;
         // Durée de Blender par défaut : l'animation se joue à sa vitesse d'origine.
         const longest = Math.max(0, ...clips.filter((c) => next.has(c.name)).map((c) => c.duration));
-        if (longest > 0) {
-          draft.duration = Math.round(longest * 10) / 10;
-          dur.value = String(draft.duration);
-        }
+        if (longest > 0) draft.duration = Math.round(longest * 10) / 10;
         rebuildSpecific();
         apply();
         objectSection?.refresh();
       };
       const chips = document.createElement('div');
-      chips.style.cssText = 'display:flex;flex-wrap:wrap;gap:5px;';
-      const chip = (label: string, on: boolean, missing: boolean, title: string, onClick: () => void) => {
+      chips.className = 'ow-chips';
+      const chip = (label: string, on: boolean, missing: boolean, tip: string, onClick: () => void) => {
         const b = document.createElement('button');
-        b.style.cssText = [
-          'padding:3px 8px', 'border-radius:99px', 'font-size:10px', 'cursor:pointer', 'font-family:inherit',
-          missing ? 'background:rgba(251,191,36,0.12)' : on ? 'background:rgba(56,189,248,0.15)' : 'background:rgba(255,255,255,0.05)',
-          missing ? 'color:#fbbf24' : on ? 'color:#7dd3fc' : 'color:#94a3b8',
-          missing ? 'border:1px solid rgba(251,191,36,0.45)' : on ? 'border:1px solid rgba(56,189,248,0.45)' : 'border:1px solid rgba(255,255,255,0.1)',
-        ].join(';');
+        b.type = 'button';
+        b.className = `ow-chip2${on ? ' ow-on' : ''}${missing ? ' ow-miss' : ''}`;
         b.textContent = label;
-        b.title = title;
-        b.addEventListener('click', (e) => { e.preventDefault(); onClick(); });
+        b.title = tip;
+        b.addEventListener('click', onClick);
         chips.appendChild(b);
       };
       for (const c of clips) {
@@ -4332,7 +4424,7 @@ export class EditPanel {
       // Animation renommée ou supprimée dans Blender : visible, et retirable.
       for (const name of chosen) {
         if (clips.some((c) => c.name === name)) continue;
-        chip(`⚠ ${name} ✕`, true, true, t('partAnimationMissing'), () => {
+        chip(`${name} ✕`, true, true, t('partAnimationMissing'), () => {
           const next = new Set(chosen);
           next.delete(name);
           setClips(next);
@@ -4345,219 +4437,47 @@ export class EditPanel {
     const rebuildSpecific = () => {
       specific.innerHTML = '';
       // Pour un déroulant, l'inversion se règle par « Fermé à ».
-      invWrap.style.display = draft.motion === 'extend' ? 'none' : '';
+      invToggle.row.style.display = draft.motion === 'extend' ? 'none' : '';
       // Les animations désignent elles-mêmes ce qui bouge, et ne détachent rien
       // qui puisse emmener d'autres pièces.
-      if (objectSection) objectSection.el.style.display = draft.motion === 'animation' ? 'none' : '';
-      carryBox.style.display = draft.motion === 'animation' ? 'none' : '';
+      secWhat.box.style.display = draft.motion === 'animation' ? 'none' : '';
       if (draft.motion === 'animation') {
         buildClips();
       } else if (draft.motion === 'extend') {
         buildExtend();
       } else if (draft.motion === 'swing') {
         const horizontal = draft.swingAxis === 'horizontal';
-        const axis = document.createElement('select');
-        axis.style.cssText = inputStyle + SELECT_STYLE;
-        for (const [v, lab] of [
+        choice(specific, t('partSwingAxis'), [
           ['vertical', t('partSwingVertical')], ['horizontal', t('partSwingHorizontal')],
-        ] as const) {
-          const o = document.createElement('option');
-          o.value = v; o.textContent = lab;
-          axis.appendChild(styleOption(o));
-        }
-        axis.value = horizontal ? 'horizontal' : 'vertical';
-        axis.addEventListener('change', () => {
-          draft.swingAxis = axis.value === 'horizontal' ? 'horizontal' : undefined;
+        ], horizontal ? 'horizontal' : 'vertical', (v) => {
+          draft.swingAxis = v === 'horizontal' ? 'horizontal' : undefined;
           rebuildSpecific();
-          apply();
         });
-        field(t('partSwingAxis'), axis, specific);
-        const hinge = document.createElement('select');
-        hinge.style.cssText = inputStyle + SELECT_STYLE;
-        const hingeLabels = horizontal
-          ? [['start', t('partHingeBottom')], ['end', t('partHingeTop')]] as const
-          : [['start', t('partHingeStart')], ['end', t('partHingeEnd')]] as const;
-        for (const [v, lab] of hingeLabels) {
-          const o = document.createElement('option');
-          o.value = v; o.textContent = lab;
-          hinge.appendChild(styleOption(o));
-        }
-        hinge.value = draft.hinge ?? 'start';
-        hinge.addEventListener('change', () => {
-          draft.hinge = hinge.value as 'start' | 'end';
-          apply();
-        });
-        field(t('partHinge'), hinge, specific);
-        const side = document.createElement('select');
-        side.style.cssText = inputStyle + SELECT_STYLE;
-        for (const [v, lab] of [['front', t('partSwingFront')], ['back', t('partSwingBack')]] as const) {
-          const o = document.createElement('option');
-          o.value = v; o.textContent = lab;
-          side.appendChild(styleOption(o));
-        }
-        side.value = draft.swingSide ?? 'front';
-        side.addEventListener('change', () => {
-          draft.swingSide = side.value === 'back' ? 'back' : undefined;
-          apply();
-        });
-        field(t('partSwingSide'), side, specific);
+        choice(specific, t('partHinge'), horizontal
+          ? [['start', t('partHingeBottom')], ['end', t('partHingeTop')]]
+          : [['start', t('partHingeStart')], ['end', t('partHingeEnd')]],
+        draft.hinge ?? 'start', (v) => { draft.hinge = v as 'start' | 'end'; });
+        choice(specific, t('partSwingSide'), [['front', t('partSwingFront')], ['back', t('partSwingBack')]],
+          draft.swingSide ?? 'front', (v) => { draft.swingSide = v === 'back' ? 'back' : undefined; });
         slider(specific, t('partAngle'), 15, 170, 5, draft.angle ?? 90,
           (v) => `${v}°`, (v) => { draft.angle = v; });
       } else {
-        const dir = document.createElement('select');
-        dir.style.cssText = inputStyle + SELECT_STYLE;
-        for (const [v, lab] of [
-          ['down', t('partSlideDown')], ['up', t('partSlideUp')],
-          ['start', t('partSlideStart')], ['end', t('partSlideEnd')],
-        ] as const) {
-          const o = document.createElement('option');
-          o.value = v; o.textContent = lab;
-          dir.appendChild(styleOption(o));
-        }
-        dir.value = draft.slide ?? 'down';
-        dir.addEventListener('change', () => {
-          draft.slide = dir.value as OwlnestPart['slide'];
-          apply();
-        });
-        field(t('partSlideDir'), dir, specific);
+        field(t('partSlideDir'), segmented([
+          ['down', t('partSlideDown'), 'down'], ['up', t('partSlideUp'), 'up'],
+          ['start', t('partSlideStart'), 'back'], ['end', t('partSlideEnd'), 'chevron'],
+        ], draft.slide ?? 'down', (v) => { draft.slide = v as OwlnestPart['slide']; }), specific);
         slider(specific, t('partTravel'), 20, 120, 5, Math.round((draft.travel ?? 1) * 100),
           (v) => `${v} %`, (v) => { draft.travel = v / 100; });
       }
+      slider(specific, t('partDuration'), 0.1, 10, 0.1, draft.duration ?? 1.2,
+        (v) => `${v.toFixed(1)} s`, (v) => { draft.duration = Math.max(0.1, Math.round(v * 10) / 10); });
     };
 
-    motionSel.addEventListener('change', () => {
-      draft.motion = motionSel.value as OwlnestPart['motion'];
-      if (draft.motion !== 'animation') draft.clips = undefined;
-      // Monté d'abord en déroulant : la détection lit l'ouvrant tel qu'il est.
-      if (draft.motion === 'extend') { apply(); redetect(false); }
-      rebuildSpecific();
-      apply();
-      objectSection?.refresh();
-    });
+    // ── Couleurs selon l'état (repliée) ───────────────────────────────────
+    const secLook = card(t('partSecLook'), 'brush', { key: 'look', open: false });
+    // ── Ce qui bouge (repliée) : l'objet du modèle et ce qui le suit ──────
+    const secWhat = card(t('partSecWhat'), 'cube', { key: 'what', open: false });
 
-    // ── Aperçu ────────────────────────────────────────────────────────────
-    const previewRange = document.createElement('input');
-    previewRange.type = 'range'; previewRange.min = '0'; previewRange.max = '100'; previewRange.step = '1';
-    previewRange.value = '0';
-    previewRange.style.cssText = 'width:100%;';
-    const preview = (f: number) => this.onPreviewPart?.(draft.id, f);
-    previewRange.addEventListener('input', () => preview(previewRange.valueAsNumber / 100));
-    const previewNote = document.createElement('div');
-    previewNote.style.cssText = 'font-size:9px;color:#64748b;line-height:1.5;margin-top:4px;';
-    previewNote.textContent = t('partPreviewNote');
-    const previewBox = document.createElement('div');
-    previewBox.append(previewRange, previewNote);
-
-    // ── Durée et inversion ────────────────────────────────────────────────
-    const dur = document.createElement('input');
-    dur.type = 'number'; dur.min = '0.1'; dur.max = '10'; dur.step = '0.1';
-    dur.value = String(draft.duration ?? 1.2);
-    dur.style.cssText = inputStyle;
-    dur.addEventListener('change', () => {
-      draft.duration = Math.max(0.1, dur.valueAsNumber || 1.2);
-      apply();
-    });
-
-    const invWrap = document.createElement('label');
-    invWrap.style.cssText = 'display:flex;align-items:center;gap:7px;font-size:11px;color:#cbd5e1;cursor:pointer;margin-bottom:12px;';
-    const inv = document.createElement('input');
-    inv.type = 'checkbox'; inv.checked = !!draft.invert;
-    inv.addEventListener('change', () => {
-      draft.invert = inv.checked || undefined;
-      apply();
-    });
-    invWrap.append(inv, document.createTextNode(t('partInvert')));
-
-    // ── Pieces emmenees ───────────────────────────────────────────────────
-    // Sur un export plat, une poignee n'est ni soudee au vantail ni groupee
-    // avec lui : seule sa place dans le volume de l'ouvrant dit qu'elle doit
-    // suivre. L'option existe parce que le critere peut se tromper.
-    // Les pieces qui suivent l'ouvrant, choisies au clic.
-    const extraTitle = document.createElement('div');
-    extraTitle.textContent = t('partExtra');
-    extraTitle.title = t('partExtraHint');
-    extraTitle.style.cssText = 'font-size:11px;color:#cbd5e1;margin:14px 0 5px;';
-
-    const extraList = document.createElement('div');
-    extraList.style.cssText = 'display:flex;flex-direction:column;gap:3px;margin-bottom:5px;';
-
-    const fillExtra = () => {
-      extraList.textContent = '';
-      const pieces = draft.extra ?? [];
-      if (!pieces.length) {
-        const vide = document.createElement('div');
-        vide.textContent = t('partExtraEmpty');
-        vide.style.cssText = 'font-size:10px;color:#64748b;';
-        extraList.appendChild(vide);
-        return;
-      }
-      pieces.forEach((piece, i) => {
-        const row = document.createElement('div');
-        row.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:10px;color:#94a3b8;background:rgba(255,255,255,0.04);border-radius:4px;padding:3px 6px;';
-        const name = document.createElement('span');
-        name.textContent = piece.label || `${piece.mesh} · ${piece.triangle}`;
-        name.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-        const drop = document.createElement('button');
-        drop.textContent = '\u2715';
-        drop.title = t('partExtraDrop');
-        drop.style.cssText = 'background:none;border:none;color:#94a3b8;cursor:pointer;font-size:11px;padding:0 2px;';
-        drop.addEventListener('click', () => {
-          draft.extra = (draft.extra ?? []).filter((_, j) => j !== i);
-          if (!draft.extra.length) draft.extra = undefined;
-          fillExtra();
-          apply();
-        });
-        row.append(name, drop);
-        extraList.appendChild(row);
-      });
-    };
-
-    const extraAdd = document.createElement('button');
-    extraAdd.textContent = t('partExtraAdd');
-    extraAdd.style.cssText = 'width:100%;background:rgba(125,209,252,0.12);border:1px solid rgba(125,209,252,0.3);color:#7dd3fc;border-radius:5px;padding:5px;font-size:10px;cursor:pointer;margin-bottom:10px;';
-    extraAdd.addEventListener('click', () => {
-      if (!this.onStartPartPicking) return;
-      this.showStatusBar?.(t('partExtraPick'));
-      this.onStartPartPicking((hit) => {
-        this.hideStatusBar?.();
-        // La piece de l'ouvrant lui-meme n'a rien a faire dans la liste : elle
-        // bouge deja, et l'extraire deux fois casserait la geometrie.
-        if (hit.mesh === draft.mesh && hit.triangle === draft.triangle) return;
-        const pieces = draft.extra ?? [];
-        if (pieces.some((p) => p.mesh === hit.mesh && p.triangle === hit.triangle)) return;
-        draft.extra = [...pieces, {
-          mesh: hit.mesh,
-          meshIndex: hit.meshIndex,
-          triangle: hit.triangle,
-          label: `${hit.size.map((v) => v.toFixed(0)).join(' \u00d7 ')} cm`,
-        }];
-        fillExtra();
-        apply();
-      });
-    });
-
-    const carryWrap = document.createElement('label');
-    carryWrap.style.cssText = 'display:flex;align-items:center;gap:7px;font-size:11px;color:#cbd5e1;cursor:pointer;';
-    const carry = document.createElement('input');
-    carry.type = 'checkbox';
-    carry.checked = draft.carry === true;
-    carry.title = t('partCarryHint');
-    const carryCount = document.createElement('div');
-    carryCount.style.cssText = 'font-size:10px;color:#64748b;margin:3px 0 12px 22px;';
-    const showCarried = () => {
-      const n = this.getCarriedCount?.(draft.id) ?? 0;
-      carryCount.textContent = draft.carry !== true ? '' : (n ? tn('partCarryCount', n) : t('partCarryNone'));
-    };
-    carry.addEventListener('change', () => {
-      draft.carry = carry.checked ? true : undefined;
-      apply();
-      showCarried();
-    });
-    carryWrap.append(carry, document.createTextNode(t('partCarry')));
-    showCarried();
-    const carryBox = document.createElement('div');
-
-    // ── Teinte par état ───────────────────────────────────────────────────
     // Même contrôle que la couleur d'une ancre ; le bouton revient au défaut,
     // qui est ici l'absence de teinte.
     const tintBox = document.createElement('div');
@@ -4573,21 +4493,19 @@ export class EditPanel {
     });
     const colorRow = (key: 'closedColor' | 'openColor', label: string, hint: string, fallback: string) => {
       const colorWrap = document.createElement('div');
-      colorWrap.style.cssText = 'display:flex;gap:6px;align-items:center;';
+      colorWrap.style.cssText = 'display:flex;gap:8px;align-items:center;';
       const colorInput = document.createElement('input');
       colorInput.type = 'color';
       colorInput.value = draft[key] ?? fallback;
+      colorInput.setAttribute('aria-label', label);
       const noneBtn = document.createElement('button');
+      noneBtn.type = 'button';
       noneBtn.textContent = t('partColorNone');
       const paint = () => {
         const on = !!draft[key];
-        colorInput.style.cssText = `width:38px;height:28px;padding:0;border:1px solid rgba(255,255,255,0.1);border-radius:6px;background:transparent;cursor:pointer;opacity:${on ? 1 : 0.35};`;
-        noneBtn.style.cssText = [
-          'flex:1', 'border-radius:6px', 'font-size:10px', 'padding:6px', 'cursor:pointer', 'font-family:inherit',
-          on ? 'background:rgba(255,255,255,0.04)' : 'background:rgba(255,255,255,0.1)',
-          on ? 'border:1px solid rgba(255,255,255,0.1)' : 'border:1px solid rgba(255,255,255,0.25)',
-          on ? 'color:#94a3b8' : 'color:#e2e8f0',
-        ].join(';');
+        colorInput.style.cssText = `width:44px;height:34px;padding:0;border:1px solid var(--ow-line);border-radius:9px;background:transparent;cursor:pointer;opacity:${on ? 1 : 0.35};`;
+        noneBtn.className = `ow-btn ow-small${on ? ' ow-ghost' : ''}`;
+        noneBtn.style.flex = '1';
       };
       const set = (value: string | undefined) => {
         if (draft[key] === value) return;
@@ -4600,50 +4518,162 @@ export class EditPanel {
       colorInput.addEventListener('click', () => set(colorInput.value));
       colorInput.addEventListener('input', () => set(colorInput.value));
       colorInput.addEventListener('blur', () => { if (!tintHover) objectSection?.mute(false); });
-      noneBtn.addEventListener('click', (e) => { e.preventDefault(); set(undefined); });
+      noneBtn.addEventListener('click', () => set(undefined));
       paint();
       colorWrap.append(colorInput, noneBtn);
-      field(label, colorWrap, tintBox).style.marginBottom = '4px';
-      const note = document.createElement('div');
-      note.style.cssText = 'font-size:9px;color:#475569;line-height:1.5;margin-bottom:12px;';
-      note.textContent = hint;
-      tintBox.appendChild(note);
+      field(label, colorWrap, tintBox);
+      hintLine(tintBox, hint);
     };
     colorRow('closedColor', t('partColorClosed'), t('partColorClosedHint'), '#22c55e');
     colorRow('openColor', t('partColorOpen'), t('partColorOpenHint'), '#f59e0b');
     slider(tintBox, t('partColorStrength'), 5, 100, 5, Math.round((draft.tintStrength ?? 0.55) * 100),
       (v) => `${v} %`, (v) => { draft.tintStrength = v === 55 ? undefined : v / 100; });
     hintLine(tintBox, t('partColorStrengthHint'));
-
-    // Ordre d'affichage : réglages du mouvement, puis durée, inversion,
-    // teintes et aperçu — l'aperçu juste dessous montre le fondu.
-    rebuildSpecific();
-    field(t('partDuration'), dur, secMotion.inner);
-    secMotion.inner.appendChild(invWrap);
-    fillExtra();
-    carryBox.append(extraTitle, extraList, extraAdd, carryWrap, carryCount);
-    secWhat.inner.appendChild(carryBox);
     secLook.inner.appendChild(tintBox);
-    // L'aperçu reste hors des sections, en bas de la fenêtre : c'est l'outil
-    // qu'on utilise pour vérifier chaque réglage, pas un réglage de plus. Rangé
-    // dans les couleurs, il disparaissait avec elles.
-    field(t('partPreview'), previewBox);
 
-    // ── Pied ──────────────────────────────────────────────────────────────
-    const foot = document.createElement('div');
-    foot.style.cssText = 'display:flex;gap:8px;padding:12px 16px;border-top:1px solid rgba(255,255,255,0.08);flex-shrink:0;';
-    const mkBtn = (label: string, primary: boolean) => {
-      const b = document.createElement('button');
-      b.textContent = label;
-      b.style.cssText = [
-        'flex:1', 'padding:7px 10px', 'border-radius:7px', 'font-size:11px',
-        'font-weight:600', 'cursor:pointer', 'font-family:inherit',
-        primary ? 'background:#0ea5e9' : 'background:rgba(255,255,255,0.06)',
-        primary ? 'color:#04121f' : 'color:#cbd5e1',
-        primary ? 'border:none' : 'border:1px solid rgba(255,255,255,0.12)',
-      ].join(';');
-      return b;
+    // L'objet du modèle : l'arborescence, gardée pour les cas où le clic ne
+    // suffit pas. Écrite pour l'ancien panneau, elle est agrandie d'un bloc.
+    const objectSection = this._partObjectSection(draft, inputStyle, () => {
+      // Autre objet : les suiveurs de l'ancien n'ont plus de sens.
+      if (draft.motion === 'extend') draft.followers = undefined;
+      apply();
+      if (draft.motion === 'extend') { redetect(false); rebuildSpecific(); }
+    });
+    hintLine(secWhat.inner, t('partWhatHint'));
+    const repick = document.createElement('button');
+    repick.type = 'button';
+    repick.className = 'ow-btn ow-small';
+    repick.style.cssText = 'width:100%;margin-bottom:10px;';
+    repick.append(icon('hand', 15), document.createTextNode(t('partRepick')));
+    repick.addEventListener('click', () => {
+      // Désigner une autre pièce : le formulaire se rouvre sur elle.
+      flushAndClose();
+      this._startPartPick();
+    });
+    secWhat.inner.appendChild(repick);
+    if (objectSection) {
+      const legacy = document.createElement('div');
+      legacy.className = 'ow-legacy';
+      legacy.appendChild(objectSection.el);
+      secWhat.inner.appendChild(legacy);
+    }
+
+    // Les pièces qui suivent l'ouvrant, choisies au clic : sur un export plat,
+    // une poignée n'est ni soudée au vantail ni groupée avec lui.
+    const extraList = document.createElement('div');
+    extraList.className = 'ow-chips';
+    extraList.style.marginBottom = '8px';
+    const fillExtra = () => {
+      extraList.textContent = '';
+      const pieces = draft.extra ?? [];
+      if (!pieces.length) {
+        const vide = document.createElement('span');
+        vide.className = 'ow-hint-line';
+        vide.textContent = t('partExtraEmpty');
+        extraList.appendChild(vide);
+        return;
+      }
+      pieces.forEach((piece, i) => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'ow-chip2 ow-on';
+        chip.title = t('partExtraDrop');
+        chip.textContent = `${piece.label || `${piece.mesh} · ${piece.triangle}`} ✕`;
+        chip.addEventListener('click', () => {
+          draft.extra = (draft.extra ?? []).filter((_, j) => j !== i);
+          if (!draft.extra.length) draft.extra = undefined;
+          fillExtra();
+          apply();
+        });
+        extraList.appendChild(chip);
+      });
     };
+    const extraAdd = document.createElement('button');
+    extraAdd.type = 'button';
+    extraAdd.className = 'ow-btn ow-small';
+    extraAdd.style.cssText = 'width:100%;margin-bottom:10px;';
+    extraAdd.append(icon('plus', 15), document.createTextNode(t('partExtraAdd').replace(/^[+＋]\s*/, '')));
+    extraAdd.addEventListener('click', () => {
+      if (!this.onStartPartPicking) return;
+      this.showStatusBar?.(t('partExtraPick'));
+      this.onStartPartPicking((h) => {
+        this.hideStatusBar?.();
+        // La piece de l'ouvrant lui-meme n'a rien a faire dans la liste : elle
+        // bouge deja, et l'extraire deux fois casserait la geometrie.
+        if (h.mesh === draft.mesh && h.triangle === draft.triangle) return;
+        const pieces = draft.extra ?? [];
+        if (pieces.some((p) => p.mesh === h.mesh && p.triangle === h.triangle)) return;
+        draft.extra = [...pieces, {
+          mesh: h.mesh,
+          meshIndex: h.meshIndex,
+          triangle: h.triangle,
+          label: `${h.size.map((v) => v.toFixed(0)).join(' × ')} cm`,
+        }];
+        fillExtra();
+        apply();
+      });
+    });
+    const extraBox = document.createElement('div');
+    field(t('partExtra'), extraBox, secWhat.inner).title = t('partExtraHint');
+    extraBox.append(extraList, extraAdd);
+    fillExtra();
+    const carryCount = document.createElement('div');
+    carryCount.className = 'ow-hint-line';
+    const showCarried = () => {
+      const n = this.getCarriedCount?.(draft.id) ?? 0;
+      carryCount.textContent = draft.carry !== true ? '' : (n ? tn('partCarryCount', n) : t('partCarryNone'));
+    };
+    toggle(secWhat.inner, t('partCarry'), draft.carry === true, (v) => {
+      draft.carry = v ? true : undefined;
+      apply();
+      showCarried();
+    }, t('partCarryHint'));
+    secWhat.inner.appendChild(carryCount);
+    showCarried();
+
+    /**
+     * Ce que chaque carte repliée dit d'elle : ce qui distingue cet ouvrant,
+     * pas le nom du réglage.
+     */
+    refreshDigests = () => {
+      const extras = draft.extra?.length ?? 0;
+      const object = draft.node ?? (dims || t('partSecPiece'));
+      secWhat.digest.textContent = extras ? `${object} + ${extras}` : object;
+      const colours = [draft.closedColor, draft.openColor].filter(Boolean) as string[];
+      secLook.digest.innerHTML = '';
+      if (!colours.length) secLook.digest.textContent = t('partSecNoColour');
+      for (const c of colours) {
+        const dot = document.createElement('i');
+        dot.style.cssText = `display:inline-block;width:12px;height:12px;border-radius:50%;background:${c};margin-left:4px;vertical-align:middle;`;
+        secLook.digest.appendChild(dot);
+      }
+      const motion = motions.find((m) => m[0] === draft.motion)?.[1] ?? draft.motion;
+      subtitle.textContent = [motion, draft.entity ? '' : t('partNoEntity')].filter(Boolean).join(' · ');
+    };
+    refreshDigests();
+    rebuildSpecific();
+
+    // ── Pied : supprimer, annuler, enregistrer ────────────────────────────
+    const foot = document.createElement('div');
+    foot.className = 'ow-form-f';
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'ow-ib';
+    del.title = t('partDelete');
+    del.setAttribute('aria-label', t('partDelete'));
+    del.style.color = '#f87171';
+    del.append(icon('trash', 18));
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'ow-btn ow-ghost';
+    cancelBtn.textContent = t('btnCancel');
+    const ok = document.createElement('button');
+    ok.type = 'button';
+    ok.className = 'ow-btn ow-primary';
+    ok.append(icon('check', 16), document.createTextNode(t('ruleModalSave')));
+    foot.append(del, Object.assign(document.createElement('span'), { style: 'flex:1' }), cancelBtn, ok);
+    form.appendChild(foot);
+
     const close = () => {
       if (saveTimer) clearTimeout(saveTimer);
       objectSection?.dispose();
@@ -4651,8 +4681,8 @@ export class EditPanel {
       if (this._closePartModal === flushAndClose) this._closePartModal = null;
       if (this._discardPartModal === close) { this._discardPartModal = null; this._partModalId = null; }
       closed = true;
-      dialog.close();
-      dialog.remove();
+      form.remove();
+      if (this._partsBody) this._fillPartsList(this._partsBody);
     };
     const cancel = async () => {
       close();
@@ -4675,19 +4705,28 @@ export class EditPanel {
     this._discardPartModal = close;
     this._partModalId = draft.id;
 
-    const cancelBtn = mkBtn(t('btnCancel'), false);
+    back.addEventListener('click', () => flushAndClose());
     cancelBtn.addEventListener('click', () => { void cancel(); });
-    const ok = mkBtn(t('ruleModalSave'), true);
     ok.addEventListener('click', async () => {
       await this._commitPart(draft, true);
       close();
     });
-    foot.append(cancelBtn, ok);
-    dialog.appendChild(foot);
+    del.addEventListener('click', () => {
+      if (!del.dataset.armed) {
+        del.dataset.armed = '1';
+        del.title = t('partDeleteConfirm');
+        del.style.background = 'rgba(239,68,68,0.18)';
+        setTimeout(() => { delete del.dataset.armed; del.title = t('partDelete'); del.style.background = ''; }, 3000);
+        return;
+      }
+      close();
+      const next = (this.getParts?.() ?? []).filter((p) => p.id !== draft.id);
+      void this.saveParts?.(next).then(() => { if (this._partsBody) this._fillPartsList(this._partsBody); });
+    });
 
-    document.body.appendChild(dialog);
-    dialog.show();
+    host.appendChild(form);
     objectSection?.reveal();
+    nameInput.blur();
 
     // La pièce doit exister côté carte pour que l'aperçu et les réglages en
     // direct aient une cible.

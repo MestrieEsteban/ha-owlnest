@@ -88,6 +88,57 @@ export const EDITOR_STYLES = `
 .ow-popmenu button { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: none; border-radius: 8px; background: transparent;
   color: var(--ow-text); font: 13px ${FONT}; cursor: pointer; text-align: left; }
 .ow-popmenu button:hover { background: var(--ow-chrome2); }
+/* Fiche d'un ouvrant, dans le panneau */
+.ow-form { position: absolute; inset: 0; z-index: 6; display: flex; flex-direction: column; background: var(--ow-chrome); }
+.ow-form-h { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--ow-line); flex-shrink: 0; }
+.ow-form-b { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+.ow-form-f { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--ow-line); flex-shrink: 0; }
+.ow-card { border: 1px solid var(--ow-line); border-radius: 14px; background: color-mix(in srgb, var(--ow-chrome2) 55%, transparent); }
+.ow-card-h { display: flex; align-items: center; gap: 8px; padding: 11px 12px; font-size: 13.5px; color: var(--ow-text); list-style: none; }
+.ow-card-h::-webkit-details-marker { display: none; }
+details.ow-card > .ow-card-h { cursor: pointer; }
+.ow-card-h svg { color: var(--ow-acc); }
+.ow-digest { flex: 1; min-width: 0; text-align: right; font-size: 12px; color: var(--ow-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ow-chev { width: 8px; height: 8px; border-right: 2px solid var(--ow-muted); border-bottom: 2px solid var(--ow-muted); transform: rotate(-45deg); transition: transform .15s; margin: 0 4px; flex-shrink: 0; }
+details[open] > .ow-card-h .ow-chev { transform: rotate(45deg); }
+.ow-card-b { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 12px; }
+.ow-field { display: flex; flex-direction: column; gap: 6px; }
+.ow-field > label { font-size: 12px; font-weight: 600; color: var(--ow-muted); }
+.ow-hint-line { font-size: 11.5px; color: var(--ow-muted); line-height: 1.45; }
+.ow-seg { display: flex; flex-wrap: wrap; gap: 3px; padding: 3px; border-radius: 10px; background: var(--ow-chrome2); border: 1px solid var(--ow-line); }
+.ow-seg button { flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 8px; border: none; border-radius: 8px;
+  background: transparent; color: var(--ow-muted); font: 600 12px ${FONT}; cursor: pointer; min-width: 0; }
+.ow-seg button.ow-on { background: var(--ow-chrome); color: var(--ow-text); box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+.ow-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); gap: 6px; }
+.ow-tiles button { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 4px; border-radius: 12px; border: 1px solid var(--ow-line);
+  background: var(--ow-chrome2); color: var(--ow-text); font: 600 12px ${FONT}; cursor: pointer; }
+.ow-tiles button.ow-on { border-color: var(--ow-acc); background: color-mix(in srgb, var(--ow-acc) 16%, transparent); color: var(--ow-text); }
+.ow-tiles button.ow-on svg { color: var(--ow-acc); }
+.ow-range { display: flex; align-items: center; gap: 10px; }
+.ow-range input[type=range] { flex: 1; accent-color: var(--ow-acc); min-width: 0; }
+.ow-range-v { font-size: 12px; color: var(--ow-text); min-width: 46px; text-align: right; font-variant-numeric: tabular-nums; }
+.ow-big-range input[type=range] { height: 28px; }
+.ow-ends { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--ow-muted); margin-top: -6px; }
+.ow-readout { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 10px; background: var(--ow-chrome); border: 1px solid var(--ow-line); font-size: 12.5px; }
+.ow-readout-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ow-state { font-size: 11.5px; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: var(--ow-chrome2); color: var(--ow-muted); white-space: nowrap; }
+.ow-state.ow-open { background: color-mix(in srgb, #34d399 20%, transparent); color: #34d399; }
+.ow-warn-t { color: #fbbf24; font-size: 12px; line-height: 1.45; }
+.ow-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ow-chip2 { padding: 5px 10px; border-radius: 999px; font: 600 12px ${FONT}; cursor: pointer; background: var(--ow-chrome2); color: var(--ow-muted); border: 1px solid var(--ow-line); }
+.ow-chip2.ow-on { background: color-mix(in srgb, var(--ow-acc) 16%, transparent); color: var(--ow-text); border-color: color-mix(in srgb, var(--ow-acc) 55%, transparent); }
+.ow-chip2.ow-miss { background: rgba(251,191,36,0.12); color: #fbbf24; border-color: rgba(251,191,36,0.45); }
+.ow-form .ow-row-opt { padding: 2px 0; }
+.ow-picker { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px; border-radius: 12px; border: 1px solid var(--ow-line);
+  background: var(--ow-chrome); color: var(--ow-text); font: inherit; text-align: left; cursor: pointer; }
+.ow-picker:hover { border-color: var(--ow-acc); }
+.ow-picker .ow-nm { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ow-picker .ow-nm b { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ow-picker .ow-nm span { font-size: 12px; color: var(--ow-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ow-picker-act { font-size: 12px; font-weight: 600; color: var(--ow-acc); flex-shrink: 0; }
+.ow-picker.ow-empty-pick { border-style: dashed; border-color: color-mix(in srgb, var(--ow-acc) 60%, transparent); }
+.ow-picker.ow-empty-pick .ow-tile { background: var(--ow-acc); color: var(--ow-acc-ink); }
+
 .ow-keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; padding: 8px 10px; font-size: 12.5px; align-items: center; }
 .ow-keys kbd { font: 600 11px ${FONT}; background: var(--ow-chrome2); border: 1px solid var(--ow-line); border-radius: 5px; padding: 2px 6px; color: var(--ow-text); justify-self: start; white-space: nowrap; }
 .ow-keys span { color: var(--ow-muted); }

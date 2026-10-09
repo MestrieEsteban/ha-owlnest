@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { CardConfig, Hass, CameraView, OwlnestScene } from '../types';
 import { saveScene, captureCameraView, normalizeViews } from '../scene';
 import { t } from '../i18n';
+import { icon } from '../ui/icons';
 
 export class ViewManager {
   private _panel: HTMLDivElement | null = null;
@@ -401,6 +402,130 @@ export class ViewManager {
       });
       this.hudLeft.appendChild(btn);
     });
+  }
+
+  // ── L'onglet Caméra de l'éditeur ─────────────────────────────────────────
+
+  /** Les vues, dans l'ordre où elles apparaissent sur la carte. */
+  private _views(): CameraView[] {
+    return normalizeViews(this.getEffectiveConfig().camera_views ?? []);
+  }
+
+  /** La caméra telle qu'elle est maintenant, sous forme de vue. */
+  private _currentView(label: string): CameraView | null {
+    const camera = this.getCamera();
+    const controls = this.getControls();
+    if (!camera || !controls) return null;
+    return captureCameraView(
+      camera.position.toArray() as [number, number, number],
+      controls.target.toArray() as [number, number, number],
+      label,
+    );
+  }
+
+  /**
+   * La liste des vues pour l'onglet Caméra. `list` est vidé et rempli ;
+   * `refresh` le reconstruit après chaque changement.
+   */
+  buildViewsTab(list: HTMLElement) {
+    const refresh = () => this.buildViewsTab(list);
+    const save = async (views: CameraView[]) => { await this.saveViews(views); refresh(); };
+    list.innerHTML = '';
+    const views = this._views();
+    if (!views.length) {
+      const empty = document.createElement('div');
+      empty.className = 'ow-empty';
+      const b = document.createElement('b');
+      b.textContent = t('noViews');
+      empty.append(b, document.createTextNode(t('camEmptyHint')));
+      list.appendChild(empty);
+      return;
+    }
+    views.forEach((v, i) => {
+      const row = document.createElement('div');
+      row.className = `ow-dev${v.hidden ? ' ow-off' : ''}`;
+      row.tabIndex = 0;
+      row.setAttribute('role', 'button');
+      row.title = t('viewFlyTo');
+      const tile = document.createElement('span');
+      tile.className = 'ow-tile';
+      tile.append(icon('camera', 18));
+      const col = document.createElement('span');
+      col.className = 'ow-nm';
+      const name = document.createElement('b');
+      name.textContent = v.label;
+      const sub = document.createElement('span');
+      sub.textContent = v.hidden ? t('camHiddenOnCard') : t('camShownOnCard');
+      col.append(name, sub);
+      const btns = document.createElement('span');
+      btns.className = 'ow-rowbtns';
+      const btn = (ic: string, label: string, onClick: (b: HTMLButtonElement) => void) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'ow-ib';
+        b.title = label;
+        b.setAttribute('aria-label', label);
+        b.append(icon(ic, 16));
+        b.addEventListener('click', (e) => { e.stopPropagation(); onClick(b); });
+        btns.appendChild(b);
+        return b;
+      };
+      if (i > 0) btn('up', t('camMoveUp'), () => {
+        const next = views.slice();
+        [next[i - 1], next[i]] = [next[i], next[i - 1]];
+        void save(next);
+      });
+      btn(v.hidden ? 'eyeOff' : 'eye', v.hidden ? t('viewShowInMenu') : t('viewHideFromMenu'), () =>
+        void save(views.map((x) => (x.id === v.id ? { ...x, hidden: !x.hidden } : x))));
+      btn('pencil', t('camRename'), () => {
+        const input = document.createElement('input');
+        input.value = v.label;
+        input.setAttribute('aria-label', t('camRename'));
+        input.style.cssText = 'font:600 13.5px inherit;background:var(--ow-chrome2);border:1px solid var(--ow-acc);border-radius:7px;color:var(--ow-text);padding:4px 7px;outline:none;width:100%;';
+        const done = (ok: boolean) => {
+          const label = input.value.trim();
+          if (ok && label && label !== v.label) void save(views.map((x) => (x.id === v.id ? { ...x, label } : x)));
+          else refresh();
+        };
+        input.addEventListener('keydown', (e) => {
+          e.stopPropagation();
+          if (e.key === 'Enter') done(true);
+          if (e.key === 'Escape') done(false);
+        });
+        input.addEventListener('blur', () => done(true));
+        input.addEventListener('click', (e) => e.stopPropagation());
+        name.replaceWith(input);
+        input.focus();
+        input.select();
+      });
+      btn('target', t('camRecapture'), () => {
+        const now = this._currentView(v.label);
+        if (!now) return;
+        void save(views.map((x) => (x.id === v.id ? { ...x, position: now.position, target: now.target } : x)))
+          .then(() => this.showToast(t('camRecaptured')));
+      });
+      btn('trash', t('viewDelete'), (b) => {
+        // Deux temps : le premier appui arme, le second supprime.
+        if (b.dataset.armed) { void save(views.filter((x) => x.id !== v.id)); return; }
+        b.dataset.armed = '1';
+        b.style.color = '#f87171';
+        b.title = t('camDeleteConfirm');
+        setTimeout(() => { delete b.dataset.armed; b.style.color = ''; b.title = t('viewDelete'); }, 3000);
+      });
+      row.append(tile, col, btns);
+      const go = () => this.flyTo(v);
+      row.addEventListener('click', go);
+      row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+      list.appendChild(row);
+    });
+  }
+
+  /** Enregistre le point de vue actuel sous un nom ; rend `false` si la caméra manque. */
+  async captureView(label: string): Promise<boolean> {
+    const view = this._currentView(label.trim() || `${t('camDefaultName')} ${this._views().length + 1}`);
+    if (!view) return false;
+    await this.saveViews(normalizeViews([...this._views(), view]));
+    return true;
   }
 
   /**
