@@ -40,10 +40,11 @@ import { itemSize, itemElevation, supportOf } from './furniture';
 import { catalogItem } from './catalog';
 
 /**
- * Là où un mur debout touche un mur abaissé, il descend en pente jusqu'à lui
- * sur cette longueur, comme dans les Sims, au lieu de s'arrêter net.
+ * Là où un mur abaissé touche un mur resté debout, il remonte vers lui en
+ * petite pente à 45°, sur cette longueur et autant de hauteur, comme dans les
+ * Sims. Le mur debout, lui, reste entier et droit.
  */
-export const RAMP = 1;
+export const RAMP = 0.6;
 
 /** Hauteur d'un mur abaissé, en part de la hauteur des murs : une plinthe haute. */
 export const LOW_RATIO = 0.18;
@@ -107,7 +108,7 @@ interface WallInfo {
   front: boolean;
   back: boolean;
   boundary: boolean;
-  /** Murs qui touchent chaque bout : un mur debout y descend en pente s'ils sont abaissés. */
+  /** Murs qui touchent chaque bout : un mur abaissé y remonte en pente s'ils sont debout. */
   nearA: number[];
   nearB: number[];
   len: number;
@@ -298,16 +299,6 @@ export class LowWalls {
         if (hidden && facing > FACING_DOWN) this.goal[i] = 1;
         else if (!hidden || facing < FACING_UP) this.goal[i] = 0;
       }
-      // Un mur court pris entre deux murs abaissés ferait une pointe (deux
-      // pentes qui se rejoignent) : il descend avec eux.
-      if (!fromAbove) {
-        for (let i = 0; i < n; i++) {
-          const w = this.walls[i];
-          if (this.goal[i] || w.boundary || w.len > 2 * RAMP + 0.5) continue;
-          const low = (near: number[]) => near.some((j) => this.goal[j] === 1);
-          if (low(w.nearA) && low(w.nearB)) this.goal[i] = 1;
-        }
-      }
     } else {
       this.goal.fill(0, 0, n);
     }
@@ -348,10 +339,9 @@ export class LowWalls {
 
   private writeTexture() {
     for (let i = 0; i < MAX_WALLS; i++) this.data[i * 4] = Math.round(this.factor[i] * 255);
-    // La pente d'un mur debout, à chaque bout qui touche un mur abaissé.
+    // La pente d'un mur abaissé, à chaque bout qui touche un mur resté debout.
     this.walls.forEach((w, i) => {
-      const standing = 1 - this.factor[i];
-      const ramp = (near: number[]) => standing * near.reduce((m, j) => Math.max(m, this.factor[j]), 0);
+      const ramp = (near: number[]) => near.reduce((m, j) => Math.max(m, this.walls[j].boundary ? 0 : 1 - this.factor[j]), 0);
       this.data[i * 4 + 1] = Math.round(ramp(w.nearA) * 255);
       this.data[i * 4 + 2] = Math.round(ramp(w.nearB) * 255);
     });
@@ -411,23 +401,18 @@ if (owlnestIndex >= 0.0) {
     vec2 ab = e.zw - e.xy;
     float len = max(length(ab), 1e-4);
     float t = dot(owlnestPlan.xz - e.xy, ab / len);
-    // Un mur debout qui touche un mur abaissé y descend en pente, sur ${RAMP.toFixed(1)} m.
-    float rise = owlnestTop - owlnestCut;
-    float capA = owlnestCut + clamp(t / ${RAMP.toFixed(1)}, 0.0, 1.0) * rise;
-    float capB = owlnestCut + clamp((len - t) / ${RAMP.toFixed(1)}, 0.0, 1.0) * rise;
+    // Hauteur d'un mur abaissé : la coupe, qui remonte en petite pente à 45°
+    // (${RAMP.toFixed(1)} m de long, autant de haut) vers chaque bout touchant un mur resté debout.
+    float rise = min(${RAMP.toFixed(1)}, owlnestTop - owlnestCut);
+    float upA = owlnestCut + (1.0 - clamp(t / ${RAMP.toFixed(1)}, 0.0, 1.0)) * rise;
+    float upB = owlnestCut + (1.0 - clamp((len - t) / ${RAMP.toFixed(1)}, 0.0, 1.0)) * rise;
+    float cap = max(mix(owlnestCut, upA, owlnestState.g), mix(owlnestCut, upB, owlnestState.b));
     if (vOwlnestKind < 1.5) {
-      // Mur : ses sommets hauts viennent à la coupe ou suivent la pente ; il reste fermé.
-      float y = mix(transformed.y, min(transformed.y, owlnestCut), vOwlnestLow);
-      y = min(y, mix(y, capA, owlnestState.g));
-      y = min(y, mix(y, capB, owlnestState.b));
-      transformed.y = y;
+      // Mur : ses sommets hauts viennent à cette hauteur ; il reste fermé.
+      transformed.y = mix(transformed.y, min(transformed.y, cap), vOwlnestLow);
     } else {
-      // Porte ou fenêtre : coupée là où son mur s'arrête (le fragment s'en charge).
-      float cap = 1e5;
-      if (vOwlnestLow > 0.5) cap = owlnestCut;
-      if (owlnestState.g > 0.5) cap = min(cap, capA);
-      if (owlnestState.b > 0.5) cap = min(cap, capB);
-      vOwlnestCap = cap + owlnestRoot.y;
+      // Porte ou fenêtre d'un mur abaissé : coupée à sa hauteur (le fragment s'en charge).
+      vOwlnestCap = vOwlnestLow > 0.5 ? cap + owlnestRoot.y : 1e5;
     }
   }
 }

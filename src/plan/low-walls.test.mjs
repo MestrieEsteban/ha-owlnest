@@ -112,16 +112,18 @@ test('comme dans les Sims : la cloison face à la caméra descend, le mur du fon
   assert.equal(lw.factor[at(0)], 0, 'mur du fond');
 });
 
-test('jonction : un mur debout qui touche un mur abaissé descend en pente de ce côté', () => {
+test('jonction : le mur abaissé remonte en pente vers les murs restés debout, eux restent entiers', () => {
   const { plan, root, lw } = setup();
   const cam = new THREE.PerspectiveCamera(); cam.position.set(0, 6, 10);
   settle(lw, cam, root);
-  // Le mur sud est abaissé ; les murs ouest et est, debout, le touchent par un bout.
+  const south = wallAt(plan, (a, b) => a.y === 4 && b.y === 4);
   const west = wallAt(plan, (a, b) => a.x === 0 && b.x === 0);
-  const w = plan.walls[west];
-  const southEnd = plan.nodes.find((n) => n.id === w.a).y === 4 ? 'a' : 'b';
-  const ramp = { a: lw.data[west * 4 + 1], b: lw.data[west * 4 + 2] };
-  assert.equal(lw.factor[west], 0, 'le mur ouest reste debout');
-  assert.equal(ramp[southEnd], 255, 'pente côté mur sud');
-  assert.equal(ramp[southEnd === 'a' ? 'b' : 'a'], 0, 'pas de pente côté mur nord, debout');
+  assert.equal(lw.factor[south], 1, 'le mur sud est abaissé');
+  // Ses deux bouts touchent les murs ouest et est, debout : pente des deux côtés.
+  assert.equal(lw.data[south * 4 + 1], 255);
+  assert.equal(lw.data[south * 4 + 2], 255);
+  // Le mur ouest, debout, n'a pas de pente : il reste entier et droit.
+  assert.equal(lw.factor[west], 0);
+  const northEnd = plan.nodes.find((n) => n.id === plan.walls[west].a).y === 0 ? 1 : 2;
+  assert.equal(lw.data[west * 4 + northEnd], 255, 'il touche le mur nord, debout');
 });

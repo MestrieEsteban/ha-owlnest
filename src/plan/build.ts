@@ -176,41 +176,26 @@ function buildWall(
     cursor = Math.max(cursor, h.u1);
   }
   pieces.push({ u0: cursor, u1: 1e3, y0: 0, y1: H });
-  // Des sommets à RAMP de chaque bout : la pente des murs bas s'y appuie (voir low-walls.ts).
+  // Chaque morceau est coupé en tronçons à RAMP de chaque bout : la pente des
+  // murs bas (voir low-walls.ts) plie là, et le dessus de chaque tronçon reste
+  // plan. Un seul dessus pour tout le mur serait triangulé d'un bout à l'autre,
+  // et la pente s'étalerait en biais sur toute sa longueur.
   const L = Math.hypot(b.x - a.x, b.y - a.y);
   const ramps = L > 2 * RAMP ? [RAMP, L - RAMP] : [L / 2];
 
   pieces.forEach((p, k) => {
-    const poly = withStops(clipAlong(foot, a, dir, p.u0, p.u1), a, dir, ramps);
-    if (poly.length < 3 || Math.abs(area(poly)) < 1e-6) return;
     // Mêmes matières des deux côtés : un seul maillage.
     const split = left === right && left === core ? () => 0 : side;
-    for (const [g, geo] of prismFaces(poly, p.y0, p.y1, split)) {
-      tagWall(geo, index);
-      group.add(mesh(`wall_${index}_${k}${g ? `_${g}` : ''}`, geo, mats[g]));
+    const cuts = [p.u0, ...ramps.filter((u) => u > p.u0 + 1e-3 && u < p.u1 - 1e-3), p.u1];
+    for (let seg = 0; seg + 1 < cuts.length; seg++) {
+      const poly = clipAlong(foot, a, dir, cuts[seg], cuts[seg + 1]);
+      if (poly.length < 3 || Math.abs(area(poly)) < 1e-6) continue;
+      for (const [g, geo] of prismFaces(poly, p.y0, p.y1, split)) {
+        tagWall(geo, index);
+        group.add(mesh(`wall_${index}_${k}${g ? `_${g}` : ''}${seg ? `.${seg}` : ''}`, geo, mats[g]));
+      }
     }
   });
-}
-
-/**
- * Ajoute au contour d'un morceau de mur des sommets aux abscisses `stops`
- * (le long du mur, depuis `origin`) : le prisme garde sa forme, mais ses
- * côtés y ont un sommet sur lequel la pente des murs bas peut plier.
- */
-function withStops(poly: Pt[], origin: Pt, dir: Pt, stops: number[]): Pt[] {
-  const out: Pt[] = [];
-  poly.forEach((p, i) => {
-    const q = poly[(i + 1) % poly.length];
-    out.push(p);
-    const up = dot(sub(p, origin), dir), uq = dot(sub(q, origin), dir);
-    const cuts = stops.filter((s) => (s - up) * (s - uq) < 0 && Math.abs(s - up) > 1e-3 && Math.abs(s - uq) > 1e-3);
-    cuts.sort((x, y) => Math.abs(x - up) - Math.abs(y - up));
-    for (const s of cuts) {
-      const t = (s - up) / (uq - up);
-      out.push({ x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t });
-    }
-  });
-  return out;
 }
 
 /** Un vantail vitré : un cadre de quatre barres et une vitre, et des petits bois au besoin. */
