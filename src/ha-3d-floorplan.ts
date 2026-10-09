@@ -468,6 +468,9 @@ export class Ha3dFloorplan extends HTMLElement {
     this._parts.dispose(root);
     for (const c of [...root.children]) {
       root.remove(c);
+      // Les meubles partagent la géométrie et les matières de leur modèle en
+      // cache : les jeter forcerait à tout renvoyer au GPU au prochain dessin.
+      if (c.name === 'plan_items') continue;
       c.traverse((o) => {
         const mesh = o as THREE.Mesh;
         if (!mesh.isMesh) return;
@@ -580,6 +583,9 @@ export class Ha3dFloorplan extends HTMLElement {
         }
         this.applyPlan(plan);
         this._schedulePlanSave(800);
+      },
+      onPreview: (plan) => {
+        if (this._scene && !fromDemo) this.applyPlan(plan);
       },
       lights: () => Object.entries(this._hass?.states ?? {})
         .filter(([id]) => /^(light|switch)\./.test(id))

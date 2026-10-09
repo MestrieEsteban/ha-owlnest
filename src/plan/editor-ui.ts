@@ -72,12 +72,16 @@ const GRAB = 12;
 const STEP = 0.05;
 /** Plus petite pièce qu'on accepte de tracer. */
 const MIN_SIDE = 0.4;
+/** Écart minimal entre deux mises à jour de la 3D pendant un glisser, en ms. */
+const PREVIEW_MS = 60;
 
 export interface PlanEditorOptions {
   container: HTMLElement;
   plan: PlanDoc;
   /** Le plan a changé (fin d'un geste, saisie validée). */
   onChange: (plan: PlanDoc) => void;
+  /** Pendant un geste : la 3D suit, sans rien enregistrer. */
+  onPreview?: (plan: PlanDoc) => void;
   /** Largeur couverte à gauche, en pixels : la 3D occupe le reste. */
   onLayout: (covered: number) => void;
   /** Les lampes de Home Assistant, pour en relier une à une lampe posée. */
@@ -243,6 +247,8 @@ export class PlanEditor {
   private touches = new Map<number, { x: number; y: number }>();
   private pinch: { d: number; scale: number; mid: Pt } | null = null;
   private longPress: ReturnType<typeof setTimeout> | null = null;
+  private previewTimer: ReturnType<typeof setTimeout> | null = null;
+  private previewAt = 0;
   private roomCounter = 0;
   /** Le catalogue de meubles : sa catégorie ouverte et la recherche. */
   private drawer: HTMLDivElement | null = null;
@@ -335,6 +341,7 @@ export class PlanEditor {
   // ── Cycle de vie ─────────────────────────────────────────────────────────
 
   close() {
+    this.stopPreview();
     window.removeEventListener('keydown', this.onKey, true);
     this.resize.disconnect();
     this.closePopup();
@@ -368,8 +375,29 @@ export class PlanEditor {
     this.future = [];
   }
 
+  /**
+   * Pendant un glisser, la 3D suit le geste. Une reconstruction coûte
+   * quelques millisecondes : on en fait au plus une toutes les 60 ms, et la
+   * dernière position part toujours, même si le geste s'arrête net.
+   */
+  private preview() {
+    if (!this.opts.onPreview || this.previewTimer) return;
+    const wait = Math.max(0, this.previewAt + PREVIEW_MS - performance.now());
+    this.previewTimer = setTimeout(() => {
+      this.previewTimer = null;
+      this.previewAt = performance.now();
+      if (this.drag) this.opts.onPreview?.(clone(this.plan));
+    }, wait);
+  }
+
+  private stopPreview() {
+    if (this.previewTimer) clearTimeout(this.previewTimer);
+    this.previewTimer = null;
+  }
+
   /** Le plan a changé : pièces remises d'accord, rendu, et la 3D suit. */
   private changed() {
+    this.stopPreview();
     reconcileRooms(this.plan, () => `${t('planRoom')} ${++this.roomCounter}`, () => FLOOR_COLORS[this.roomCounter % FLOOR_COLORS.length]);
     if (this.sel && !this.exists(this.sel)) this.sel = null;
     this.refresh();
@@ -923,6 +951,7 @@ export class PlanEditor {
         break;
       }
     }
+    if (d.kind !== 'pan' && d.kind !== 'rect' && d.kind !== 'image') this.preview();
     this.render();
   }
 
@@ -1008,9 +1037,14 @@ export class PlanEditor {
   }
 
   private cancelGesture() {
+    this.stopPreview();
     if (this.drag && this.drag.kind !== 'pan' && this.drag.kind !== 'rect' && this.moved) {
       const prev = this.history.pop();
-      if (prev) this.plan = prev;
+      if (prev) {
+        this.plan = prev;
+        // La 3D a suivi le geste : elle revient avec le plan.
+        this.opts.onPreview?.(clone(this.plan));
+      }
     }
     this.drag = null;
     this.render();
