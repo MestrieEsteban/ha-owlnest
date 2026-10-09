@@ -125,6 +125,8 @@ export interface PlanDoc {
   openings: PlanOpening[];
   /** Les meubles, absents d'un plan qui n'en a jamais eu. */
   items?: PlanItem[];
+  /** Meubles importés par l'utilisateur, proposés dans « Mes meubles ». */
+  library?: { url: string; name: string }[];
   background?: PlanBackground;
   /** Couleur des murs côté extérieur. */
   outside?: string;

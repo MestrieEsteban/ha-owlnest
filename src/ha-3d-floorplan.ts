@@ -12,7 +12,7 @@ import type { ClusterItem } from './overlay';
 import { AnchorEditor } from './editor';
 import { loadScene, saveScene, listScenes, sceneToEffectiveConfig, buildSceneFromEditor, normalizeViews, emptyScene, sceneUnreachable, forgetSceneFailure } from './scene';
 import { importModel, ImportError } from './import/drop';
-import { UploadError } from './import/upload';
+import { UploadError, type UploadHass } from './import/upload';
 import { attachDropZone, pickFiles, ImportProgress, askOpenings } from './card/import-ui';
 import { assignScene } from './card/lovelace-config';
 import { findLeaves, proposeParts, replaceParts } from './import/sh3d-parts';
@@ -581,6 +581,7 @@ export class Ha3dFloorplan extends HTMLElement {
         .filter(([id]) => /^(light|switch)\./.test(id))
         .map(([id, st]) => ({ id, name: String(st.attributes?.friendly_name ?? id) }))
         .sort((a, b) => a.name.localeCompare(b.name)),
+      importFurniture: async (files) => (await importModel(this._hass as unknown as UploadHass, files, () => {})).url,
       onLayout: (covered) => {
         this._viewShift = covered;
         this._applyViewShift();

@@ -82,6 +82,8 @@ export interface PlanEditorOptions {
   onLayout: (covered: number) => void;
   /** Les lampes de Home Assistant, pour en relier une à une lampe posée. */
   lights?: () => { id: string; name: string }[];
+  /** Envoie un meuble importé (GLB, ou OBJ et ses fichiers) et rend son adresse. */
+  importFurniture?: (files: File[]) => Promise<string>;
   onClose: () => void;
 }
 
@@ -244,7 +246,7 @@ export class PlanEditor {
   private roomCounter = 0;
   /** Le catalogue de meubles : sa catégorie ouverte et la recherche. */
   private drawer: HTMLDivElement | null = null;
-  private shelf: ItemCategory | 'all' = 'living';
+  private shelf: ItemCategory | 'all' | 'mine' = 'living';
   private search = '';
   /** Les meubles s'aimantent aux murs ; Alt (ou ce réglage) les laisse libres. */
   private magnet = true;
@@ -1705,7 +1707,35 @@ export class PlanEditor {
   }
 
   /** Pose un meuble du catalogue au milieu de la vue, dans la pièce qui s'y trouve. */
-  private async addItem(model: string) {
+  /** Importe un meuble : il rejoint « Mes meubles » et se pose aussitôt. */
+  private importFurniture() {
+    const input = el('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.accept = '.glb,.obj,.mtl,.png,.jpg,.jpeg';
+    input.addEventListener('change', async () => {
+      const files = Array.from(input.files ?? []);
+      if (!files.length || !this.opts.importFurniture) return;
+      const main = files.find((f) => /\.(glb|obj)$/i.test(f.name));
+      const name = (main?.name ?? files[0].name).replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ');
+      this.hintEl.textContent = t('planFurnitureImporting');
+      let url: string;
+      try {
+        url = await this.opts.importFurniture(files);
+      } catch (err) {
+        console.warn('[Owlnest] furniture import failed:', err);
+        this.flash(t('planFurnitureImportError'));
+        return;
+      }
+      this.plan.library = [...(this.plan.library ?? []).filter((m) => m.url !== url), { url, name }];
+      this.shelf = 'mine';
+      this.renderDrawer();
+      await this.addItem(url, name);
+    });
+    input.click();
+  }
+
+  private async addItem(model: string, name?: string) {
     try {
       await loadFurniture(model);
     } catch {
@@ -1716,7 +1746,7 @@ export class PlanEditor {
     const { w, h } = this.box();
     // Le milieu de ce qui est visible, à gauche de la bulle de réglages.
     const at = this.toPlan({ clientX: this.box().left + (w - 270) / 2 + 135, clientY: this.box().top + h / 2 });
-    const it: PlanItem = { id: newId('i'), model, x: round3(at.x), y: round3(at.y), rotation: 0 };
+    const it: PlanItem = { id: newId('i'), model, x: round3(at.x), y: round3(at.y), rotation: 0, ...(name ? { name } : {}) };
     this.plan.items = [...(this.plan.items ?? []), it];
     this.sel = { type: 'item', id: it.id };
     this.changed();
@@ -1772,17 +1802,22 @@ export class PlanEditor {
     input.addEventListener('input', () => { this.search = input.value; this.renderShelf(list); });
     search.append(icon('search', 16), input);
     const cats = el('div', 'display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;');
-    const CAT: Record<ItemCategory | 'all', StringKey> = {
-      all: 'planCatAll', living: 'planCatLiving', bedroom: 'planCatBedroom', kitchen: 'planCatKitchen',
+    const CAT: Record<ItemCategory | 'all' | 'mine', StringKey> = {
+      mine: 'planCatMine', all: 'planCatAll', living: 'planCatLiving', bedroom: 'planCatBedroom', kitchen: 'planCatKitchen',
       bathroom: 'planCatBathroom', office: 'planCatOffice', lights: 'planCatLights', decor: 'planCatDecor',
     };
-    for (const c of ['all', ...CATEGORIES] as (ItemCategory | 'all')[]) {
+    for (const c of ['all', ...CATEGORIES, 'mine'] as (ItemCategory | 'all' | 'mine')[]) {
       const on = c === this.shelf;
       const b = el('button', `padding:4px 8px;border-radius:999px;cursor:pointer;font-size:11px;font-family:${FONT};font-weight:600;border:1px solid ${on ? '#38bdf8' : 'rgba(255,255,255,0.1)'};background:${on ? '#0ea5e9' : 'transparent'};color:${on ? '#fff' : '#cbd5e1'};`, t(CAT[c]));
       b.addEventListener('click', () => { this.shelf = c; this.renderDrawer(); });
       cats.append(b);
     }
     head.append(search, cats);
+    if (this.opts.importFurniture) {
+      const imp = this.pill(t('planFurnitureImport'), () => this.importFurniture(), false, 'plus');
+      imp.style.cssText += ';width:100%;justify-content:center;margin-top:8px;';
+      head.append(imp);
+    }
     const list = el('div', 'flex:1;overflow-y:auto;padding:6px 10px 10px;display:grid;grid-template-columns:1fr 1fr;gap:6px;align-content:start;');
     this.renderShelf(list);
     const foot = el('div', `padding:8px 12px;border-top:1px solid ${C.line};font-size:10.5px;color:#64748b;line-height:1.4;`, t('planFurnitureCredit'));
@@ -1792,6 +1827,21 @@ export class PlanEditor {
   private renderShelf(list: HTMLElement) {
     list.innerHTML = '';
     const q = this.search.trim().toLowerCase();
+    // Mes meubles d'abord : ceux qu'on a importés soi-même.
+    const mine = (this.plan.library ?? []).filter((m) => (q ? m.name.toLowerCase().includes(q) : this.shelf === 'mine' || this.shelf === 'all'));
+    for (const m of mine) {
+      const b = el('button', `display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 4px;border-radius:10px;border:1px solid transparent;background:${C.chrome2};cursor:pointer;color:#e2e8f0;font-family:${FONT};font-size:11px;line-height:1.2;text-align:center;`);
+      const img = el('img', 'width:64px;height:64px;object-fit:contain;pointer-events:none;');
+      img.alt = '';
+      void topView({ id: 'thumb', model: m.url, x: 0, y: 0, rotation: 0 }).then((u) => { if (u) img.src = u; });
+      b.append(img, el('span', '', m.name));
+      b.addEventListener('click', () => void this.addItem(m.url, m.name));
+      list.append(b);
+    }
+    if (this.shelf === 'mine' && !q) {
+      if (!mine.length) list.append(el('div', `grid-column:1/-1;color:${C.muted};font-size:12px;line-height:1.5;padding:8px 2px;`, t('planFurnitureMineEmpty')));
+      return;
+    }
     const shown = CATALOG.filter((c) => (q ? `${c.en} ${c.fr}`.toLowerCase().includes(q) : this.shelf === 'all' || c.category === this.shelf));
     for (const c of shown) {
       const b = el('button', `display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 4px;border-radius:10px;border:1px solid transparent;background:${C.chrome2};cursor:pointer;color:#e2e8f0;font-family:${FONT};font-size:11px;line-height:1.2;text-align:center;`);
@@ -1810,7 +1860,7 @@ export class PlanEditor {
       b.addEventListener('click', () => void this.addItem(c.id));
       list.append(b);
     }
-    if (!shown.length) list.append(el('div', `grid-column:1/-1;color:${C.muted};font-size:12px;padding:12px 4px;`, t('planFurnitureNone')));
+    if (!shown.length && !mine.length) list.append(el('div', `grid-column:1/-1;color:${C.muted};font-size:12px;padding:12px 4px;`, t('planFurnitureNone')));
   }
 
   private itemBubble(id: string) {

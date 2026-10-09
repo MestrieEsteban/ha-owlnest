@@ -41,6 +41,15 @@ export function loadFurniture(model: string): Promise<Loaded> {
     p = loader.loadAsync(urlOf(model)).then((gltf) => {
       const scene = gltf.scene;
       if (catalogItem(model)) scene.scale.setScalar(KIT_SCALE);
+      else {
+        // Un meuble importé peut être en centimètres (Sweet Home 3D) ou en
+        // millimètres : un canapé de 200 unités n'est pas un canapé de 200 m.
+        scene.updateMatrixWorld(true);
+        const s = new THREE.Box3().setFromObject(scene).getSize(new THREE.Vector3());
+        const big = Math.max(s.x, s.y, s.z);
+        if (big > 2000) scene.scale.multiplyScalar(0.001);
+        else if (big > 20) scene.scale.multiplyScalar(0.01);
+      }
       scene.updateMatrixWorld(true);
       const box = new THREE.Box3().setFromObject(scene);
       const c = box.getCenter(new THREE.Vector3());
