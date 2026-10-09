@@ -80,3 +80,27 @@ export function wallFootprints(plan: PlanDoc): Map<string, Pt[]> {
   }
   return out;
 }
+
+/**
+ * Jusqu'où s'étend le coin à chaque bout d'un mur, mesuré le long du mur
+ * depuis son départ `a` : `[fin du coin de départ, début du coin d'arrivée]`.
+ *
+ * Au coin, la semelle d'un mur dépasse son extrémité en onglet et partage
+ * l'angle avec le mur voisin. Ce morceau-là appartient à l'angle : quand le
+ * mur s'abaisse mais que son voisin reste debout, il reste entier, et l'angle
+ * du mur debout garde une arête nette au lieu d'une encoche en biais (voir
+ * low-walls.ts). Un bout coupé droit (sans voisin, ou prolongé tout droit) n'a
+ * pas de coin : `0` au départ, la longueur du mur à l'arrivée.
+ */
+export function cornerStops(foot: readonly Pt[], a: Pt, b: Pt): [number, number] {
+  const L = dist(a, b);
+  const dir = norm(sub(b, a));
+  let stopA = 0, stopB = L;
+  for (const p of foot) {
+    const t = (p.x - a.x) * dir.x + (p.y - a.y) * dir.y;
+    if (t < L / 2) stopA = Math.max(stopA, t);
+    else stopB = Math.min(stopB, t);
+  }
+  // Un coin ne mange jamais plus que la moitié du mur.
+  return [Math.min(stopA, L / 2), Math.max(stopB, L / 2)];
+}

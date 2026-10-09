@@ -18,8 +18,8 @@ import type { PlanDoc, PlanOpening, PlanWall, PlanRoom } from './types';
 import { PLAN_COLORS } from './types';
 import { type Pt, sub, add, mul, dot, norm, perp, clipAlong, area, pointInPolygon } from './geometry';
 import { wallEnds, heightOf, thicknessOf, openingFits, faces, wallLength, isBoundary, type Face } from './graph';
-import { wallFootprints } from './footprint';
-import { tagWall, RAMP } from './low-walls';
+import { wallFootprints, cornerStops } from './footprint';
+import { tagWall } from './low-walls';
 import { floorTexture, TEXTURE_METERS } from './textures';
 
 /** Préfixe des vantaux construits depuis le plan : `plan_leaf_<ouverture>_<n>`. */
@@ -176,22 +176,23 @@ function buildWall(
     cursor = Math.max(cursor, h.u1);
   }
   pieces.push({ u0: cursor, u1: 1e3, y0: 0, y1: H });
-  // Chaque morceau est coupé en tronçons à RAMP de chaque bout : la pente des
-  // murs bas (voir low-walls.ts) plie là, et le dessus de chaque tronçon reste
-  // plan. Un seul dessus pour tout le mur serait triangulé d'un bout à l'autre,
-  // et la pente s'étalerait en biais sur toute sa longueur.
+  // Les angles sont construits à part : l'onglet qui dépasse au bout du mur
+  // appartient à l'angle, et reste entier quand ce mur est coupé mais que son
+  // voisin reste debout (voir low-walls.ts et cornerStops).
+  const [stopA, stopB] = cornerStops(foot, a, b);
   const L = Math.hypot(b.x - a.x, b.y - a.y);
-  const ramps = L > 2 * RAMP ? [RAMP, L - RAMP] : [L / 2];
+  const stops = [...(stopA > 1e-3 ? [stopA] : []), ...(stopB < L - 1e-3 ? [stopB] : [])];
 
   pieces.forEach((p, k) => {
     // Mêmes matières des deux côtés : un seul maillage.
     const split = left === right && left === core ? () => 0 : side;
-    const cuts = [p.u0, ...ramps.filter((u) => u > p.u0 + 1e-3 && u < p.u1 - 1e-3), p.u1];
+    const cuts = [p.u0, ...stops.filter((u) => u > p.u0 + 1e-3 && u < p.u1 - 1e-3), p.u1];
     for (let seg = 0; seg + 1 < cuts.length; seg++) {
       const poly = clipAlong(foot, a, dir, cuts[seg], cuts[seg + 1]);
       if (poly.length < 3 || Math.abs(area(poly)) < 1e-6) continue;
+      const corner = stopA > 1e-3 && cuts[seg + 1] <= stopA + 1e-3 ? 1 : stopB < L - 1e-3 && cuts[seg] >= stopB - 1e-3 ? 2 : 0;
       for (const [g, geo] of prismFaces(poly, p.y0, p.y1, split)) {
-        tagWall(geo, index);
+        tagWall(geo, index, false, corner);
         group.add(mesh(`wall_${index}_${k}${g ? `_${g}` : ''}${seg ? `.${seg}` : ''}`, geo, mats[g]));
       }
     }

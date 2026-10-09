@@ -21,7 +21,7 @@ import { UploadError, type UploadHass } from './import/upload';
 import { attachDropZone, pickFiles, ImportProgress, askOpenings } from './card/import-ui';
 import { assignScene } from './card/lovelace-config';
 import { findLeaves, proposeParts, replaceParts } from './import/sh3d-parts';
-import { setLang, langFromLocale, t } from './i18n';
+import { setLang, langFromLocale, t, type StringKey } from './i18n';
 import { demoModelUrl, isPlaceholder, seedDemoAnchors, type DemoAnchorId } from './demo';
 import { openEntityPicker } from './entities/picker';
 import { cachedRegistry, loadRegistry, areaOf, displayName } from './entities/registry';
@@ -52,7 +52,7 @@ import { partIndexOf, partFrame, guessPart, verticalAxis } from './parts';
 import { separateCoplanarSlabs } from './coplanar';
 import { StaticBatch } from './batching';
 import { buildPlan } from './plan/build';
-import { LowWalls } from './plan/low-walls';
+import { LowWalls, WALL_VIEWS, type WallView } from './plan/low-walls';
 import { syncPlanParts } from './plan/parts';
 import { emptyPlan, type PlanDoc, type OpeningKind } from './plan/types';
 import { PlanEditor } from './plan/editor-ui';
@@ -1785,38 +1785,98 @@ export class Ha3dFloorplan extends HTMLElement {
   private _makeLowWallsBtn(): HTMLButtonElement {
     const btn = document.createElement('button');
     btn.style.cssText = this._hudBtnStyle();
-    btn.textContent = '\u{1F9F1}';
     btn.style.display = 'none';
     let saved = '0';
     try { saved = localStorage.getItem(LOW_WALLS_KEY) ?? '0'; } catch { /* stockage bloqué */ }
-    this._lowWalls.enabled = saved === '1' || saved === '2';
-    this._lowWalls.setGhost(saved === '2', null);
-    btn.addEventListener('click', (e) => { e.stopPropagation(); this._toggleLowWalls(); });
+    this._lowWalls.setView(WALL_VIEWS[Number(saved)] ?? 'up', null);
+    btn.addEventListener('click', (e) => { e.stopPropagation(); this._toggleWallMenu(btn); });
     this._paintLowWallsBtn(btn);
     return btn;
   }
 
   private _paintLowWallsBtn(btn = this._lowWallsBtn) {
     if (!btn) return;
-    const ghost = this._lowWalls.enabled && this._lowWalls.ghost;
-    // Le bouton montre le mode en cours, et dit le suivant.
-    btn.textContent = ghost ? '\u{1F47B}' : '\u{1F9F1}';
-    btn.title = !this._lowWalls.enabled ? t('lowWallsOn') : ghost ? t('lowWallsOff') : t('lowWallsGhost');
-    btn.style.boxShadow = this._lowWalls.enabled ? '0 0 0 2px rgba(125,211,252,0.8)' : 'none';
+    const view = this._lowWalls.view;
+    btn.textContent = WALL_VIEW_ICONS[view];
+    btn.title = `${t('wallViewTitle')} : ${t(WALL_VIEW_LABELS[view])}`;
+    btn.style.boxShadow = view !== 'up' ? '0 0 0 2px rgba(125,211,252,0.8)' : 'none';
     btn.style.display = this._plan ? '' : 'none';
   }
 
+  private _wallMenu: HTMLDivElement | null = null;
+
+  /** Le menu des vues des murs, au-dessus du bouton : debout, coupés, fantômes, bas. */
+  private _toggleWallMenu(btn: HTMLButtonElement) {
+    if (this._wallMenu) { this._closeWallMenu(); return; }
+    const host = this.overlayContainer;
+    if (!host) return;
+    const menu = document.createElement('div');
+    menu.setAttribute('role', 'menu');
+    menu.style.cssText = [
+      'position:absolute', 'z-index:60', 'display:flex', 'flex-direction:column', 'gap:2px', 'padding:6px',
+      'border-radius:12px', 'background:rgba(8,12,24,0.92)', 'backdrop-filter:blur(10px)',
+      'border:1px solid rgba(255,255,255,0.12)', 'box-shadow:0 10px 28px rgba(0,0,0,0.35)',
+      'font-family:var(--primary-font-family,sans-serif)', 'min-width:220px',
+    ].join(';');
+    const title = document.createElement('div');
+    title.textContent = t('wallViewTitle');
+    title.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:rgba(255,255,255,0.5);padding:4px 8px 6px;';
+    menu.appendChild(title);
+    for (const view of WALL_VIEWS) {
+      const on = view === this._lowWalls.view;
+      const item = document.createElement('button');
+      item.setAttribute('role', 'menuitemradio');
+      item.setAttribute('aria-checked', String(on));
+      item.style.cssText = [
+        'display:flex', 'align-items:center', 'gap:10px', 'text-align:left', 'cursor:pointer',
+        'padding:8px 10px', 'border-radius:9px', 'border:none', 'font:inherit',
+        `background:${on ? 'rgba(125,211,252,0.18)' : 'transparent'}`, 'color:#e2e8f0',
+      ].join(';');
+      const icon = document.createElement('span');
+      icon.textContent = WALL_VIEW_ICONS[view];
+      icon.style.cssText = 'font-size:17px;width:22px;text-align:center;';
+      const text = document.createElement('span');
+      text.style.cssText = 'display:flex;flex-direction:column;gap:1px;';
+      const label = document.createElement('span');
+      label.textContent = t(WALL_VIEW_LABELS[view]);
+      label.style.cssText = `font-size:13px;font-weight:${on ? 700 : 600};`;
+      const hint = document.createElement('span');
+      hint.textContent = t(WALL_VIEW_HINTS[view]);
+      hint.style.cssText = 'font-size:11px;color:rgba(255,255,255,0.55);line-height:1.3;';
+      text.append(label, hint);
+      item.append(icon, text);
+      item.addEventListener('click', (e) => { e.stopPropagation(); this._closeWallMenu(); this._setWallView(view); });
+      menu.appendChild(item);
+    }
+    host.appendChild(menu);
+    // Au-dessus du bouton, aligné sur son bord droit.
+    const hr = host.getBoundingClientRect(), br = btn.getBoundingClientRect();
+    menu.style.right = `${Math.max(8, hr.right - br.right)}px`;
+    menu.style.bottom = `${Math.max(8, hr.bottom - br.top + 8)}px`;
+    this._wallMenu = menu;
+    // Un clic ailleurs le referme.
+    setTimeout(() => document.addEventListener('pointerdown', this._onWallMenuOutside, true), 0);
+  }
+
+  private _onWallMenuOutside = (e: PointerEvent) => {
+    if (this._wallMenu && !e.composedPath().includes(this._wallMenu)) this._closeWallMenu();
+  };
+
+  private _closeWallMenu() {
+    document.removeEventListener('pointerdown', this._onWallMenuOutside, true);
+    this._wallMenu?.remove();
+    this._wallMenu = null;
+  }
+
   /**
-   * Éteint, murs bas, murs fantômes, éteint. Les meubles adossés reçoivent le
-   * numéro de leur mur : le regroupement est refait quand le mode s'allume ou
-   * s'éteint, pas entre les deux modes.
+   * Change la vue des murs. Les meubles accrochés reçoivent le numéro de leur
+   * mur : le regroupement est refait quand une vue coupante s'allume ou
+   * s'éteint (pas entre deux vues coupantes).
    */
-  private _toggleLowWalls() {
+  private _setWallView(view: WallView) {
     const was = this._lowWalls.enabled;
-    const mode = !was ? 1 : this._lowWalls.ghost ? 0 : 2;
-    this._lowWalls.enabled = mode > 0;
-    this._lowWalls.setGhost(mode === 2, this._modelRoot);
-    try { localStorage.setItem(LOW_WALLS_KEY, String(mode)); } catch { /* stockage bloqué */ }
+    this._lowWalls.setView(view, this._modelRoot);
+    try { localStorage.setItem(LOW_WALLS_KEY, String(WALL_VIEWS.indexOf(view))); } catch { /* stockage bloqué */ }
     const root = this._modelRoot, plan = this._plan;
     if (root && plan && was !== this._lowWalls.enabled) {
       this._batch?.unmerge();
@@ -4379,3 +4439,8 @@ async function sh3dFileOf(source: FileSystemEntry[] | File[]): Promise<File | nu
 
 /** Murs bas, retenus par appareil : une tablette murale et un téléphone n'ont pas le même usage. */
 const LOW_WALLS_KEY = 'owlnest_low_walls';
+
+/** Les vues des murs : icône, nom et explication. */
+const WALL_VIEW_ICONS: Record<WallView, string> = { up: '\u{1F3E0}', cutaway: '\u{1F9F1}', ghost: '\u{1F47B}', down: '\u{2B07}\u{FE0F}' };
+const WALL_VIEW_LABELS: Record<WallView, StringKey> = { up: 'wallViewUp', cutaway: 'wallViewCutaway', ghost: 'wallViewGhost', down: 'wallViewDown' };
+const WALL_VIEW_HINTS: Record<WallView, StringKey> = { up: 'wallViewUpHint', cutaway: 'wallViewCutawayHint', ghost: 'wallViewGhostHint', down: 'wallViewDownHint' };
