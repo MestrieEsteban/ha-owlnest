@@ -4225,6 +4225,7 @@ export class Ha3dFloorplan extends HTMLElement {
       return;
     }
     this._viewMgr?.flyTo(view);
+    this._ui?.setActiveView(viewId);
   }
 
   /** Service naturel des domaines « à déclencher ». */

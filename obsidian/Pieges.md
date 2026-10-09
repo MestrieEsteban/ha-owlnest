@@ -160,6 +160,10 @@ Un `<dialog>` ouvert avec `showModal()` vit dans le **top layer** du navigateur 
 
 Une popup `<select>` native se dessine avec les couleurs du **système**, pas celles du `<select>`. Texte clair sur fond blanc. Corrigé par `color-scheme: dark` **plus** des styles sur chaque `<option>`, pour les navigateurs qui ignorent le premier.
 
+### Le bandeau qui ne se cachait pas
+
+`hidden = true` sur un élément stylé en ligne avec `display:flex` ne fait rien : le style en ligne l'emporte. Le bandeau de la démo restait par-dessus l'éditeur. Masquer par `style.display`. Voir [[Interface]].
+
 ### Le menu visible mais incliquable
 
 Le calque `overlayContainer` est en `pointer-events:none` pour laisser passer les gestes vers la scène ; **chaque élément cliquable posé dedans doit remettre `pointer-events:auto`**. Le menu des [[Vues des murs]] l'avait oublié : il s'affichait, les clics traversaient. Même oubli sur l'écran de choix de scène (`_showSetupOverlay`). Mon banc ne l'avait pas vu parce qu'il cliquait avec `element.click()`, qui ignore `pointer-events` : **tester un menu avec `page.mouse.click` aux coordonnées de l'élément.**
