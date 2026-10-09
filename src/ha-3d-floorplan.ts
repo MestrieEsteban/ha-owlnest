@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import type { Hass, CardConfig, AnchorEntry, SavedView, EditableAnchor, OwlnestScene } from './types';
-import { syncLights, stepTransitions, lightColor } from './lights';
+import { syncLights, stepTransitions } from './lights';
 import { loadGLTF, detectAnchors, buildAnchorsFromEditable, rebuildAnchorLight, lightTargetPos } from './model';
 import { modelErrorKey, httpStatus } from './model-errors';
 import { AnchorOverlay, SensorOverlay, ClusterOverlay, LabelOverlay, CameraOverlay, pulseOverlay } from './overlay';
@@ -51,7 +51,7 @@ import { syncPlanParts } from './plan/parts';
 import { emptyPlan, type PlanDoc, type OpeningKind } from './plan/types';
 import { PlanEditor } from './plan/editor-ui';
 import { migratePlan } from './plan/migrate';
-import { placeFurniture, bulbPosition, setLampGlow } from './plan/furniture';
+import { placeFurniture, bulbPosition } from './plan/furniture';
 import { catalogItem } from './plan/catalog';
 import { createUniforms, instrumentMaterials, updateXray, createGhost } from './cutaway';
 import type { CutawayUniforms } from './cutaway';
@@ -376,7 +376,6 @@ export class Ha3dFloorplan extends HTMLElement {
     if (this.modelLoaded && this._parts.built && this._parts.applyStates(hass.states)) {
       this._requestRender();
     }
-    if (this.modelLoaded) this._syncLampGlow();
 
     if (this.modelLoaded && !this._editMode) {
       syncLights(this.anchors, hass, this._effectiveConfig, this._modelSpan);
@@ -499,8 +498,6 @@ export class Ha3dFloorplan extends HTMLElement {
       root.updateMatrixWorld(true);
       // Les meubles arrivent après la fusion des objets immobiles : on la
       // refait pour qu'ils en profitent, sinon chacun coûte ses propres appels.
-      this._lampGlow.clear();
-      this._syncLampGlow();
       this._batch?.unmerge();
       this._mergeStatic();
       this._syncLampAnchors(root, plan);
@@ -532,34 +529,6 @@ export class Ha3dFloorplan extends HTMLElement {
     const updated = { ...plan, items: next };
     this.applyPlan(updated);
     this._schedulePlanSave(0);
-  }
-
-  /** Dernier aspect appliqué à chaque lampe reliée, pour ne rien refaire à chaque poussée d'état. */
-  private _lampGlow = new Map<string, string>();
-
-  /** L'abat-jour d'une lampe reliée s'allume avec elle, à sa couleur et sa luminosité. */
-  private _syncLampGlow() {
-    const root = this._modelRoot;
-    const items = this._scene?.plan?.items;
-    if (!root || !items?.length) return;
-    let changed = false;
-    for (const item of items) {
-      if (!item.entity || !catalogItem(item.model)?.light) continue;
-      const holder = root.getObjectByName(`plan_item_${item.id}`);
-      if (!holder) continue;
-      const st = this._hass?.states[item.entity];
-      const d = describeEntity(item.entity);
-      const on = d.isOn(st);
-      // Sans couleur annoncée, un blanc chaud : celui d'une ampoule ordinaire.
-      const color = on && st ? lightColor(st.attributes ?? {}, new THREE.Color(), 0xffd9a0).getHex() : 0;
-      const level = on ? d.level(st) : 0;
-      const key = `${on}|${color}|${level.toFixed(2)}`;
-      if (this._lampGlow.get(item.id) === key) continue;
-      this._lampGlow.set(item.id, key);
-      setLampGlow(holder, on, color, level);
-      changed = true;
-    }
-    if (changed) this._requestRender();
   }
 
   /**
