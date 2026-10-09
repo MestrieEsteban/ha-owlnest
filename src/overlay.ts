@@ -74,10 +74,11 @@ export class AnchorOverlay {
       'justify-content:center',
       'cursor:pointer',
       'z-index:5',
-      'background:rgba(15,15,25,0.65)',
+      // Les couleurs suivent le thème de la carte (variables posées par CardHud).
+      'background:var(--ow-chrome, rgba(15,15,25,0.65))',
       'backdrop-filter:blur(6px)',
       '-webkit-backdrop-filter:blur(6px)',
-      'border:1.5px solid rgba(255,255,255,0.12)',
+      'border:1.5px solid var(--ow-line, rgba(255,255,255,0.12))',
       'box-shadow:0 2px 8px rgba(0,0,0,0.5)',
       'transition:transform .15s ease, box-shadow .3s ease, border-color .3s ease',
       'user-select:none',
@@ -100,8 +101,9 @@ export class AnchorOverlay {
       'bottom:calc(100% + 8px)',
       'left:50%',
       'transform:translateX(-50%)',
-      'background:rgba(0,0,0,0.82)',
-      'color:#fff',
+      'background:var(--ow-chrome, rgba(0,0,0,0.82))',
+      'color:var(--ow-text, #fff)',
+      'box-shadow:var(--ow-shadow, none)',
       'font-size:11px',
       'font-family:var(--primary-font-family,sans-serif)',
       'padding:3px 8px',
@@ -249,7 +251,7 @@ export class AnchorOverlay {
       if (haIcon) haIcon.style.color = '#555';
       else if (path) path.style.fill = '#555';
       this.el.style.boxShadow = '0 2px 8px rgba(0,0,0,0.5)';
-      this.el.style.borderColor = 'rgba(255,255,255,0.12)';
+      this.el.style.borderColor = '';
     }
     this._label.textContent = labelText;
   }
@@ -272,7 +274,7 @@ export class SensorOverlay {
       'transform:translate(-50%,-50%)',
       'padding:4px 10px',
       'border-radius:12px',
-      'background:rgba(15,15,25,0.72)',
+      'background:var(--ow-chrome, rgba(15,15,25,0.72))',
       'backdrop-filter:blur(6px)',
       '-webkit-backdrop-filter:blur(6px)',
       'border:1px solid rgba(0,204,136,0.3)',
@@ -310,7 +312,7 @@ export class SensorOverlay {
       this._name.className = 'ow-pin-label';
       this._name.style.cssText = [
         'position:absolute', 'top:calc(100% + 6px)', 'left:50%', 'transform:translateX(-50%)',
-        'background:rgba(0,0,0,0.82)', 'color:#fff', 'font-size:11px', 'font-weight:500', 'padding:3px 8px',
+        'background:var(--ow-chrome, rgba(0,0,0,0.82))', 'color:var(--ow-text, #fff)', 'font-size:11px', 'font-weight:500', 'padding:3px 8px',
         'border-radius:4px', 'white-space:nowrap', 'pointer-events:none', 'opacity:0', 'transition:opacity .15s',
       ].join(';');
       this.el.textContent = '';
