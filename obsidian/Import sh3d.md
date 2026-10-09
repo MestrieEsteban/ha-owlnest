@@ -1,0 +1,44 @@
+---
+tags: [fonctionnalite, import]
+---
+
+# Import sh3d
+
+Déposer un fichier Sweet Home 3D (`.sh3d`) sur la carte, ou passer par le bouton de l'encart Sweet Home 3D de l'éditeur : la maison arrive en **plan modifiable**, pas en modèle figé. Code : `src/import/sh3d-home.ts` (lecture, conversion), `sh3d-furniture.ts` (meubles), `sh3d-migrate.ts` (compatibilité), `_importSh3d` dans la carte.
+
+## Ce que contient un `.sh3d`
+
+Une archive zip. Mesuré sur les six fichiers d'Esteban (octobre 2026) :
+
+- `Home.xml` (depuis Sweet Home 3D 5.3) : la maison décrite. Un fichier plus ancien n'a que `Home`, un objet Java sérialisé : on refuse avec un message qui dit de le réenregistrer.
+- Les modèles des meubles : soit une entrée seule (`3`, un OBJ sans MTL), soit un dossier (`17/ficus.obj` + `.mtl` + textures). Les PNG numérotés sont les icônes.
+- **Aucun des six fichiers n'a de `<room>` ni de `<level>`** : les pièces se déduisent des murs fermés. Une maison dont les murs ne se rejoignent pas (MaisonHA) n'a donc presque pas de pièces, ni de sols : c'est fidèle au fichier.
+
+> [!important] Les matières sans MTL
+> Un modèle du catalogue de Sweet Home 3D cite ses matières par leur nom (`flblonde`, `flgrey`, `amber`) sans fichier de matières : elles sont fournies par le logiciel. Leurs couleurs sont reconstituées d'après le nom (`namedColor`). Une couleur imposée au meuble (`color='FFAE7400'`) ou par matière (`<material>`) est cuite dans le GLB.
+
+## Conventions vérifiées
+
+- Centimètres, `y` vers le bas du plan, angles en radians dans le sens horaire : comme notre plan, en mètres. Rotation d'un meuble : `angle × 180 / π`, sans changement de signe (vérifié à l'œil sur MaisonHA : canapé, rideaux, chaises).
+- Côté **droit** d'un mur (`rightSideColor`) : à droite en marchant du début à la fin sur le plan, `(-dy, dx)`. Vérifié : le mur nord de MaisonHA a sa face droite peinte, côté maison.
+- Un meuble importé garde son **élévation explicite**, même 0 : sinon la hauteur automatique poserait une chaise glissée sous une table *sur* la table.
+
+> [!warning] Non vérifié
+> Le sens de courbure d'un mur courbe (`arcExtent`) et le côté d'ouverture d'une porte (gonds, battant) sont déduits sans exemple pour comparer. Aucun des six fichiers n'a de mur courbe.
+
+## Compatibilité avec l'ancien import (export OBJ)
+
+Avant, on importait l'**export OBJ** : un modèle en centimètres, Y en haut, recentré sur le centre de sa boîte (`_loadModel`). Ancres, vues et ouvrants sont posés dans ce repère.
+
+À l'import d'un `.sh3d` par-dessus, on compare la boîte des **murs** de l'ancien modèle (l'export les nomme `wall_…`) à celle des murs du `.sh3d` : échelle et axes se retrouvent (`fitSh3d`, Y en haut ou Z en haut passé par Blender). Au-delà de 5 % d'écart, ce n'est pas le même logement : on ne déplace rien et on le dit.
+
+Mesuré dans le banc : une ancre posée au-dessus du canapé retombe au même endroit à **0,2 mm** près ; un ouvrant relié à un capteur passe au vantail de la nouvelle porte avec capteur, nom, durée, couleurs et états d'ouverture. Un ancien ouvrant sans porte à moins de 80 cm est perdu, et l'import le dit.
+
+## Limites assumées
+
+- Un seul niveau : le plus bas qui a des murs.
+- Mur en pente : droit, à mi-hauteur.
+- Les modèles de portes et fenêtres de Sweet Home 3D ne sont pas repris : l'éditeur construit les siens.
+- Chaque modèle de meuble est envoyé à l'intégration (un envoi par variante). MaisonHA : 19 envois, 3,2 Mo. Un modèle de plus de 8 000 triangles est allégé.
+
+Voir [[Chantiers ouverts]] : les murs bas mis de côté attendaient justement ces données.

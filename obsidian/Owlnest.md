@@ -17,6 +17,7 @@ Ce dossier est un **second cerveau**, pas une documentation d'API. On y consigne
 - [[Descripteurs]] — la sémantique par domaine d'entité, source de vérité unique.
 - [[Performance]] — profils de qualité, cible matérielle.
 - [[Echelle du modele]] — pourquoi rien n'est exprimé en mètres. **À lire avant tout réglage de distance.**
+- [[Import sh3d]] — un fichier Sweet Home 3D devenu plan modifiable, et la compatibilité avec l'ancien import OBJ.
 
 ## L'atelier
 
