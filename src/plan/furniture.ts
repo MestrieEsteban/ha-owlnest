@@ -222,6 +222,9 @@ export async function placeFurniture(plan: PlanDoc, root: THREE.Object3D, onRead
     const want = itemSize(item);
     holder.scale.set(want.w / loaded.size.x, want.h / loaded.size.y, want.d / loaded.size.z);
     holder.userData.owlnestItem = item.id;
+    // Une lampe reliée change d'aspect avec son état : elle ne se fond pas
+    // dans le regroupement des objets immobiles.
+    if (item.entity && catalogItem(item.model)?.light) holder.userData.owlnestLive = true;
     obj.traverse((o) => {
       const m = o as THREE.Mesh;
       if (!m.isMesh) return;
@@ -233,6 +236,30 @@ export async function placeFurniture(plan: PlanDoc, root: THREE.Object3D, onRead
     group.add(holder);
   }));
   onReady?.();
+}
+
+/** L'abat-jour ou l'ampoule : `lamp` chez Kenney, `Light` chez Quaternius. */
+export const isGlowMaterial = (name: string) => name === 'lamp' || name === 'Light';
+
+/**
+ * Allume ou éteint l'abat-jour d'une lampe posée. Chaque lampe reçoit sa
+ * propre copie de la matière, sinon toutes les lampes du même modèle
+ * s'allumeraient ensemble. `level` va de 0 à 1.
+ */
+export function setLampGlow(holder: THREE.Object3D, on: boolean, color: number, level: number): void {
+  holder.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    const swap = (mat: THREE.Material) => {
+      if (!isGlowMaterial(mat.name)) return mat;
+      const own = (mat.userData.owlnestGlow ? mat : mat.clone()) as THREE.MeshStandardMaterial;
+      own.userData.owlnestGlow = true;
+      own.emissive.set(on ? color : 0x000000);
+      own.emissiveIntensity = on ? 0.35 + 0.65 * level : 0;
+      return own;
+    };
+    m.material = Array.isArray(m.material) ? m.material.map(swap) : swap(m.material);
+  });
 }
 
 /** Où se trouve l'ampoule d'une lampe posée, dans le repère du plan (x, hauteur, y). */

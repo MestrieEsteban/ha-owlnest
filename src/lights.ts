@@ -27,6 +27,19 @@ export function intensityScale(span?: number): number {
   return k * k;
 }
 
+/** La couleur d'une lumière de Home Assistant (rgb, puis teinte), blanc à défaut. */
+export function lightColor(a: Record<string, unknown>, out: THREE.Color, fallback = 0xffffff): THREE.Color {
+  if (Array.isArray(a.rgb_color)) {
+    const [r, g, b] = a.rgb_color as number[];
+    return out.setRGB(r / 255, g / 255, b / 255);
+  }
+  if (Array.isArray(a.hs_color)) {
+    const [h, s] = a.hs_color as number[];
+    return out.setHSL(h / 360, s / 100, 0.5);
+  }
+  return out.set(fallback);
+}
+
 export function syncLights(
   anchors: Map<string, AnchorEntry>,
   hass: Hass,
@@ -56,15 +69,7 @@ export function syncLights(
       const a = stateObj.attributes;
       const intensityMult = entry.lightIntensity ?? 1;
       entry.targetIntensity = desc.level(stateObj) * scale * 3 * intensityMult;
-      if (Array.isArray(a.rgb_color)) {
-        const [r, g, b] = a.rgb_color as number[];
-        entry.targetColor.setRGB(r / 255, g / 255, b / 255);
-      } else if (Array.isArray(a.hs_color)) {
-        const [h, s] = a.hs_color as number[];
-        entry.targetColor.setHSL(h / 360, s / 100, 0.5);
-      } else {
-        entry.targetColor.set(0xffffff);
-      }
+      lightColor(a, entry.targetColor);
       return;
     }
 
