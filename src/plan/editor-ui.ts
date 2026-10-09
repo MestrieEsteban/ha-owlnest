@@ -24,7 +24,7 @@ import {
   polygonArea, settle, roomShapes, reseedRooms,
 } from './graph';
 import { wallFootprints } from './footprint';
-import { TEMPLATES, templatePlan, type TemplateId } from './templates';
+import { TEMPLATES, templatePlan, templateModels, type TemplateId } from './templates';
 import { CATALOG, CATEGORIES, catalogItem, itemLabel, thumbUrl, hasThumb, type ItemCategory } from './catalog';
 import {
   loadFurniture, itemSize, topView, isoView, furnitureTints, tintKind, overItem, baseSize, itemElevation, supportOf,
@@ -1254,10 +1254,14 @@ export class PlanEditor {
     input.click();
   }
 
-  private useTemplate(id: TemplateId) {
+  private async useTemplate(id: TemplateId) {
+    // Les meubles du modèle se posent d'après leurs vraies dimensions : on les
+    // charge d'abord (une fraction de seconde, puis ils sont en cache).
+    this.hintEl.textContent = t('planTemplateLoading');
+    await Promise.all(templateModels(id).map((m) => loadFurniture(m).catch(() => null)));
     this.commit();
     const bg = this.plan.background;
-    this.plan = templatePlan(id, this.plan);
+    this.plan = templatePlan(id, this.plan, baseSize);
     this.plan.background = bg;
     this.roomCounter = this.plan.rooms.length;
     this.sel = null;
