@@ -13,7 +13,7 @@ import { AnchorEditor } from './editor';
 import { loadScene, saveScene, listScenes, sceneToEffectiveConfig, buildSceneFromEditor, normalizeViews, emptyScene, sceneUnreachable, forgetSceneFailure } from './scene';
 import { importModel, ImportError } from './import/drop';
 import { unzipSync, strFromU8 } from 'fflate';
-import { readHome, homeToPlan, type Sh3dHome } from './import/sh3d-home';
+import { readHome, homeToPlan, levelChoices, type Sh3dHome } from './import/sh3d-home';
 import { importSh3dFurniture } from './import/sh3d-furniture';
 import { fitSh3d, makeMover, matchNearest, type Box as FitBox, type Vec3 } from './import/sh3d-migrate';
 import { makeSimplifier } from './import/lighten';
@@ -1520,11 +1520,19 @@ export class Ha3dFloorplan extends HTMLElement {
       const zip = unzipSync(new Uint8Array(await file.arrayBuffer()));
       if (!zip['Home.xml']) throw new Error(t('sh3dFileOld'));
       const home = readHome(strFromU8(zip['Home.xml']));
+      // Plusieurs niveaux : l'utilisateur choisit celui qu'il importe.
+      const choices = levelChoices(home);
+      let levelId: string | undefined;
+      if (choices.length > 1) {
+        const picked = await progress.askLevel(choices);
+        if (picked === null) { progress.done(); return; }
+        levelId = picked;
+      }
       let n = 0;
       const conv = homeToPlan(home, {
         room: () => `${t('planRoom')} ${++n}`,
         floor: () => '#d8c3a5',
-      });
+      }, levelId);
       if (!conv.plan.walls.length) throw new Error(t('sh3dFileEmpty'));
 
       progress.stage('uploading', 0);

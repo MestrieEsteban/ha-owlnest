@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseXml, readHome, homeToPlan, arcPoints, sh3dColor, openingKind } from './sh3d-home.mjs';
+import { parseXml, readHome, homeToPlan, arcPoints, sh3dColor, openingKind, levelChoices } from './sh3d-home.mjs';
 import { fitSh3d, toModel, makeMover, matchNearest } from './sh3d-migrate.mjs';
 import { orientObj, buildMtl, variantKey, namedColor } from './sh3d-furniture.mjs';
 import { faces } from '../plan/graph.mjs';
@@ -88,6 +88,23 @@ test('plusieurs niveaux : seul le plus bas qui a des murs est importé', () => {
   assert.equal(conv.level.name, 'RDC');
   assert.equal(conv.levels, 2);
   assert.equal(conv.plan.walls.length, 1);
+});
+
+test('plusieurs niveaux : on peut choisir lequel importer', () => {
+  const xml = `<home wallHeight='250'>
+    <level id='l0' name='RDC' elevation='0' elevationIndex='0'/>
+    <level id='l1' name='Étage' elevation='260' elevationIndex='1'/>
+    <level id='l2' name='Toit' elevation='520' elevationIndex='2'/>
+    <wall level='l0' xStart='0' yStart='0' xEnd='300' yEnd='0' thickness='10'/>
+    <wall level='l1' xStart='0' yStart='0' xEnd='0' yEnd='300' thickness='10'/>
+    <wall level='l1' xStart='0' yStart='300' xEnd='300' yEnd='300' thickness='10'/>
+  </home>`;
+  const home = readHome(xml);
+  // Le toit n'a pas de murs : il n'est pas proposé.
+  assert.deepEqual(levelChoices(home).map((l) => [l.name, l.walls]), [['RDC', 1], ['Étage', 2]]);
+  const conv = homeToPlan(home, names(), 'l1');
+  assert.equal(conv.level.name, 'Étage');
+  assert.equal(conv.plan.walls.length, 2);
 });
 
 test('un mur courbe devient des segments qui passent par ses deux bouts', () => {

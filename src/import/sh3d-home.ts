@@ -287,15 +287,26 @@ export function openingKind(p: Sh3dPiece): OpeningKind {
   return 'door';
 }
 
+/** Les niveaux qui ont des murs, du plus bas au plus haut : ceux qu'on peut importer. */
+export function levelChoices(home: Sh3dHome): { id: string; name: string; walls: number }[] {
+  const levels = [...home.levels].sort((a, b) => a.elevation - b.elevation || a.elevationIndex - b.elevationIndex);
+  const first = levels[0];
+  return levels
+    .map((l) => ({ id: l.id, name: l.name, walls: home.walls.filter((w) => w.level === l.id || (!w.level && l === first)).length }))
+    .filter((l) => l.walls > 0);
+}
+
 /**
  * Le plan d'une maison Sweet Home 3D, et ses meubles à poser.
  *
- * Une maison à plusieurs niveaux n'est importée que pour un niveau (le plus
- * bas qui ait des murs) : l'éditeur n'a pas encore d'étages.
+ * Une maison à plusieurs niveaux n'est importée que pour un niveau :
+ * `levelId` s'il est donné, sinon le plus bas qui ait des murs. L'éditeur n'a
+ * pas encore d'étages.
  */
-export function homeToPlan(home: Sh3dHome, names: { room: () => string; floor: () => string }): Sh3dConversion {
+export function homeToPlan(home: Sh3dHome, names: { room: () => string; floor: () => string }, levelId?: string): Sh3dConversion {
   const levels = [...home.levels].sort((a, b) => a.elevation - b.elevation || a.elevationIndex - b.elevationIndex);
-  const level = levels.find((l) => home.walls.some((w) => w.level === l.id)) ?? levels[0];
+  const level = (levelId ? levels.find((l) => l.id === levelId) : undefined)
+    ?? levels.find((l) => home.walls.some((w) => w.level === l.id)) ?? levels[0];
   const onLevel = <T extends { level?: string }>(x: T) => !level || x.level === level.id || (!x.level && level === levels[0]);
   const walls = home.walls.filter(onLevel);
   const pieces = home.pieces.filter(onLevel);
