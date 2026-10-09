@@ -492,6 +492,10 @@ export class Ha3dFloorplan extends HTMLElement {
     void placeFurniture(plan, root, () => {
       if (root !== this._modelRoot) return;
       root.updateMatrixWorld(true);
+      // Les meubles arrivent après la fusion des objets immobiles : on la
+      // refait pour qu'ils en profitent, sinon chacun coûte ses propres appels.
+      this._batch?.unmerge();
+      this._mergeStatic();
       this._syncLampAnchors(root, plan);
       this._requestShadowUpdate();
       this._requestRender();
