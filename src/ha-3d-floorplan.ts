@@ -2685,9 +2685,13 @@ export class Ha3dFloorplan extends HTMLElement {
       this._hudLeft.innerHTML = '';
       this._hudLeft.style.display = 'flex';
     }
-    // Rebuild hudRight: lock + pencil only
+    // Rebuild hudRight: murs bas, lock + pencil
     this._hudRight.innerHTML = '';
     const ui = this._config?.ui ?? {};
+    if (this._lowWallsBtn) {
+      this._hudRight.appendChild(this._lowWallsBtn);
+      this._paintLowWallsBtn();
+    }
     if (ui.show_lock !== false && this.lockBtn) {
       this._hudRight.appendChild(this.lockBtn);
     }
