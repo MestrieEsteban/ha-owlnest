@@ -59,7 +59,9 @@ export const hasThumb = (c: CatalogItem) => !c.id.startsWith('q_') && !c.id.star
  * dans HA à chaque essai.
  */
 export const FURNITURE_URL = import.meta.env?.DEV
-  ? new URL('/owlnest_frontend/furniture/', import.meta.url).href
+  // Pas de `new URL(chemin, import.meta.url)` : Vite le prend pour un fichier
+  // à empaqueter et réécrit l'adresse. On part de l'origine du module.
+  ? `${new URL(import.meta.url).origin}/owlnest_frontend/furniture/`
   : '/owlnest_frontend/furniture/';
 
 type Row = [string, ItemCategory, string, string, Partial<Pick<CatalogItem, 'wall' | 'ceiling' | 'light' | 'top' | 'surface' | 'scale'>>?];
