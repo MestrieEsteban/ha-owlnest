@@ -7,11 +7,10 @@
  * disparaissait, et des murs basculaient au mauvais moment. Tout venait de ce
  * que l'OBJ ne dit pas quel meuble est contre quel mur. Le plan, lui, le sait :
  *
- *  - **seuls les murs devant ce qu'on regarde, et qui font face à la
- *    caméra**, descendent ; ceux du fond et ceux de côté restent debout et
- *    donnent le volume des pièces. « Devant » se juge par
- *    rapport au point visé : en zoomant sur une pièce, ce sont ses murs
- *    côté caméra qui descendent ;
+ *  - **comme dans les Sims, un mur qui fait face à la caméra descend s'il y
+ *    a une pièce derrière lui** : la façade avant et les cloisons tournées
+ *    vers nous descendent, le mur du fond (l'extérieur derrière) et les murs
+ *    de côté restent debout et donnent le volume des pièces ;
  *  - **ce qui est accroché à un mur qui descend** (tableau, miroir, meuble
  *    haut, applique) disparaît avec lui, et ce qui est posé dessus aussi :
  *    rien ne flotte. Les meubles posés au sol restent toujours ;
@@ -35,9 +34,16 @@
 
 import * as THREE from 'three';
 import type { PlanDoc, PlanItem } from './types';
-import { wallEnds, thicknessOf, isBoundary } from './graph';
+import { wallEnds, thicknessOf, isBoundary, faces } from './graph';
+import { pointInPolygon } from './geometry';
 import { itemSize, itemElevation, supportOf } from './furniture';
 import { catalogItem } from './catalog';
+
+/**
+ * Là où un mur debout touche un mur abaissé, il descend en pente jusqu'à lui
+ * sur cette longueur, comme dans les Sims, au lieu de s'arrêter net.
+ */
+export const RAMP = 1;
 
 /** Hauteur d'un mur abaissé, en part de la hauteur des murs : une plinthe haute. */
 export const LOW_RATIO = 0.18;
@@ -46,14 +52,14 @@ const MAX_WALLS = 1024;
 /** Durée de la descente ou de la remontée, en secondes. */
 const TRANSITION = 0.3;
 /**
- * Un mur descend s'il fait face à la caméra : regard à moins d'environ 50° de
- * sa normale (cosinus 0,65). Il remonte au-delà de 60° environ (0,5) : entre
- * les deux, il garde son état, pour ne pas clignoter en tournant.
+ * Un mur descend s'il fait face à la caméra : regard à moins d'environ 70° de
+ * sa normale (cosinus 0,35). Il remonte au-delà d'environ 75° (0,25) : entre
+ * les deux, il garde son état, pour ne pas clignoter en tournant. Seules les
+ * cloisons à peu près parallèles au regard restent debout ; un mur extérieur
+ * de côté, lui, reste parce qu'il n'a que l'extérieur derrière lui.
  */
-const FACING_DOWN = 0.65;
-const FACING_UP = 0.5;
-/** Un mur à moins de cette distance du point visé garde son état : pas de clignotement. */
-const MARGIN = 0.4;
+const FACING_DOWN = 0.35;
+const FACING_UP = 0.25;
 
 export const WALL_ATTR = 'owlnestWall';
 const GHOST_NAME = 'owlnest_wall_ghost';
@@ -91,19 +97,38 @@ function inLeaf(o: THREE.Object3D): boolean {
   return false;
 }
 
-/** Un mur vu de dessus, en coordonnées du plan : son milieu et sa normale. */
-interface WallInfo { mid: { x: number; y: number }; normal: { x: number; y: number } }
+/**
+ * Un mur vu de dessus, en coordonnées du plan : son milieu, sa normale, et
+ * s'il y a une pièce de chaque côté (`front` du côté de la normale).
+ */
+interface WallInfo {
+  mid: { x: number; y: number };
+  normal: { x: number; y: number };
+  front: boolean;
+  back: boolean;
+  boundary: boolean;
+  /** Murs qui touchent chaque bout : un mur debout y descend en pente s'ils sont abaissés. */
+  nearA: number[];
+  nearB: number[];
+  len: number;
+}
 
 export class LowWalls {
   enabled = false;
   /** Mode fantôme : les murs deviennent translucides au lieu de descendre. */
   private readonly ghostMode = { value: 0 };
   private ghostMaterial: THREE.MeshBasicMaterial | null = null;
+  /** Par mur : abaissement (r), pente au bout de départ (g), au bout d'arrivée (b). */
   private readonly data = new Uint8Array(MAX_WALLS * 4);
   readonly texture = new THREE.DataTexture(this.data, MAX_WALLS, 1, THREE.RGBAFormat);
-  /** Hauteur de la coupe, dans le repère du plan, et dans celui de la scène. */
+  /** Par mur : ses deux bouts dans le repère du plan (ax, ay, bx, by), pour la pente. */
+  private readonly endsData = new Float32Array(MAX_WALLS * 4);
+  private readonly ends = new THREE.DataTexture(this.endsData, MAX_WALLS, 1, THREE.RGBAFormat, THREE.FloatType);
+  private readonly top = { value: 2.5 };
+  /** Décalage du plan dans la scène (son recentrage). */
+  private readonly root = { value: new THREE.Vector3() };
+  /** Hauteur de la coupe, dans le repère du plan. */
   private readonly cut = { value: 0.45 };
-  private readonly cutWorld = { value: 0.45 };
   private walls: WallInfo[] = [];
   private factor = new Float32Array(MAX_WALLS);
   private goal = new Float32Array(MAX_WALLS);
@@ -118,13 +143,26 @@ export class LowWalls {
 
   /** Le plan vient d'être (re)construit : on relit ses murs. */
   setPlan(plan: PlanDoc, root: THREE.Object3D) {
-    this.walls = plan.walls.slice(0, MAX_WALLS).map((w) => {
+    const rooms = faces(plan);
+    const inRoom = (p: { x: number; y: number }) => rooms.some((f) => pointInPolygon(p, f.poly));
+    const walls = plan.walls.slice(0, MAX_WALLS);
+    this.walls = walls.map((w, i) => {
       const [a, b] = wallEnds(plan, w);
       const L = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-      return { mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, normal: { x: -(b.y - a.y) / L, y: (b.x - a.x) / L } };
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      const normal = { x: -(b.y - a.y) / L, y: (b.x - a.x) / L };
+      // Une pièce derrière le mur, jusqu'à un mètre : au-delà d'un mur doublé
+      // (deux murs à quelques centimètres), l'espace entre les deux n'en est pas une.
+      const half = thicknessOf(plan, w) / 2;
+      const roomSide = (s: number) => [0.15, 0.45, 0.9].some((d) => inRoom({ x: mid.x + normal.x * s * (half + d), y: mid.y + normal.y * s * (half + d) }));
+      const near = (node: string) => walls.flatMap((q, j) => (j !== i && !isBoundary(plan, q) && (q.a === node || q.b === node) ? [j] : []));
+      this.endsData.set([a.x, a.y, b.x, b.y], i * 4);
+      return { mid, normal, boundary: isBoundary(plan, w), front: roomSide(1), back: roomSide(-1), nearA: near(w.a), nearB: near(w.b), len: L };
     });
+    this.ends.needsUpdate = true;
+    this.top.value = plan.wallHeight;
     this.cut.value = plan.wallHeight * LOW_RATIO;
-    this.cutWorld.value = this.cut.value + root.position.y;
+    this.root.value.copy(root.position);
     // Un mur qui n'existe plus n'est plus abaissé.
     for (let i = this.walls.length; i < MAX_WALLS; i++) { this.factor[i] = 0; this.goal[i] = 0; }
     this.attached = [];
@@ -243,19 +281,32 @@ export class LowWalls {
       // Le point visé et la direction du regard, vus de dessus, dans le repère du plan.
       const t = root.worldToLocal(target.clone());
       const c = root.worldToLocal(camera.position.clone());
-      const vx = t.x - c.x, vz = t.z - c.z;
-      const len = Math.hypot(vx, vz);
+      const len = Math.hypot(t.x - c.x, t.z - c.z);
       // Vu d'en haut, tout se voit déjà : aucun mur ne descend.
       const fromAbove = len < 0.15 * Math.max(Math.abs(t.y - c.y), 1e-6);
       for (let i = 0; i < n; i++) {
-        if (fromAbove) { this.goal[i] = 0; continue; }
-        const { mid: m, normal: nrm } = this.walls[i];
-        // Distance du mur vers la caméra, depuis le point visé.
-        const s = -((m.x - t.x) * vx + (m.y - t.z) * vz) / len;
-        // Un mur de côté, parallèle au regard, ne bouche rien : il reste debout.
-        const facing = Math.abs(nrm.x * vx + nrm.y * vz) / len;
-        if (s > MARGIN && facing > FACING_DOWN) this.goal[i] = 1;
-        else if (s < -MARGIN || facing < FACING_UP) this.goal[i] = 0;
+        const w = this.walls[i];
+        if (fromAbove || w.boundary) { this.goal[i] = 0; continue; }
+        // Comme dans les Sims : un mur qui fait face à la caméra descend s'il y
+        // a une pièce derrière lui. Le mur du fond (l'extérieur derrière) et
+        // les murs de côté (parallèles au regard) restent debout.
+        const dx = c.x - w.mid.x, dz = c.z - w.mid.y;
+        const d = Math.hypot(dx, dz) || 1;
+        const toward = (w.normal.x * dx + w.normal.y * dz) / d;
+        const hidden = toward > 0 ? w.back : w.front;
+        const facing = Math.abs(toward);
+        if (hidden && facing > FACING_DOWN) this.goal[i] = 1;
+        else if (!hidden || facing < FACING_UP) this.goal[i] = 0;
+      }
+      // Un mur court pris entre deux murs abaissés ferait une pointe (deux
+      // pentes qui se rejoignent) : il descend avec eux.
+      if (!fromAbove) {
+        for (let i = 0; i < n; i++) {
+          const w = this.walls[i];
+          if (this.goal[i] || w.boundary || w.len > 2 * RAMP + 0.5) continue;
+          const low = (near: number[]) => near.some((j) => this.goal[j] === 1);
+          if (low(w.nearA) && low(w.nearB)) this.goal[i] = 1;
+        }
       }
     } else {
       this.goal.fill(0, 0, n);
@@ -297,6 +348,13 @@ export class LowWalls {
 
   private writeTexture() {
     for (let i = 0; i < MAX_WALLS; i++) this.data[i * 4] = Math.round(this.factor[i] * 255);
+    // La pente d'un mur debout, à chaque bout qui touche un mur abaissé.
+    this.walls.forEach((w, i) => {
+      const standing = 1 - this.factor[i];
+      const ramp = (near: number[]) => standing * near.reduce((m, j) => Math.max(m, this.factor[j]), 0);
+      this.data[i * 4 + 1] = Math.round(ramp(w.nearA) * 255);
+      this.data[i * 4 + 2] = Math.round(ramp(w.nearB) * 255);
+    });
     this.texture.needsUpdate = true;
   }
 
@@ -321,25 +379,57 @@ export class LowWalls {
   private inject(shader: THREE.WebGLProgramParametersWithUniforms, pass: 'main' | 'depth' | 'ghost') {
     shader.uniforms.owlnestLowTex = { value: this.texture };
     shader.uniforms.owlnestCut = this.cut;
-    shader.uniforms.owlnestCutWorld = this.cutWorld;
     shader.uniforms.owlnestGhost = this.ghostMode;
+    shader.uniforms.owlnestEnds = { value: this.ends };
+    shader.uniforms.owlnestTop = this.top;
+    shader.uniforms.owlnestRoot = this.root;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
 attribute float ${WALL_ATTR};
 uniform sampler2D owlnestLowTex;
+uniform sampler2D owlnestEnds;
+uniform float owlnestTop;
 uniform float owlnestCut;
 uniform float owlnestGhost;
+uniform vec3 owlnestRoot;
 varying float vOwlnestLow;
 varying float vOwlnestKind;
+varying float vOwlnestCap;
 varying float vOwlnestY;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
 vOwlnestLow = 0.0;
+vOwlnestCap = 1e5;
 vOwlnestKind = ${WALL_ATTR} > ${ITEM_BASE}.0 ? 3.0 : ${WALL_ATTR} < 0.0 ? 2.0 : ${WALL_ATTR} > 0.0 ? 1.0 : 0.0;
 float owlnestIndex = (vOwlnestKind > 2.5 ? ${WALL_ATTR} - ${ITEM_BASE}.0 : abs(${WALL_ATTR})) - 1.0;
 if (owlnestIndex >= 0.0) {
-  vOwlnestLow = texelFetch(owlnestLowTex, ivec2(int(owlnestIndex + 0.5), 0), 0).r;
-  // Murs bas : les sommets hauts d'un mur viennent à la coupe, il reste fermé.
-  if (owlnestGhost < 0.5 && vOwlnestKind > 0.5 && vOwlnestKind < 1.5) transformed.y = mix(transformed.y, min(transformed.y, owlnestCut), vOwlnestLow);
+  vec4 owlnestState = texelFetch(owlnestLowTex, ivec2(int(owlnestIndex + 0.5), 0), 0);
+  vOwlnestLow = owlnestState.r;
+  if (owlnestGhost < 0.5 && vOwlnestKind > 0.5 && vOwlnestKind < 2.5) {
+    // Position dans le repère du plan, et le long du mur.
+    vec3 owlnestPlan = (modelMatrix * vec4(transformed, 1.0)).xyz - owlnestRoot;
+    vec4 e = texelFetch(owlnestEnds, ivec2(int(owlnestIndex + 0.5), 0), 0);
+    vec2 ab = e.zw - e.xy;
+    float len = max(length(ab), 1e-4);
+    float t = dot(owlnestPlan.xz - e.xy, ab / len);
+    // Un mur debout qui touche un mur abaissé y descend en pente, sur ${RAMP.toFixed(1)} m.
+    float rise = owlnestTop - owlnestCut;
+    float capA = owlnestCut + clamp(t / ${RAMP.toFixed(1)}, 0.0, 1.0) * rise;
+    float capB = owlnestCut + clamp((len - t) / ${RAMP.toFixed(1)}, 0.0, 1.0) * rise;
+    if (vOwlnestKind < 1.5) {
+      // Mur : ses sommets hauts viennent à la coupe ou suivent la pente ; il reste fermé.
+      float y = mix(transformed.y, min(transformed.y, owlnestCut), vOwlnestLow);
+      y = min(y, mix(y, capA, owlnestState.g));
+      y = min(y, mix(y, capB, owlnestState.b));
+      transformed.y = y;
+    } else {
+      // Porte ou fenêtre : coupée là où son mur s'arrête (le fragment s'en charge).
+      float cap = 1e5;
+      if (vOwlnestLow > 0.5) cap = owlnestCut;
+      if (owlnestState.g > 0.5) cap = min(cap, capA);
+      if (owlnestState.b > 0.5) cap = min(cap, capB);
+      vOwlnestCap = cap + owlnestRoot.y;
+    }
+  }
 }
 vOwlnestY = (modelMatrix * vec4(transformed, 1.0)).y;`);
 
@@ -347,8 +437,8 @@ vOwlnestY = (modelMatrix * vec4(transformed, 1.0)).y;`);
       // Le voile ne garde que les murs (et leurs portes et fenêtres) devenus fantômes.
       ? `if (!(vOwlnestKind > 0.5 && vOwlnestKind < 1.5 && vOwlnestLow > 0.5)) discard;`
       : `if (owlnestGhost < 0.5) {
-  // Murs bas : une porte ou une fenêtre d'un mur abaissé est coupée à sa hauteur.
-  if (vOwlnestKind > 1.5 && vOwlnestKind < 2.5 && vOwlnestLow > 0.5 && vOwlnestY > owlnestCutWorld) discard;
+  // Murs bas : une porte ou une fenêtre est coupée là où son mur s'arrête (coupe ou pente).
+  if (vOwlnestKind > 1.5 && vOwlnestKind < 2.5 && vOwlnestY > vOwlnestCap) discard;
 }${pass === 'main' ? ` else {
   // Fantôme : le mur n'est pas dessiné, le voile le remplace. Ses portes et
   // fenêtres restent entières : sans elles, on perdait les battants.
@@ -358,10 +448,10 @@ vOwlnestY = (modelMatrix * vec4(transformed, 1.0)).y;`);
 if (vOwlnestKind > 2.5 && vOwlnestLow > 0.5) discard;`;
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
-uniform float owlnestCutWorld;
 uniform float owlnestGhost;
 varying float vOwlnestLow;
 varying float vOwlnestKind;
+varying float vOwlnestCap;
 varying float vOwlnestY;`)
       .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
 ${discard}`);

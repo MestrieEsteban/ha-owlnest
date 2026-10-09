@@ -96,3 +96,32 @@ test('vu de biais depuis le sud, les murs de côté restent debout', () => {
   assert.equal(lw.factor[west], 0, 'le mur ouest, de côté, reste');
   assert.equal(lw.factor[east], 0, 'le mur est, de côté, reste');
 });
+
+test('comme dans les Sims : la cloison face à la caméra descend, le mur du fond reste', () => {
+  const plan = { version: 2, wallHeight: 2.5, wallThickness: 0.15, nodes: [], walls: [], rooms: [], openings: [], items: [] };
+  // Deux pièces l'une derrière l'autre : nord (y 0..4) et sud (y 4..8).
+  addRect(plan, 0, 0, 6, 4);
+  addRect(plan, 0, 4, 6, 8);
+  const root = new THREE.Group(); root.position.set(-3, 0, -4); root.updateMatrixWorld(true);
+  const lw = new LowWalls(); lw.enabled = true; lw.setPlan(plan, root);
+  const cam = new THREE.PerspectiveCamera(); cam.position.set(0, 7, 12);
+  for (let i = 0; i < 20; i++) lw.update(cam, new THREE.Vector3(0, 0, 0), root, 0.05);
+  const at = (y) => wallAt(plan, (a, b) => a.y === y && b.y === y);
+  assert.equal(lw.factor[at(8)], 1, 'façade sud');
+  assert.equal(lw.factor[at(4)], 1, 'cloison du milieu');
+  assert.equal(lw.factor[at(0)], 0, 'mur du fond');
+});
+
+test('jonction : un mur debout qui touche un mur abaissé descend en pente de ce côté', () => {
+  const { plan, root, lw } = setup();
+  const cam = new THREE.PerspectiveCamera(); cam.position.set(0, 6, 10);
+  settle(lw, cam, root);
+  // Le mur sud est abaissé ; les murs ouest et est, debout, le touchent par un bout.
+  const west = wallAt(plan, (a, b) => a.x === 0 && b.x === 0);
+  const w = plan.walls[west];
+  const southEnd = plan.nodes.find((n) => n.id === w.a).y === 4 ? 'a' : 'b';
+  const ramp = { a: lw.data[west * 4 + 1], b: lw.data[west * 4 + 2] };
+  assert.equal(lw.factor[west], 0, 'le mur ouest reste debout');
+  assert.equal(ramp[southEnd], 255, 'pente côté mur sud');
+  assert.equal(ramp[southEnd === 'a' ? 'b' : 'a'], 0, 'pas de pente côté mur nord, debout');
+});

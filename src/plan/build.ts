@@ -19,7 +19,7 @@ import { PLAN_COLORS } from './types';
 import { type Pt, sub, add, mul, dot, norm, perp, clipAlong, area, pointInPolygon } from './geometry';
 import { wallEnds, heightOf, thicknessOf, openingFits, faces, wallLength, isBoundary, type Face } from './graph';
 import { wallFootprints } from './footprint';
-import { tagWall } from './low-walls';
+import { tagWall, RAMP } from './low-walls';
 import { floorTexture, TEXTURE_METERS } from './textures';
 
 /** Préfixe des vantaux construits depuis le plan : `plan_leaf_<ouverture>_<n>`. */
@@ -176,9 +176,12 @@ function buildWall(
     cursor = Math.max(cursor, h.u1);
   }
   pieces.push({ u0: cursor, u1: 1e3, y0: 0, y1: H });
+  // Des sommets à RAMP de chaque bout : la pente des murs bas s'y appuie (voir low-walls.ts).
+  const L = Math.hypot(b.x - a.x, b.y - a.y);
+  const ramps = L > 2 * RAMP ? [RAMP, L - RAMP] : [L / 2];
 
   pieces.forEach((p, k) => {
-    const poly = clipAlong(foot, a, dir, p.u0, p.u1);
+    const poly = withStops(clipAlong(foot, a, dir, p.u0, p.u1), a, dir, ramps);
     if (poly.length < 3 || Math.abs(area(poly)) < 1e-6) return;
     // Mêmes matières des deux côtés : un seul maillage.
     const split = left === right && left === core ? () => 0 : side;
@@ -187,6 +190,27 @@ function buildWall(
       group.add(mesh(`wall_${index}_${k}${g ? `_${g}` : ''}`, geo, mats[g]));
     }
   });
+}
+
+/**
+ * Ajoute au contour d'un morceau de mur des sommets aux abscisses `stops`
+ * (le long du mur, depuis `origin`) : le prisme garde sa forme, mais ses
+ * côtés y ont un sommet sur lequel la pente des murs bas peut plier.
+ */
+function withStops(poly: Pt[], origin: Pt, dir: Pt, stops: number[]): Pt[] {
+  const out: Pt[] = [];
+  poly.forEach((p, i) => {
+    const q = poly[(i + 1) % poly.length];
+    out.push(p);
+    const up = dot(sub(p, origin), dir), uq = dot(sub(q, origin), dir);
+    const cuts = stops.filter((s) => (s - up) * (s - uq) < 0 && Math.abs(s - up) > 1e-3 && Math.abs(s - uq) > 1e-3);
+    cuts.sort((x, y) => Math.abs(x - up) - Math.abs(y - up));
+    for (const s of cuts) {
+      const t = (s - up) / (uq - up);
+      out.push({ x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t });
+    }
+  });
+  return out;
 }
 
 /** Un vantail vitré : un cadre de quatre barres et une vitre, et des petits bois au besoin. */
