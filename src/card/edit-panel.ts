@@ -5,7 +5,6 @@ import type { AnchorEditor, EditorTool } from '../editor';
 import type { OwlnestRule } from '../rules/types';
 import { normalizeRule } from '../rules/types';
 import { t, tn, setLang, type StringKey } from '../i18n';
-import { makeDraggable, type WindowPos } from './draggable';
 import { icon } from '../ui/icons';
 import { Tour, type TourStep } from '../ui/tour';
 import { EDITOR_STYLES, BAR_H, PANEL_W } from '../ui/editor-styles';
@@ -108,6 +107,9 @@ export function editorTabs(withPlan: boolean): { id: string; icon: string; label
     { id: 'settings', icon: 'gear', label: t('tabSettings') },
   ];
 }
+
+/** Largeur du panneau pendant l'édition d'une règle : une phrase a besoin de place. */
+const RULE_PANEL_W = 470;
 
 /** La visite de l'éditeur a déjà été proposée sur cet appareil. */
 const EDITOR_TOUR_KEY = 'owlnest_tour_editor_seen';
@@ -573,6 +575,14 @@ export class EditPanel {
     });
   }
 
+  /** Largeur du panneau ancré : élargi pendant l'édition d'une règle. */
+  private _panelW = PANEL_W;
+  private _setPanelWidth(px: number) {
+    this._panelW = px;
+    if (this._panel) this._panel.style.width = this._narrow ? '' : `${px}px`;
+    this._applyWidth();
+  }
+
   /** Sur une carte étroite, le panneau passe par-dessus la 3D et s'ouvre à la demande. */
   private _applyWidth() {
     const narrow = this.cardContainer.clientWidth < 760;
@@ -583,8 +593,9 @@ export class EditPanel {
     this._bar?.classList.toggle('ow-narrow', narrow);
     this._panel?.classList.toggle('ow-narrow', narrow);
     this._panel?.classList.toggle('ow-panel-open', this._panelOpen);
-    this.cardContainer.style.setProperty('--ow-dock', `${narrow ? 0 : PANEL_W}px`);
-    this.onDock?.(narrow ? 0 : PANEL_W);
+    if (this._panel) this._panel.style.width = narrow ? '' : `${this._panelW}px`;
+    this.cardContainer.style.setProperty('--ow-dock', `${narrow ? 0 : this._panelW}px`);
+    this.onDock?.(narrow ? 0 : this._panelW);
   }
 
   private _setPanelOpen(on: boolean) {
@@ -730,6 +741,8 @@ export class EditPanel {
   }
 
   hideToolbar() {
+    this._panel?.querySelector('#owlnest-rule-modal')?.remove();
+    this._panelW = PANEL_W;
     this._stopLive?.();
     this._stopLive = null;
     this._liveRows.clear();
@@ -1112,7 +1125,6 @@ export class EditPanel {
     }, rulesCount);
 
     const rulesBody = document.createElement('div');
-    rulesBody.className = 'ow-legacy';
     rulesBody.style.cssText = 'overflow-y:auto;flex:1;min-height:0;';
     rulesPane.appendChild(rulesBody);
     this._fillRulesList(rulesBody);
@@ -3490,94 +3502,79 @@ export class EditPanel {
 
   private _fillRulesList(pane: HTMLDivElement) {
     pane.innerHTML = '';
-
-    const body = document.createElement('div');
-    body.style.cssText = 'padding:2px 0 4px;';
-    pane.appendChild(body);
-
+    pane.classList.remove('ow-legacy');
     const rules = this.getRules ? this.getRules() : [];
 
     if (rules.length === 0) {
       const empty = document.createElement('div');
-      empty.style.cssText = 'padding:18px 12px;font-size:11px;color:rgba(255,255,255,0.28);text-align:center;line-height:1.7;';
-      empty.innerHTML = `${t('rulesEmpty')}<br><span style="font-size:10px;opacity:.7">${t('rulesEmptyHint')}</span>`;
-      body.appendChild(empty);
+      empty.className = 'ow-empty';
+      const b = document.createElement('b');
+      b.textContent = t('rulesEmpty');
+      empty.append(b, document.createTextNode(t('rulesEmptyHint')));
+      pane.appendChild(empty);
       return;
     }
 
     rules.forEach((rule) => {
       const enabled = rule.enabled !== false;
       const row = document.createElement('div');
-      row.style.cssText = `display:flex;align-items:center;gap:6px;padding:7px 10px;border-bottom:1px solid rgba(255,255,255,0.04);transition:background .1s;cursor:pointer;${enabled ? '' : 'opacity:0.45;'}`;
-      row.addEventListener('mouseenter', () => { row.style.background = 'rgba(255,255,255,0.03)'; });
-      row.addEventListener('mouseleave', () => { row.style.background = ''; });
+      row.className = `ow-dev${enabled ? '' : ' ow-off'}`;
+      row.tabIndex = 0;
+      row.setAttribute('role', 'button');
+      const tile = document.createElement('span');
+      tile.className = 'ow-tile';
+      if (enabled) tile.style.cssText = 'background:color-mix(in srgb, var(--ow-acc) 18%, transparent);color:var(--ow-acc);';
+      tile.append(icon('bolt', 18));
+      const col = document.createElement('span');
+      col.className = 'ow-nm';
+      const name = document.createElement('b');
+      name.textContent = rule.label || ruleSummary(rule, this.getHass(), this.getViews?.() ?? []).split('  →  ')[0] || `${t('ruleDefaultLabel')} ${rule.id.slice(-4)}`;
+      const sub = document.createElement('span');
+      sub.textContent = ruleSummary(rule, this.getHass(), this.getViews?.() ?? []);
+      sub.title = sub.textContent;
+      col.append(name, sub);
 
-      const icon = document.createElement('span');
-      icon.style.cssText = 'font-size:14px;flex-shrink:0;';
-      icon.textContent = '⚡';
-
-      const info = document.createElement('div');
-      info.style.cssText = 'flex:1;min-width:0;';
-      const labelEl = document.createElement('div');
-      labelEl.style.cssText = 'font-size:11px;font-weight:600;color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-      labelEl.textContent = rule.label || `${t('ruleDefaultLabel')} ${rule.id.slice(-4)}`;
-
-      const triggerSummary = document.createElement('div');
-      triggerSummary.style.cssText = 'font-size:9px;color:rgba(255,255,255,0.35);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px;';
-      triggerSummary.textContent = ruleSummary(rule, this.getHass(), this.getViews?.() ?? []);
-      triggerSummary.title = triggerSummary.textContent;
-
-      info.appendChild(labelEl);
-      info.appendChild(triggerSummary);
-
-      // Enable toggle
-      const toggle = document.createElement('label');
-      toggle.style.cssText = 'display:flex;align-items:center;cursor:pointer;flex-shrink:0;';
-      toggle.title = enabled ? t('ruleToggleDisable') : t('ruleToggleEnable');
-      const chk = document.createElement('input');
-      chk.type = 'checkbox';
-      chk.checked = enabled;
-      chk.style.cssText = 'cursor:pointer;';
-      chk.addEventListener('change', (e) => {
+      const btns = document.createElement('span');
+      btns.className = 'ow-rowbtns';
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'ow-ib';
+      del.title = t('ruleDeleteTitle');
+      del.setAttribute('aria-label', t('ruleDeleteTitle'));
+      del.append(icon('trash', 16));
+      del.addEventListener('click', (e) => {
         e.stopPropagation();
-        const newRules = (this.getRules?.() ?? []).map((r) =>
-          r.id === rule.id ? { ...r, enabled: chk.checked } : r,
-        );
-        this.saveRules?.(newRules).then(() => this._fillRulesList(pane));
-      });
-      toggle.appendChild(chk);
-      toggle.addEventListener('click', (e) => e.stopPropagation());
-
-      // Edit button
-      const editBtn = document.createElement('button');
-      editBtn.style.cssText = 'background:none;border:none;color:rgba(125,211,252,0.6);cursor:pointer;font-size:13px;padding:2px 4px;flex-shrink:0;';
-      editBtn.textContent = '✎';
-      editBtn.title = t('ruleEditTitle');
-      editBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this._openRuleModal(rule, () => this._fillRulesList(pane));
-      });
-
-      // Delete button
-      const delBtn = document.createElement('button');
-      delBtn.style.cssText = 'background:none;border:none;color:rgba(248,113,113,0.5);cursor:pointer;font-size:13px;padding:2px 4px;flex-shrink:0;';
-      delBtn.textContent = '×';
-      delBtn.title = t('ruleDeleteTitle');
-      delBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
+        if (!del.dataset.armed) {
+          del.dataset.armed = '1';
+          del.style.color = '#f87171';
+          setTimeout(() => { delete del.dataset.armed; del.style.color = ''; }, 3000);
+          return;
+        }
         this._pushRuleSnap();
         const newRules = (this.getRules?.() ?? []).filter((r) => r.id !== rule.id);
         this.saveRules?.(newRules).then(() => this._fillRulesList(pane));
       });
+      btns.appendChild(del);
 
-      row.addEventListener('click', () => this._openRuleModal(rule, () => this._fillRulesList(pane)));
+      // Activer ou couper la règle sans l'ouvrir.
+      const sw = document.createElement('button');
+      sw.type = 'button';
+      sw.className = `ow-switch${enabled ? ' ow-on' : ''}`;
+      sw.setAttribute('role', 'switch');
+      sw.setAttribute('aria-checked', String(enabled));
+      sw.title = enabled ? t('ruleToggleDisable') : t('ruleToggleEnable');
+      sw.setAttribute('aria-label', sw.title);
+      sw.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const newRules = (this.getRules?.() ?? []).map((r) => (r.id === rule.id ? { ...r, enabled: !enabled } : r));
+        this.saveRules?.(newRules).then(() => this._fillRulesList(pane));
+      });
 
-      row.appendChild(icon);
-      row.appendChild(info);
-      row.appendChild(toggle);
-      row.appendChild(editBtn);
-      row.appendChild(delBtn);
-      body.appendChild(row);
+      row.append(tile, col, btns, sw);
+      const open = () => this._openRuleModal(rule, () => this._fillRulesList(pane));
+      row.addEventListener('click', open);
+      row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+      pane.appendChild(row);
     });
   }
 
@@ -3589,10 +3586,6 @@ export class EditPanel {
   /** Ouvrant affiché dans le formulaire, et fermeture sans rien enregistrer. */
   private _partModalId: string | null = null;
   private _discardPartModal: (() => void) | null = null;
-  /** Dernière position du formulaire, reprise à la prochaine ouverture. */
-  private _partModalPos: WindowPos | null = null;
-  /** Derniere position de la fenetre de regle, dans cette session de page. */
-  private _ruleModalPos: WindowPos | null = null;
 
   /**
    * Sections de réglages ouvertes.
@@ -4977,7 +4970,10 @@ export class EditPanel {
   }
 
   private _openRuleModal(existing: OwlnestRule | null, onSaved: () => void) {
-    document.getElementById('owlnest-rule-modal')?.remove();
+    this._panel?.querySelector('#owlnest-rule-modal')?.remove();
+    const host = this._panel;
+    if (!host) return;
+    if (this._narrow) this._setPanelOpen(true);
 
     const inputStyle = 'width:100%;box-sizing:border-box;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#e2e8f0;padding:5px 8px;font-size:11px;outline:none;font-family:inherit;';
     const lblStyle   = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;display:block;';
@@ -5001,40 +4997,43 @@ export class EditPanel {
     draft.triggers ??= [];
     draft.conditions ??= [];
 
-    const dialog = document.createElement('dialog');
+    // Dans le panneau, élargi le temps de l'édition : la règle se lit comme
+    // une phrase et a besoin de place pour ses morceaux.
+    const dialog = document.createElement('div');
     dialog.id = 'owlnest-rule-modal';
-    dialog.style.cssText = [
-      'position:fixed', 'top:50%', 'left:50%', 'transform:translate(-50%,-50%)',
-      'width:min(560px,94vw)', 'max-height:86vh',
-      'background:rgba(6,10,22,0.97)', 'backdrop-filter:blur(20px)',
-      'border:1px solid rgba(255,255,255,0.1)', 'border-radius:14px',
-      'box-shadow:0 20px 60px rgba(0,0,0,0.8)', 'padding:0',
-      'color:#e2e8f0', 'font-family:var(--primary-font-family,sans-serif)',
-      'display:flex', 'flex-direction:column', 'overflow:hidden', 'z-index:9999',
-    ].join(';');
-    dialog.addEventListener('keydown', (e) => e.stopPropagation());
-
-    // Header
-    const hdrEl = document.createElement('div');
-    hdrEl.style.cssText = 'display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.08);flex-shrink:0;gap:8px;';
-    const hdrTitle = document.createElement('span');
-    hdrTitle.style.cssText = 'font-size:12px;font-weight:700;color:#7dd3fc;text-transform:uppercase;letter-spacing:.08em;flex:1;';
-    hdrTitle.textContent = existing ? t('ruleModalEdit') : t('ruleModalNew');
-    const closeBtn = document.createElement('button');
-    closeBtn.style.cssText = 'background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#e2e8f0;padding:5px 12px;font-size:11px;font-family:inherit;cursor:pointer;';
-    closeBtn.textContent = t('ruleModalClose');
-    closeBtn.addEventListener('click', () => { dialog.close(); dialog.remove(); });
-    hdrEl.appendChild(hdrTitle);
-    hdrEl.appendChild(closeBtn);
-    dialog.appendChild(hdrEl);
-    makeDraggable(dialog, hdrEl, {
-      get: () => this._ruleModalPos,
-      set: (pos) => { this._ruleModalPos = pos; },
+    dialog.className = 'ow-ed ow-form';
+    dialog.setAttribute('role', 'dialog');
+    dialog.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Escape') { e.preventDefault(); closeForm(); }
     });
+    const closeForm = () => {
+      dialog.remove();
+      this._setPanelWidth(PANEL_W);
+    };
+    this._setPanelWidth(RULE_PANEL_W);
 
-    // Body
+    const hdrEl = document.createElement('div');
+    hdrEl.className = 'ow-form-h';
+    const backBtn = document.createElement('button');
+    backBtn.type = 'button';
+    backBtn.className = 'ow-ib';
+    backBtn.title = t('ruleModalClose');
+    backBtn.setAttribute('aria-label', t('ruleModalClose'));
+    backBtn.append(icon('back', 18));
+    backBtn.addEventListener('click', closeForm);
+    const hdrTitle = document.createElement('b');
+    hdrTitle.style.cssText = 'font-size:15px;flex:1;';
+    hdrTitle.textContent = existing ? t('ruleModalEdit') : t('ruleModalNew');
+    hdrEl.append(backBtn, hdrTitle);
+    dialog.appendChild(hdrEl);
+
+    // Le contenu garde ses morceaux de phrase, écrits pour l'ancienne fenêtre.
     const bodyEl = document.createElement('div');
-    bodyEl.style.cssText = 'overflow-y:auto;flex:1;min-height:0;padding:14px 16px;';
+    bodyEl.className = 'ow-form-b';
+    const bodyInner = document.createElement('div');
+    bodyInner.className = 'ow-rule-body';
+    bodyEl.appendChild(bodyInner);
     dialog.appendChild(bodyEl);
 
     const mk = (tag: string) => document.createElement(tag);
@@ -5218,7 +5217,7 @@ export class EditPanel {
       const tplTitle = mk('div') as HTMLDivElement;
       tplTitle.style.cssText = 'font-size:11px;color:#64748b;margin-bottom:6px;';
       tplTitle.textContent = t('ruleTplTitle');
-      bodyEl.appendChild(tplTitle);
+      bodyInner.appendChild(tplTitle);
 
       const tplRow = mk('div') as HTMLDivElement;
       tplRow.style.cssText = 'display:flex;gap:5px;flex-wrap:wrap;margin-bottom:14px;';
@@ -5258,12 +5257,12 @@ export class EditPanel {
         });
         tplRow.appendChild(c);
       });
-      bodyEl.appendChild(tplRow);
+      bodyInner.appendChild(tplRow);
     }
 
     // ── Quand ────────────────────────────────────────────────────────────────
     const whenPhase = phase('#378ADD', 'rgba(56,138,221,0.09)', '⚡', t('ruleWhen'));
-    bodyEl.appendChild(whenPhase.box);
+    bodyInner.appendChild(whenPhase.box);
 
     const renderTriggers = () => {
       whenPhase.body.innerHTML = '';
@@ -5377,7 +5376,7 @@ export class EditPanel {
 
     // ── Si (optionnel) ───────────────────────────────────────────────────────
     const ifHost = mk('div') as HTMLDivElement;
-    bodyEl.appendChild(ifHost);
+    bodyInner.appendChild(ifHost);
 
     const OPS: [string, string][] = [
       ['eq', t('ruleOpIs')], ['neq', t('ruleOpIsNot')],
@@ -5465,7 +5464,7 @@ export class EditPanel {
 
     // ── Alors ────────────────────────────────────────────────────────────────
     const thenPhase = phase('#639922', 'rgba(99,153,34,0.09)', '▶', t('ruleThen'));
-    bodyEl.appendChild(thenPhase.box);
+    bodyInner.appendChild(thenPhase.box);
 
     const renderActions = () => {
       thenPhase.body.innerHTML = '';
@@ -5611,16 +5610,17 @@ export class EditPanel {
     advBody.appendChild(cdRow);
 
     advWrap.append(advToggle, advBody);
-    bodyEl.appendChild(advWrap);
+    bodyInner.appendChild(advWrap);
 
     // ── Pied ─────────────────────────────────────────────────────────────────
     const footer = mk('div') as HTMLDivElement;
-    footer.style.cssText = 'display:flex;gap:8px;padding:12px 16px;border-top:1px solid rgba(255,255,255,0.08);flex-shrink:0;';
+    footer.className = 'ow-form-f';
 
     const testBtn = mk('button') as HTMLButtonElement;
+    testBtn.type = 'button';
     testBtn.textContent = t('ruleTry');
     testBtn.title = t('ruleTestHint');
-    testBtn.style.cssText = 'flex:1;background:rgba(125,209,252,0.13);border:1px solid rgba(125,209,252,0.34);border-radius:8px;color:#7dd3fc;padding:8px;font-size:11px;font-family:inherit;cursor:pointer;';
+    testBtn.className = 'ow-btn';
     testBtn.addEventListener('click', () => {
       this.onTestRule?.(draft);
       testBtn.textContent = t('ruleTestDone');
@@ -5628,13 +5628,16 @@ export class EditPanel {
     });
 
     const cancelBtn = mk('button') as HTMLButtonElement;
+    cancelBtn.type = 'button';
     cancelBtn.textContent = t('ruleModalCancel');
-    cancelBtn.style.cssText = 'flex:1;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#94a3b8;padding:8px;font-size:11px;font-family:inherit;cursor:pointer;';
-    cancelBtn.addEventListener('click', () => { dialog.close(); dialog.remove(); });
+    cancelBtn.className = 'ow-btn ow-ghost';
+    cancelBtn.style.marginLeft = 'auto';
+    cancelBtn.addEventListener('click', closeForm);
 
     const saveBtn = mk('button') as HTMLButtonElement;
+    saveBtn.type = 'button';
     saveBtn.textContent = t('ruleModalSave');
-    saveBtn.style.cssText = 'flex:2;background:rgba(59,130,246,0.85);border:none;border-radius:8px;color:#fff;padding:8px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;';
+    saveBtn.className = 'ow-btn ow-primary';
     saveBtn.addEventListener('click', async () => {
       const bad = (draft.triggers ?? []).find((x) => x.type !== 'time' && !x.entity_id.trim());
       if (bad || !(draft.triggers ?? []).length) {
@@ -5649,15 +5652,13 @@ export class EditPanel {
       const newRules = isNew ? [...current, draft] : current.map((r) => r.id === draft.id ? draft : r);
       this._pushRuleSnap();
       await this.saveRules?.(newRules);
-      dialog.close();
-      dialog.remove();
+      closeForm();
       onSaved();
     });
 
     footer.append(testBtn, cancelBtn, saveBtn);
     dialog.appendChild(footer);
 
-    document.body.appendChild(dialog);
-    dialog.showModal();
+    host.appendChild(dialog);
   }
 }

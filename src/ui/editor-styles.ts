@@ -134,6 +134,9 @@ details[open] > .ow-card-h .ow-chev { transform: rotate(45deg); }
 .ow-sheet-host .ow-form-b { overflow: visible; }
 .ow-sheet-h { position: sticky; top: 0; z-index: 3; background: var(--ow-chrome); }
 .ow-seg.ow-seg-wrap button { flex: 1 1 40%; }
+/* Règle : les morceaux de phrase de l'ancienne fenêtre, un peu agrandis. */
+.ow-rule-body { zoom: 1.1; }
+.ow-edpanel { transition: width .2s ease; }
 .ow-picker { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px; border-radius: 12px; border: 1px solid var(--ow-line);
   background: var(--ow-chrome); color: var(--ow-text); font: inherit; text-align: left; cursor: pointer; }
 .ow-picker:hover { border-color: var(--ow-acc); }
