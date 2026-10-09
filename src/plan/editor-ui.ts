@@ -27,7 +27,7 @@ import { wallFootprints } from './footprint';
 import { TEMPLATES, templatePlan, templateModels, type TemplateId } from './templates';
 import { CATALOG, CATEGORIES, catalogItem, itemLabel, thumbUrl, hasThumb, type ItemCategory } from './catalog';
 import {
-  loadFurniture, itemSize, topView, isoView, furnitureTints, tintKind, overItem, baseSize, itemElevation, supportOf,
+  loadFurniture, itemSize, topView, isoView, furnitureTints, tintKind, overItem, baseSize, itemElevation, supportOf, isFlat,
 } from './furniture';
 import {
   ROOM_TYPES, FLOOR_COLORS, WALL_COLORS, DOOR_COLORS, FRAME_COLORS, FLOOR_MATERIALS, type RoomType,
@@ -1724,8 +1724,9 @@ export class PlanEditor {
       this.guides = [];
       return;
     }
-    // Un objet posé sur un meuble le suit sans s'adosser aux murs.
-    if (catalogItem(it.model)?.top && (this.plan.items ?? []).some((o) => o.id !== it.id && catalogItem(o.model)?.surface && overItem(o, to))) {
+    // Un objet posé sur un meuble (pas sur un tapis) le suit sans s'adosser aux murs.
+    const under = supportOf(this.plan, { ...it, x: to.x, y: to.y });
+    if (under && !isFlat(under)) {
       it.x = round3(Math.round(to.x / 0.01) * 0.01);
       it.y = round3(Math.round(to.y / 0.01) * 0.01);
       return;

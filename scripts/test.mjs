@@ -49,6 +49,7 @@ const ENTRIES = [
   'src/plan/geometry.ts',
   'src/plan/templates.ts',
   'src/scene.ts',
+  'src/plan/furniture.ts',
 ];
 
 /**

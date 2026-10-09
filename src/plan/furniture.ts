@@ -133,12 +133,34 @@ export function overItem(item: PlanItem, p: { x: number; y: number }, margin = 0
   return Math.abs(lx) <= w / 2 + margin && Math.abs(ly) <= d / 2 + margin;
 }
 
-/** Le meuble sur lequel un objet est posé, s'il y en a un. */
+/** Un tapis : on marche dessus, on n'y adosse rien. */
+export const isFlat = (item: PlanItem) => itemSize(item).h < 0.05;
+
+/**
+ * Le meuble sur lequel un objet est posé, s'il y en a un : le plus haut de
+ * ceux sous son centre, à condition d'être plus grand que lui (vu de dessus).
+ * Une plante lâchée sur le meuble télé monte dessus au lieu de le traverser,
+ * même devant la télé : un objet « à poser » ne porte rien ;
+ * une chaise contre une table, dont le centre reste à côté, reste au sol ; un
+ * tapis, plus grand que le canapé, ne monte jamais dessus.
+ */
 export function supportOf(plan: PlanDoc, item: PlanItem): PlanItem | null {
-  if (!catalogItem(item.model)?.top) return null;
+  const c = catalogItem(item.model);
+  if (c?.wall !== undefined || c?.ceiling) return null;
+  const { w, d } = itemSize(item);
+  const area = w * d;
   let best: PlanItem | null = null;
   for (const other of plan.items ?? []) {
-    if (other.id === item.id || !catalogItem(other.model)?.surface || !overItem(other, item)) continue;
+    if (other.id === item.id || !overItem(other, item)) continue;
+    const oc = catalogItem(other.model);
+    // Un objet « à poser » (télé, lampe, écran) ne porte rien : une plante
+    // lâchée devant la télé va sur le meuble, pas sur l'écran.
+    if (oc?.wall !== undefined || oc?.ceiling || (oc?.top && !oc.surface)) continue;
+    const s = itemSize(other);
+    // Un objet « à poser » va toujours sur un support du catalogue ; sinon le
+    // plus petit se pose sur le plus grand.
+    const fits = (c?.top && oc?.surface) || s.w * s.d > area;
+    if (!fits) continue;
     if (!best || itemTop(plan, other) > itemTop(plan, best)) best = other;
   }
   return best;
