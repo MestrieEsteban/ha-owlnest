@@ -19,15 +19,15 @@ export type Slot = 'tl' | 'tc' | 'tr' | 'bl' | 'bc' | 'br';
 export const SLOTS: Slot[] = ['tl', 'tc', 'tr', 'bl', 'bc', 'br'];
 
 /** Les modules qu'on peut placer. La barre d'outils ne se cache pas. */
-export type ModuleId = 'views' | 'status' | 'dock';
-export const MODULES: ModuleId[] = ['views', 'status', 'dock'];
+export type ModuleId = 'rooms' | 'views' | 'status' | 'dock';
+export const MODULES: ModuleId[] = ['rooms', 'views', 'status', 'dock'];
 
 export interface UiPrefs {
   skin: Skin;
   accent: Accent;
   slots: Record<ModuleId, Slot>;
   /** Modules affichés (la barre d'outils l'est toujours). */
-  show: { views: boolean; status: boolean; names: boolean };
+  show: { rooms: boolean; views: boolean; status: boolean; names: boolean };
   /** Les outils s'effacent quand on ne touche pas la carte. */
   autohide: boolean;
 }
@@ -35,8 +35,8 @@ export interface UiPrefs {
 export const DEFAULT_UI: UiPrefs = {
   skin: 'night',
   accent: 'auto',
-  slots: { views: 'bc', status: 'tl', dock: 'br' },
-  show: { views: true, status: true, names: false },
+  slots: { rooms: 'tl', views: 'bc', status: 'tr', dock: 'br' },
+  show: { rooms: true, views: true, status: true, names: false },
   autohide: true,
 };
 
@@ -149,6 +149,10 @@ export const STYLES = `
   cursor: pointer; white-space: nowrap; transition: background .15s, color .15s; }
 .ow-chip:hover { color: var(--ow-text); background: var(--ow-chrome2); }
 .ow-chip.ow-on { background: var(--ow-acc); color: var(--ow-acc-ink); }
+.ow-chip i { font-style: normal; display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; padding: 1px 6px; border-radius: 999px;
+  background: #fbbf24; color: #3b2a05; font-size: 10.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ow-rooms { display: flex; gap: 2px; padding: 4px; max-width: min(620px, 100%); overflow-x: auto; scrollbar-width: none; }
+.ow-rooms::-webkit-scrollbar { display: none; }
 
 /* État */
 .ow-status { display: flex; align-items: center; gap: 10px; padding: 7px 12px; font-size: 12px; white-space: nowrap; }

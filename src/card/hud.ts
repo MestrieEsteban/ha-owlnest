@@ -30,6 +30,9 @@ export interface DockButton {
 
 export interface HudView { id: string; label: string }
 
+/** Une pièce du plan, et le nombre de lampes allumées dedans. */
+export interface HudRoom { id: string; name: string; lit: number }
+
 export interface HudStatus {
   /** Température extérieure, déjà formatée. */
   temp?: string;
@@ -40,13 +43,17 @@ export interface HudStatus {
 
 const SKIN_LABEL: Record<Skin, StringKey> = { night: 'uiSkinNight', paper: 'uiSkinPaper', glass: 'uiSkinGlass', ha: 'uiSkinHa' };
 const SKIN_SWATCH: Record<Skin, string> = { night: '#0b1220', paper: '#fbfaf7', glass: 'rgba(10,16,30,0.42)', ha: '#ffffff' };
-const MODULE_LABEL: Record<ModuleId, StringKey> = { views: 'uiModViews', status: 'uiModStatus', dock: 'uiModDock' };
+const MODULE_LABEL: Record<ModuleId, StringKey> = { rooms: 'uiModRooms', views: 'uiModViews', status: 'uiModStatus', dock: 'uiModDock' };
+type Toggleable = 'rooms' | 'views' | 'status';
 
 export class CardHud {
   prefs: UiPrefs;
   private slots = new Map<Slot, HTMLDivElement>();
   private dockEl: HTMLDivElement | null = null;
   private viewsEl: HTMLDivElement | null = null;
+  private roomsEl: HTMLDivElement | null = null;
+  private activeRoom: string | null = null;
+  private lastRooms = '';
   private statusEl: HTMLDivElement | null = null;
   private sheet: HTMLElement | null = null;
   private helloEl: HTMLDivElement | null = null;
@@ -65,6 +72,10 @@ export class CardHud {
     private opts: {
       getViews: () => HudView[];
       flyTo: (id: string) => void;
+      /** Les pièces du plan (vide sans plan). */
+      getRooms: () => HudRoom[];
+      /** Va dans une pièce ; `null` revient à toute la maison. */
+      flyToRoom: (id: string | null) => void;
       getStatus: () => HudStatus | null;
       onPrefs: (p: UiPrefs) => void;
       /** Pour les messages d'aide : la carte affiche-t-elle un plan ? */
@@ -121,8 +132,26 @@ export class CardHud {
   /** Les vues enregistrées ont changé. */
   refreshViews() { this.renderViews(); }
 
+  /** La pièce montrée (ou aucune) : un clic sur une vue l'efface, et réciproquement. */
+  setActiveRoom(id: string | null) {
+    this.activeRoom = id;
+    this.roomsEl?.querySelectorAll<HTMLButtonElement>('.ow-chip').forEach((b) => b.classList.toggle('ow-on', (b.dataset.room || null) === id));
+  }
+
+  /** Les pièces ou leurs lampes ont pu changer : ne repeint que si quelque chose a bougé. */
+  refreshRooms() {
+    const rooms = this.prefs.show.rooms ? this.opts.getRooms() : [];
+    const key = JSON.stringify(rooms);
+    if (key === this.lastRooms) return;
+    this.lastRooms = key;
+    this.renderRooms(rooms);
+  }
+
+  get roomsModule() { return this.roomsEl; }
+
   setActiveView(id: string | null) {
     this.activeView = id;
+    if (id) this.setActiveRoom(null);
     this.viewsEl?.querySelectorAll<HTMLButtonElement>('.ow-chip').forEach((b) => b.classList.toggle('ow-on', b.dataset.view === id));
   }
 
@@ -146,8 +175,10 @@ export class CardHud {
 
   private render() {
     for (const [, el] of this.slots) el.innerHTML = '';
-    this.dockEl = this.viewsEl = this.statusEl = null;
+    this.dockEl = this.viewsEl = this.statusEl = this.roomsEl = null;
     this.renderDock();
+    this.lastRooms = '';
+    this.refreshRooms();
     this.renderViews();
     this.lastStatus = '';
     this.refreshStatus();
@@ -192,6 +223,43 @@ export class CardHud {
       btn.addEventListener('click', (e) => { e.stopPropagation(); b.onClick(btn); });
       el.append(btn);
     }
+  }
+
+  private renderRooms(rooms: HudRoom[]) {
+    // Une seule pièce : le bouton « Maison » suffit, le module ne sert à rien.
+    if (rooms.length < 2) { this.roomsEl?.remove(); this.roomsEl = null; return; }
+    if (!this.roomsEl) {
+      const el = document.createElement('div');
+      el.className = 'ow-surface ow-rooms';
+      el.setAttribute('role', 'toolbar');
+      el.setAttribute('aria-label', t('uiModRooms'));
+      this.roomsEl = el;
+      this.place('rooms', el);
+    }
+    this.roomsEl.innerHTML = '';
+    const chip = (id: string, label: string, lit: number) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'ow-chip';
+      b.dataset.room = id;
+      b.textContent = label;
+      if (lit > 0) {
+        const badge = document.createElement('i');
+        badge.textContent = String(lit);
+        badge.title = lit > 1 ? `${lit} ${t('uiLightsOnMany')}` : `${lit} ${t('uiLightsOn')}`;
+        b.append(badge);
+      }
+      b.classList.toggle('ow-on', (id || null) === this.activeRoom);
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.setActiveRoom(id || null);
+        this.setActiveView(null);
+        this.opts.flyToRoom(id || null);
+      });
+      this.roomsEl!.append(b);
+    };
+    chip('', t('uiRoomsHome'), rooms.reduce((n, r) => n + r.lit, 0));
+    for (const r of rooms) chip(r.id, r.name, r.lit);
   }
 
   private renderViews() {
@@ -317,7 +385,7 @@ export class CardHud {
     if (!sh) return;
     const p = this.prefs;
     const cells = SLOTS.map((c) => `<div class="ow-cell" data-cell="${c}">${MODULES.filter((k) => p.slots[k] === c).map((k) =>
-      `<button type="button" class="ow-mchip${this.picked === k ? ' ow-sel' : ''}${k !== 'dock' && !p.show[k as 'views' | 'status'] ? ' ow-off' : ''}" data-m="${k}">${t(MODULE_LABEL[k])}</button>`).join('')}</div>`).join('');
+      `<button type="button" class="ow-mchip${this.picked === k ? ' ow-sel' : ''}${k !== 'dock' && !p.show[k as Toggleable] ? ' ow-off' : ''}" data-m="${k}">${t(MODULE_LABEL[k])}</button>`).join('')}</div>`).join('');
     const sw = (on: boolean, key: string, label: string) =>
       `<div class="ow-row-opt"><span>${label}</span><button type="button" class="ow-switch${on ? ' ow-on' : ''}" role="switch" aria-checked="${on}" aria-label="${label}" data-opt="${key}"></button></div>`;
     sh.innerHTML = `
@@ -330,6 +398,7 @@ export class CardHud {
         <div><div class="ow-h5">${t('uiAccent')}</div><div class="ow-accents">${ACCENTS.map((a) =>
           `<button type="button" class="ow-acc${a === p.accent ? ' ow-on' : ''}" data-acc="${a}" style="--sw:${a === 'auto' ? 'conic-gradient(#38bdf8,#34d399,#fbbf24,#f472b6,#a78bfa,#38bdf8)' : a}" aria-label="${a === 'auto' ? t('uiAccentAuto') : a}">${a === 'auto' ? 'A' : ''}</button>`).join('')}</div></div>
         <div><div class="ow-h5">${t('uiModules')}</div>
+          ${sw(p.show.rooms, 'rooms', t('uiModRooms'))}
           ${sw(p.show.views, 'views', t('uiModViews'))}
           ${sw(p.show.status, 'status', t('uiModStatus'))}
           ${sw(p.autohide, 'autohide', t('uiAutohide'))}</div>
@@ -352,7 +421,7 @@ export class CardHud {
     if (b.dataset.opt) {
       const k = b.dataset.opt;
       if (k === 'autohide') this.prefs.autohide = !this.prefs.autohide;
-      else this.prefs.show[k as 'views' | 'status'] = !this.prefs.show[k as 'views' | 'status'];
+      else this.prefs.show[k as Toggleable] = !this.prefs.show[k as Toggleable];
       this.save(); this.render(); this.renderSheet(); return;
     }
     if (b.dataset.act === 'close') { this.closeSheet(); return; }

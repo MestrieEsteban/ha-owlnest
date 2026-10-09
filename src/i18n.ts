@@ -1027,6 +1027,11 @@ const STRINGS = {
     partPickSensor: 'Choose a sensor',
     partPickSensorHint: 'The door sensor, the cover or the switch that tells if it is open',
     partChangeSensor: 'Change',
+    // Interface de la carte
+    uiModRooms: 'Rooms',
+    uiRoomsHome: 'Whole house',
+    tourRoomsTitle: 'Go into a room',
+    tourRoomsText: 'Each room of your plan has its button, with the number of lights on. Nothing to set up: they follow the plan.',
   },
 
   fr: {
@@ -2040,6 +2045,11 @@ const STRINGS = {
     partPickSensor: 'Choisir un capteur',
     partPickSensorHint: 'Le capteur de porte, le volet ou l\'interrupteur qui dit si c\'est ouvert',
     partChangeSensor: 'Changer',
+    // Interface de la carte
+    uiModRooms: 'Pièces',
+    uiRoomsHome: 'Toute la maison',
+    tourRoomsTitle: 'Va dans une pièce',
+    tourRoomsText: 'Chaque pièce de ton plan a son bouton, avec le nombre de lampes allumées. Rien à régler : elles suivent le plan.',
   },
 } as const;
 

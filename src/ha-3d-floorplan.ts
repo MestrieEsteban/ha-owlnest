@@ -63,7 +63,8 @@ import { catalogItem } from './plan/catalog';
 import { createUniforms, instrumentMaterials, updateXray, createGhost } from './cutaway';
 import type { CutawayUniforms } from './cutaway';
 import { evalCondition, RuleEngine } from './rules/engine';
-import { CardHud, type DockButton, type HudStatus } from './card/hud';
+import { CardHud, type DockButton, type HudStatus, type HudRoom } from './card/hud';
+import { planRooms, roomCamera, roomOfPoint, type RoomView } from './plan/room-views';
 import { STYLES as UI_STYLES, type UiPrefs } from './ui/theme';
 import { icon as uiIcon } from './ui/icons';
 import { Tour, tourSeen, markTourSeen, type TourStep } from './ui/tour';
@@ -404,6 +405,7 @@ export class Ha3dFloorplan extends HTMLElement {
       this._evaluateRules();
       this._evaluatePassiveConditions();
       this._ui?.refreshStatus();
+      this._ui?.refreshRooms();
       this._requestRender();
     }
   }
@@ -987,6 +989,8 @@ export class Ha3dFloorplan extends HTMLElement {
         const v = normalizeViews(this._effectiveConfig.camera_views ?? []).find((x) => x.id === id);
         if (v) this._viewMgr?.flyTo(v);
       },
+      getRooms: () => this._hudRooms(),
+      flyToRoom: (id) => this._flyToRoom(id),
       getStatus: () => this._homeStatus(),
       onPrefs: (prefs) => this._saveUiPrefs(prefs),
       startTour: () => this._startViewTour(),
@@ -1890,6 +1894,47 @@ export class Ha3dFloorplan extends HTMLElement {
     });
   }
 
+  /** Les pièces du plan, recalculées seulement quand le plan change. */
+  private _roomsCache: { plan: PlanDoc; rooms: RoomView[] } | null = null;
+  private _rooms(): RoomView[] {
+    const plan = this._plan;
+    if (!plan) return [];
+    if (this._roomsCache?.plan !== plan) this._roomsCache = { plan, rooms: planRooms(plan) };
+    return this._roomsCache.rooms;
+  }
+
+  /** Le module « Pièces » : chaque pièce du plan, avec ses lampes allumées. */
+  private _hudRooms(): HudRoom[] {
+    const plan = this._plan;
+    if (!plan || !this.modelLoaded) return [];
+    const rooms = this._rooms();
+    const origin = this._planOrigin(plan);
+    const lit = new Map<string, number>();
+    const hass = this._hass;
+    if (hass) {
+      this.anchors.forEach((a) => {
+        if (a.domain !== 'light' || hass.states[a.entityId]?.state !== 'on') return;
+        const r = roomOfPoint(rooms, origin, a.worldPos.x, a.worldPos.z);
+        if (r) lit.set(r.id, (lit.get(r.id) ?? 0) + 1);
+      });
+    }
+    return rooms.map((r) => ({ id: r.id, name: r.name, lit: lit.get(r.id) ?? 0 }));
+  }
+
+  /** La caméra vole au-dessus d'une pièce ; `null` revient à toute la maison. */
+  private _flyToRoom(id: string | null) {
+    if (!id) { this._frameModel(true); return; }
+    const plan = this._plan;
+    const room = this._rooms().find((r) => r.id === id);
+    if (!plan || !room || !this.camera) return;
+    const visible = this.canvas?.clientWidth ? 1 - Math.abs(this._viewShift) / this.canvas.clientWidth : 1;
+    const pose = roomCamera(room, this._planOrigin(plan), {
+      fovDeg: this.camera.fov, aspect: this.camera.aspect, wallHeight: plan.wallHeight ?? 2.5, visible,
+    });
+    this._camAnimTo = { pos: new THREE.Vector3(...pose.pos), target: new THREE.Vector3(...pose.target) };
+    this._requestRender();
+  }
+
   /** L'état de la maison pour le module « État » : lampes allumées, météo. */
   private _homeStatus(): HudStatus | null {
     const hass = this._hass;
@@ -1936,6 +1981,7 @@ export class Ha3dFloorplan extends HTMLElement {
       { title: 'tourHomeTitle', text: 'tourHomeText', anim: 'orbit' },
     ];
     if (this.overlays.size) steps.push({ target: () => [...this.overlays.values()].find((o) => o.el.offsetParent && o.el.style.display !== 'none')?.el, title: 'tourTapTitle', text: 'tourTapText', anim: 'tap' });
+    if (this._ui?.roomsModule) steps.push({ target: () => this._ui?.roomsModule, title: 'tourRoomsTitle', text: 'tourRoomsText', anim: 'views' });
     if (this._ui?.viewsModule) steps.push({ target: () => this._ui?.viewsModule, title: 'tourViewsTitle', text: 'tourViewsText', anim: 'views' });
     if (this._plan) steps.push({ target: dock('walls'), title: 'tourWallsTitle', text: 'tourWallsText', anim: 'walls' });
     steps.push(
@@ -3519,6 +3565,7 @@ export class Ha3dFloorplan extends HTMLElement {
     if (animate) {
       this._camAnimTo = { pos: centre.clone().add(dir.multiplyScalar(dist)), target: centre };
       this._ui?.setActiveView(null);
+      this._ui?.setActiveRoom(null);
       this._requestRender();
       return;
     }
@@ -3862,6 +3909,7 @@ export class Ha3dFloorplan extends HTMLElement {
 
     this._rebuildNormalHUD();
     this._ui?.refreshStatus();
+    this._ui?.refreshRooms();
     if (!tourSeen() && !this._editMode && !this._planEditor && !this.overlayContainer?.querySelector('#owlnest-demo-banner')) this._ui?.showHello();
 
     // Sync cards from scene
