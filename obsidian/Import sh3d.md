@@ -17,6 +17,19 @@ Une archive zip. Mesuré sur les six fichiers d'Esteban (octobre 2026) :
 > [!important] Les matières sans MTL
 > Un modèle du catalogue de Sweet Home 3D cite ses matières par leur nom (`flblonde`, `flgrey`, `amber`) sans fichier de matières : elles sont fournies par le logiciel. Leurs couleurs sont reconstituées d'après le nom (`namedColor`). Une couleur imposée au meuble (`color='FFAE7400'`) ou par matière (`<material>`) est cuite dans le GLB.
 
+## Pièces et sols d'une maison mal fermée
+
+Les six fichiers ont des murs qui ne se rejoignent pas : parfois de quelques centimètres (dessin rapide), souvent d'un à deux mètres (cuisine ouverte, palier). Sans espace fermé, pas de pièce, donc ni sol ni nom.
+
+Deux passes, dans l'ordre :
+
+1. **`closeGaps`** (graph.ts) : un bout de mur libre à moins de 30 cm d'un autre mur est prolongé jusqu'à lui ; deux bouts libres proches se rejoignent à l'angle de leurs murs. Deux murs parallèles (un mur doublé) ne sont jamais reliés.
+2. **`closeOpenAreas`** (sh3d-home.ts) : les vraies ouvertures sont fermées par une **limite de pièce**, un mur de hauteur nulle. Elle n'est gardée que si elle ferme un espace de plus, et refusée si elle crée une pièce de moins de 0,8 m² (un liseré le long d'un mur). Deux bouts libres se relient jusqu'à 4 m, dans n'importe quelle direction : c'est le côté ouvert d'une pièce en U.
+
+Une limite de pièce (`isBoundary`) ferme l'espace pour le calcul des pièces, n'a ni semelle ni volume en 3D, et se dessine en pointillés dans l'éditeur, où on peut « en faire un mur ». C'est un mur ordinaire de hauteur 0 : aucun format nouveau, les scènes existantes ne changent pas.
+
+Mesuré : MaisonHA passe de 2 pièces à 4 (toutes avec un sol), cuisine1 de 0 à 1, azaz de 2 à 6.
+
 ## Conventions vérifiées
 
 - Centimètres, `y` vers le bas du plan, angles en radians dans le sens horaire : comme notre plan, en mètres. Rotation d'un meuble : `angle × 180 / π`, sans changement de signe (vérifié à l'œil sur MaisonHA : canapé, rideaux, chaises).
