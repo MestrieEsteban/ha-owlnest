@@ -48,6 +48,7 @@ const ENTRIES = [
   'src/plan/footprint.ts',
   'src/plan/geometry.ts',
   'src/plan/templates.ts',
+  'src/scene.ts',
 ];
 
 /**

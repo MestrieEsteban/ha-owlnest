@@ -230,6 +230,7 @@ export function sceneToEffectiveConfig(scene: OwlnestScene, base: CardConfig): C
       navViewId: a.navViewId,
       size: a.size,
       display: a.display,
+      planId: a.id?.startsWith('plan_') ? a.id : undefined,
     })),
     camera_views: scene.camera_views?.length
       ? normalizeViews(scene.camera_views)
@@ -252,7 +253,7 @@ export function buildSceneFromEditor(
   let idx = 0;
 
   editableAnchors.forEach((a) => {
-    const id = `anchor_${String(idx++).padStart(3, '0')}`;
+    const id = a.planId ?? `anchor_${String(idx++).padStart(3, '0')}`;
     anchors.push({
       id,
       entity: a.entity,
@@ -290,5 +291,8 @@ export function buildSceneFromEditor(
     cards: current?.cards ?? [],
     rules: current?.rules ?? [],
     parts: current?.parts ?? [],
+    // Le logement dessiné n'existe que dans la scène : l'oublier ici l'effaçait
+    // au premier enregistrement depuis l'éditeur d'ancres.
+    ...(current?.plan ? { plan: current.plan } : {}),
   };
 }
