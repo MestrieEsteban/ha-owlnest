@@ -1,0 +1,7 @@
+Ultimate House Interior Pack
+Created by Quaternius (https://quaternius.com/packs/ultimatehomeinterior.html)
+
+License: Creative Commons Zero (CC0)
+http://creativecommons.org/publicdomain/zero/1.0/
+
+Converted from OBJ to GLB for Owlnest. Files are prefixed with q_.

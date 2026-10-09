@@ -14,18 +14,27 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { PlanDoc, PlanItem } from './types';
-import { catalogItem, modelUrl, KIT_SCALE } from './catalog';
+import { catalogItem, modelUrl, catalogScale } from './catalog';
+import { buildProcedural } from './procedural';
 
-/** Les matières qu'on laisse recolorer, et leur nom à l'écran. */
-export const TINTABLE = ['carpet', 'carpetBlue', 'wood'] as const;
-export type Tintable = typeof TINTABLE[number];
+/**
+ * Les matières qu'on laisse recolorer : les tissus et les bois. Les modèles
+ * les nomment à leur façon (`carpet` chez Kenney, `Couch_Beige` ou `Wood_Dark`
+ * chez Quaternius).
+ */
+export type TintKind = 'fabric' | 'wood';
+export function tintKind(material: string): TintKind | null {
+  if (/^(carpet|couch_|cushin)/i.test(material)) return 'fabric';
+  if (/^wood/i.test(material)) return 'wood';
+  return null;
+}
 
 interface Loaded {
   scene: THREE.Group;
   /** Emprise (x, z) et hauteur (y), en mètres. */
   size: THREE.Vector3;
   /** Matières recolorables présentes dans ce modèle. */
-  tints: Tintable[];
+  tints: string[];
 }
 
 const loader = new GLTFLoader();
@@ -38,9 +47,27 @@ const urlOf = (model: string) => (catalogItem(model) ? modelUrl(model) : model);
 export function loadFurniture(model: string): Promise<Loaded> {
   let p = cache.get(model);
   if (!p) {
-    p = loader.loadAsync(urlOf(model)).then((gltf) => {
+    const made = buildProcedural(model);
+    const source = made ? Promise.resolve({ scene: made }) : loader.loadAsync(urlOf(model));
+    p = source.then((gltf) => {
       const scene = gltf.scene;
-      if (catalogItem(model)) scene.scale.setScalar(KIT_SCALE);
+      const item = catalogItem(model);
+      if (item && !made) scene.scale.setScalar(catalogScale(item));
+      if (item?.id.startsWith('q_')) {
+        // Les couleurs du pack Quaternius sortent de Blender déjà assombries
+        // pour un affichage linéaire : on les remonte d'un cran, sinon un
+        // canapé beige paraît brun.
+        const done = new Set<THREE.Material>();
+        scene.traverse((o) => {
+          const m = o as THREE.Mesh;
+          if (!m.isMesh) return;
+          for (const mat of [m.material].flat()) {
+            if (done.has(mat)) continue;
+            done.add(mat);
+            (mat as THREE.MeshStandardMaterial).color?.convertLinearToSRGB();
+          }
+        });
+      }
       else {
         // Un meuble importé peut être en centimètres (Sweet Home 3D) ou en
         // millimètres : un canapé de 200 unités n'est pas un canapé de 200 m.
@@ -57,11 +84,11 @@ export function loadFurniture(model: string): Promise<Loaded> {
       scene.position.set(-c.x, -box.min.y, -c.z);
       const wrap = new THREE.Group();
       wrap.add(scene);
-      const tints = new Set<Tintable>();
+      const tints = new Set<string>();
       wrap.traverse((o) => {
         const m = o as THREE.Mesh;
         if (!m.isMesh) return;
-        for (const mat of [m.material].flat()) if ((TINTABLE as readonly string[]).includes(mat.name)) tints.add(mat.name as Tintable);
+        for (const mat of [m.material].flat()) if (tintKind(mat.name)) tints.add(mat.name);
       });
       const out = { scene: wrap, size: box.getSize(new THREE.Vector3()), tints: [...tints] };
       ready.set(model, out);
@@ -79,7 +106,7 @@ export function furnitureSize(model: string): THREE.Vector3 | null {
   return ready.get(model)?.size ?? null;
 }
 
-export function furnitureTints(model: string): Tintable[] {
+export function furnitureTints(model: string): string[] {
   return ready.get(model)?.tints ?? [];
 }
 
@@ -223,6 +250,50 @@ export function bulbPosition(plan: PlanDoc, item: PlanItem): [number, number, nu
 let topRenderer: THREE.WebGLRenderer | null = null;
 const topCache = new Map<string, string>();
 
+function renderer(): THREE.WebGLRenderer | null {
+  if (topRenderer) return topRenderer;
+  try {
+    topRenderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
+  } catch {
+    return null;
+  }
+  topRenderer.setClearColor(0x000000, 0);
+  topRenderer.outputColorSpace = THREE.SRGBColorSpace;
+  return topRenderer;
+}
+
+const isoCache = new Map<string, Promise<string | null>>();
+
+/**
+ * Une vignette de catalogue : le meuble vu de trois quarts, comme celles du
+ * kit Kenney. Rendue une fois par modèle, pour ceux qui n'en ont pas.
+ */
+export function isoView(model: string): Promise<string | null> {
+  let p = isoCache.get(model);
+  if (!p) {
+    p = loadFurniture(model).then((loaded) => {
+      const r = typeof document === 'undefined' ? null : renderer();
+      if (!r) return null;
+      r.setSize(128, 128, false);
+      const scene = new THREE.Scene();
+      scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8a8a, 2.2));
+      const sun = new THREE.DirectionalLight(0xffffff, 1.8);
+      sun.position.set(2, 4, 3);
+      scene.add(sun);
+      scene.add(loaded.scene.clone(true));
+      const { x: w, y: h, z: d } = loaded.size;
+      const radius = Math.max(Math.hypot(w, h, d) / 2, 0.05);
+      const cam = new THREE.OrthographicCamera(-radius, radius, radius, -radius, 0.01, radius * 20);
+      cam.position.set(radius * 3, h / 2 + radius * 2.4, radius * 3.4);
+      cam.lookAt(0, h / 2, 0);
+      r.render(scene, cam);
+      return r.domElement.toDataURL('image/png');
+    }).catch(() => null);
+    isoCache.set(model, p);
+  }
+  return p;
+}
+
 /**
  * L'image d'un meuble vu d'au-dessus, à mettre sur le plan. Rendue une fois
  * par modèle et par jeu de couleurs.
@@ -237,20 +308,11 @@ export async function topView(item: PlanItem): Promise<string | null> {
   } catch {
     return null;
   }
-  if (typeof document === 'undefined') return null;
-  if (!topRenderer) {
-    try {
-      topRenderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
-    } catch {
-      return null;
-    }
-    topRenderer.setClearColor(0x000000, 0);
-    topRenderer.outputColorSpace = THREE.SRGBColorSpace;
-  }
+  if (typeof document === 'undefined' || !renderer()) return null;
   const { x: w, z: d, y: h } = loaded.size;
   const px = 256;
   const k = px / Math.max(w, d);
-  topRenderer.setSize(Math.max(8, Math.round(w * k)), Math.max(8, Math.round(d * k)), false);
+  topRenderer!.setSize(Math.max(8, Math.round(w * k)), Math.max(8, Math.round(d * k)), false);
   const scene = new THREE.Scene();
   scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8a8a, 2.2));
   const sun = new THREE.DirectionalLight(0xffffff, 1.6);
@@ -262,8 +324,8 @@ export async function topView(item: PlanItem): Promise<string | null> {
   cam.position.set(0, h + 5, 0);
   cam.up.set(0, 0, -1);
   cam.lookAt(0, 0, 0);
-  topRenderer.render(scene, cam);
-  const url = topRenderer.domElement.toDataURL('image/png');
+  topRenderer!.render(scene, cam);
+  const url = topRenderer!.domElement.toDataURL('image/png');
   topCache.set(key, url);
   return url;
 }

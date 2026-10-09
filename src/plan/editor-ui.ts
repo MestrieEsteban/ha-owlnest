@@ -25,9 +25,9 @@ import {
 } from './graph';
 import { wallFootprints } from './footprint';
 import { TEMPLATES, templatePlan, type TemplateId } from './templates';
-import { CATALOG, CATEGORIES, catalogItem, itemLabel, thumbUrl, type ItemCategory } from './catalog';
+import { CATALOG, CATEGORIES, catalogItem, itemLabel, thumbUrl, hasThumb, type ItemCategory } from './catalog';
 import {
-  loadFurniture, itemSize, topView, furnitureTints, overItem, baseSize, itemElevation, supportOf, type Tintable,
+  loadFurniture, itemSize, topView, isoView, furnitureTints, tintKind, overItem, baseSize, itemElevation, supportOf,
 } from './furniture';
 import {
   ROOM_TYPES, FLOOR_COLORS, WALL_COLORS, DOOR_COLORS, FRAME_COLORS, FLOOR_MATERIALS, type RoomType,
@@ -1848,7 +1848,8 @@ export class PlanEditor {
       b.addEventListener('mouseenter', () => { b.style.borderColor = '#38bdf8'; });
       b.addEventListener('mouseleave', () => { b.style.borderColor = 'transparent'; });
       const img = el('img', 'width:64px;height:64px;object-fit:contain;pointer-events:none;');
-      img.src = thumbUrl(c.id);
+      if (hasThumb(c)) img.src = thumbUrl(c.id);
+      else void isoView(c.id).then((u) => { if (u) img.src = u; });
       img.alt = '';
       img.loading = 'lazy';
       b.append(img, el('span', '', itemLabel(c)));
@@ -1907,10 +1908,13 @@ export class PlanEditor {
     const tints = furnitureTints(it.model);
     const FABRIC = ['#c9c2b8', '#8a8f98', '#3e4a5c', '#5b7083', '#7a9a7e', '#b5655b', '#d9a441', '#2f343b', '#e8e4dc', '#9b7bb0', '#c97b8a', '#4f6d5a'];
     const WOOD = ['#e0c49a', '#c8a77e', '#a97c55', '#7a5a3f', '#4a3626', '#f4f4f2', '#d6d3cd', '#2f343b'];
-    const labels: Record<Tintable, StringKey> = { carpet: 'planTintFabric', carpetBlue: 'planTintFabric2', wood: 'planTintWood' };
+    // Un tissu ou un bois par matière du modèle : « Tissu », « Tissu 2 »…
+    const seen = { fabric: 0, wood: 0 };
     for (const tint of tints) {
-      const palette = tint === 'wood' ? WOOD : FABRIC;
-      this.swatches(t(labels[tint]), palette, it.colors?.[tint], (col) => { it.colors = { ...it.colors, [tint]: col }; });
+      const kind = tintKind(tint)!;
+      const n = ++seen[kind];
+      const label = `${t(kind === 'wood' ? 'planTintWood' : 'planTintFabric')}${n > 1 ? ` ${n}` : ''}`;
+      this.swatches(label, kind === 'wood' ? WOOD : FABRIC, it.colors?.[tint], (col) => { it.colors = { ...it.colors, [tint]: col }; });
     }
     if (c?.light) {
       this.bubble.append(el('div', 'color:#cbd5e1;margin:8px 0 6px;', t('planLampEntity')));
