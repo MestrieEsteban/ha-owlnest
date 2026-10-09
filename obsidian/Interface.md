@@ -24,21 +24,24 @@ Le plein écran a des **raisons** (`_fsReasons` : `user`, `plan`, `edit`) : il d
 
 ## L'éditeur
 
-Onglets en haut : **Plan · Appareils · Ouvrants · Règles · Ambiance · Réglages** (`editorTabs()` dans `edit-panel.ts`, partagé avec l'éditeur de plan, qui affiche les mêmes onglets). Ce qui a bougé depuis l'ancien inspecteur :
+Onglets en haut : **Plan · Appareils · Ouvrants · Règles · Caméra · Ambiance · Réglages** (`editorTabs()` dans `edit-panel.ts`, partagé avec l'éditeur de plan, qui affiche les mêmes onglets). Ce qui a bougé depuis l'ancien inspecteur :
 
 | Avant | Maintenant |
 | --- | --- |
 | Rail d'icônes à gauche du panneau | Onglets dans la barre du haut |
 | Panneau flottant de 264 px | Panneau ancré à droite, 340 px ; la 3D se décale (`_viewShift` négatif) |
 | Barre du bas : outil, annuler, vues, Terminé, raccourcis | Annuler, aide, Terminé en haut ; raccourcis dans le menu d'aide |
-| Onglets Caméra et Config | Réunis dans **Réglages** (vues enregistrées en tête) |
+| Onglet Caméra (vues dans un coin du panneau) | **Caméra** : vues enregistrées ; aller, renommer, remplacer par la vue actuelle, monter, masquer, supprimer en deux temps |
+| Onglet Config | **Réglages** |
 | Onglet Météo | **Ambiance** |
 | Liste plate d'ancres, nom technique | **Appareils** groupés par pièce (registre HA), état en clair, recherche |
 | « + Ajouter » dans l'en-tête | Choisir · Orienter · Retirer · **Ajouter**, juste au-dessus de la liste |
 
 Sur une carte de moins de 760 px, le panneau passe par-dessus la 3D et s'ouvre par un bouton « Panneau ». Sur une carte de moins de 900 px, « Modifier » propose d'abord le plein écran (« Ne plus me demander » retient le choix).
 
-Le contenu repris tel quel de l'ancien inspecteur (fiches, listes des règles et ouvrants, Ambiance, Réglages) était écrit en 9 à 11 px : il est agrandi d'un bloc par `zoom: 1.18` (`.ow-legacy`) plutôt que réécrit. **À reprendre au fil de l'eau**, fiche par fiche.
+**Ouvrants** : la fenêtre flottante avec l'arborescence brute du modèle est devenue une fiche dans le panneau, dans l'ordre de ce qu'on fait : relier le capteur (un grand bouton, plus d'identifiant à taper), **Essayer** (le curseur qui fait bouger l'ouvrant), puis le mouvement (tuiles Pivote, Coulisse, Se déroule, Animation, et boutons côte à côte au lieu des listes déroulantes). Couleurs et « Ce qui bouge » (l'arborescence, les pièces qui suivent) sont repliés. Toute la logique d'avant est gardée : réglages appliqués en direct, Annuler qui revient à l'état d'origine (ou retire un ouvrant tout neuf), enregistrement différé de 600 ms.
+
+Le contenu repris tel quel de l'ancien inspecteur (fiches des appareils, liste des règles, Ambiance, Réglages, arborescence des ouvrants) était écrit en 9 à 11 px : il est agrandi d'un bloc par `zoom: 1.18` (`.ow-legacy`) plutôt que réécrit. **À reprendre au fil de l'eau**, fiche par fiche.
 
 ## Tutoriels
 
@@ -48,7 +51,13 @@ Le contenu repris tel quel de l'ancien inspecteur (fiches, listes des règles et
 
 Mémoire par appareil : `owlnest_tour_seen`, `owlnest_tour_editor_seen`.
 
+## Langue
+
+Tout le français est au **« tu »** depuis le 9 octobre 2026, et chaque texte a son anglais. Un nouveau texte s'ajoute dans les deux langues (`i18n.test.mjs` vérifie que les clés correspondent).
+
 ## Pièges rencontrés
+
+- Un script Python passé par un heredoc dans l'outil Bash perd ses barres obliques d'échappement : trois traductions cassées d'un coup. Écrire ces scripts dans un fichier.
 
 - Un élément posé dans `overlayContainer` doit remettre `pointer-events:auto` (voir [[Pieges]]). Les classes `ow-surface`, `ow-sheet`, `ow-scrim`, `ow-menu`, `ow-pill` le font.
 - Un `display:flex` écrit en ligne l'emporte sur l'attribut `hidden` : pour masquer un élément stylé en ligne, passer par `style.display`.
@@ -56,6 +65,5 @@ Mémoire par appareil : `owlnest_tour_seen`, `owlnest_tour_editor_seen`.
 
 ## Reste à faire
 
-- Harmoniser le français sur le « tu » (l'ancien texte mélange « vous » et « tu »).
 - Réécrire les fiches héritées dans les composants `ow-` au lieu du zoom.
 - Les noms des pastilles affichés en permanence (prévu dans la maquette, pas encore dans la carte).
