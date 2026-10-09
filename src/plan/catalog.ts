@@ -52,7 +52,15 @@ export function catalogScale(c: CatalogItem): number {
 /** Les vignettes livrées : celles du kit Kenney. Les autres sont rendues à la volée. */
 export const hasThumb = (c: CatalogItem) => !c.id.startsWith('q_') && !c.id.startsWith('p_');
 
-export const FURNITURE_URL = '/owlnest_frontend/furniture/';
+/**
+ * Où sont servis les meubles. En production, par l'intégration, sur le même
+ * serveur que Home Assistant. En dev, la carte est chargée depuis Vite (voir
+ * DEVELOPMENT.md) : les meubles aussi, sinon il faudrait recopier le dossier
+ * dans HA à chaque essai.
+ */
+export const FURNITURE_URL = import.meta.env?.DEV
+  ? new URL('/owlnest_frontend/furniture/', import.meta.url).href
+  : '/owlnest_frontend/furniture/';
 
 type Row = [string, ItemCategory, string, string, Partial<Pick<CatalogItem, 'wall' | 'ceiling' | 'light' | 'top' | 'surface' | 'scale'>>?];
 

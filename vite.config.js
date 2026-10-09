@@ -22,6 +22,9 @@ function integrationFiles() {
           return next();
         }
         res.setHeader('Content-Type', types[extname(file)] ?? 'application/octet-stream');
+        // La page est servie par Home Assistant, les fichiers par Vite : sans
+        // cet en-tête, le navigateur refuse de les lire.
+        res.setHeader('Access-Control-Allow-Origin', '*');
         createReadStream(file).pipe(res);
       });
     },
