@@ -21,7 +21,7 @@ import { UploadError, type UploadHass } from './import/upload';
 import { attachDropZone, pickFiles, ImportProgress, askOpenings } from './card/import-ui';
 import { assignScene } from './card/lovelace-config';
 import { findLeaves, proposeParts, replaceParts } from './import/sh3d-parts';
-import { setLang, langFromLocale, t, type StringKey } from './i18n';
+import { setLang, getLang, langFromLocale, t, type StringKey } from './i18n';
 import { demoModelUrl, isPlaceholder, seedDemoAnchors, type DemoAnchorId } from './demo';
 import { openEntityPicker } from './entities/picker';
 import { cachedRegistry, loadRegistry, areaOf, displayName } from './entities/registry';
@@ -63,7 +63,8 @@ import { catalogItem } from './plan/catalog';
 import { createUniforms, instrumentMaterials, updateXray, createGhost } from './cutaway';
 import type { CutawayUniforms } from './cutaway';
 import { evalCondition, RuleEngine } from './rules/engine';
-import { CardHud, type DockButton, type HudStatus, type HudRoom } from './card/hud';
+import { CardHud, type DockButton, type HudStatus, type HudRoom, type HudDevice } from './card/hud';
+import { entityIconName } from './ui/entity-icon';
 import { planRooms, roomCamera, roomOfPoint, type RoomView } from './plan/room-views';
 import { STYLES as UI_STYLES, type UiPrefs } from './ui/theme';
 import { icon as uiIcon } from './ui/icons';
@@ -991,6 +992,10 @@ export class Ha3dFloorplan extends HTMLElement {
       },
       getRooms: () => this._hudRooms(),
       flyToRoom: (id) => this._flyToRoom(id),
+      getRoomDevices: (id) => this._roomDevices(id),
+      toggleDevice: (entityId) => this._hass?.callService(entityId.split('.')[0], 'toggle', { entity_id: entityId }),
+      moreInfo: (entityId) => this._openMoreInfo(entityId),
+      roomAllOff: (id) => this._roomAllOff(id),
       getStatus: () => this._homeStatus(),
       onPrefs: (prefs) => this._saveUiPrefs(prefs),
       startTour: () => this._startViewTour(),
@@ -1764,6 +1769,8 @@ export class Ha3dFloorplan extends HTMLElement {
       syncLights(this.anchors, this._hass, this._effectiveConfig, this._modelSpan);
       this._updateOverlayStates();
     }
+    this._ui?.refreshStatus();
+    this._ui?.refreshRooms();
     this._requestRender();
   }
 
@@ -1925,7 +1932,62 @@ export class Ha3dFloorplan extends HTMLElement {
         if (r) lit.set(r.id, (lit.get(r.id) ?? 0) + 1);
       });
     }
-    return rooms.map((r) => ({ id: r.id, name: r.name, lit: lit.get(r.id) ?? 0 }));
+    // Température d'une pièce : la moyenne des capteurs de température qui y sont posés.
+    const temps = new Map<string, number[]>();
+    if (hass) {
+      this.anchors.forEach((a) => {
+        if (a.domain !== 'sensor') return;
+        const st = hass.states[a.entityId];
+        const v = Number(st?.state);
+        const unit = String(st?.attributes?.unit_of_measurement ?? '');
+        if (!Number.isFinite(v) || (st?.attributes?.device_class !== 'temperature' && !unit.includes('°'))) return;
+        const r = roomOfPoint(rooms, origin, a.worldPos.x, a.worldPos.z);
+        if (r) temps.set(r.id, [...(temps.get(r.id) ?? []), v]);
+      });
+    }
+    const fmt = (vs: number[]) => {
+      const avg = vs.reduce((s, v) => s + v, 0) / vs.length;
+      return `${(Math.round(avg * 10) / 10).toLocaleString(getLang() === 'fr' ? 'fr-FR' : 'en-GB')}°`;
+    };
+    return rooms.map((r) => ({
+      id: r.id, name: r.name, lit: lit.get(r.id) ?? 0,
+      ...(temps.has(r.id) ? { temp: fmt(temps.get(r.id)!) } : {}),
+    }));
+  }
+
+  /** Les appareils posés dans une pièce : ceux dont la pastille tombe dans son contour. */
+  private _roomDevices(roomId: string): HudDevice[] {
+    const plan = this._plan;
+    const hass = this._hass;
+    if (!plan || !hass) return [];
+    const rooms = this._rooms();
+    const origin = this._planOrigin(plan);
+    const out: HudDevice[] = [];
+    this.anchors.forEach((a) => {
+      if (!a.entityId || (a.kind ?? 'entity') !== 'entity' || a.hidden) return;
+      if (roomOfPoint(rooms, origin, a.worldPos.x, a.worldPos.z)?.id !== roomId) return;
+      const st = hass.states[a.entityId];
+      const desc = describeEntity(a.entityId);
+      const toggle = (a.tapAction && a.tapAction !== 'default' ? a.tapAction : desc.tap) === 'toggle';
+      // Un capteur n'est pas « allumé » : seule une commande ou une alerte se colore.
+      const on = desc.isOn(st) && (toggle || a.domain === 'binary_sensor');
+      let state = desc.stateText(st);
+      const unit = st?.attributes?.unit_of_measurement;
+      if (typeof unit === 'string' && unit && /^-?[\d.,]+$/.test(state)) {
+        state = `${Number(state).toLocaleString(getLang() === 'fr' ? 'fr-FR' : 'en-GB')} ${unit}`;
+      }
+      out.push({ id: a.entityId, name: a.label || a.entityId, state, on, icon: entityIconName(a.entityId), toggle });
+    });
+    // Ce qui se commande d'abord, puis par nom.
+    return out.sort((x, y) => Number(y.toggle) - Number(x.toggle) || x.name.localeCompare(y.name));
+  }
+
+  /** « Tout éteindre » dans une pièce : les lampes allumées qui y sont posées. */
+  private _roomAllOff(roomId: string) {
+    const hass = this._hass;
+    if (!hass) return;
+    const on = this._roomDevices(roomId).filter((d) => d.on && d.id.startsWith('light.')).map((d) => d.id);
+    if (on.length) hass.callService('light', 'turn_off', { entity_id: on });
   }
 
   /**

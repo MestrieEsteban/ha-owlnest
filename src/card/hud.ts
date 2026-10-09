@@ -30,8 +30,19 @@ export interface DockButton {
 
 export interface HudView { id: string; label: string }
 
-/** Une pièce du plan, et le nombre de lampes allumées dedans. */
-export interface HudRoom { id: string; name: string; lit: number }
+/** Une pièce du plan, ses lampes allumées et sa température si un capteur y est posé. */
+export interface HudRoom { id: string; name: string; lit: number; temp?: string }
+
+/** Un appareil posé dans une pièce, pour le panneau de la pièce. */
+export interface HudDevice {
+  id: string;
+  name: string;
+  state: string;
+  on: boolean;
+  icon: string;
+  /** Se bascule d'un geste (lampe, prise…) ; sinon, toucher ouvre ses détails. */
+  toggle: boolean;
+}
 
 export interface HudStatus {
   /** Température extérieure, déjà formatée. */
@@ -52,8 +63,10 @@ export class CardHud {
   private dockEl: HTMLDivElement | null = null;
   private viewsEl: HTMLDivElement | null = null;
   private roomsEl: HTMLDivElement | null = null;
+  private roomPanel: HTMLDivElement | null = null;
   private activeRoom: string | null = null;
   private lastRooms = '';
+  private lastPanel = '';
   private statusEl: HTMLDivElement | null = null;
   private sheet: HTMLElement | null = null;
   private helloEl: HTMLDivElement | null = null;
@@ -76,6 +89,11 @@ export class CardHud {
       getRooms: () => HudRoom[];
       /** Va dans une pièce ; `null` revient à toute la maison. */
       flyToRoom: (id: string | null) => void;
+      /** Les appareils posés dans une pièce. */
+      getRoomDevices: (roomId: string) => HudDevice[];
+      toggleDevice: (entityId: string) => void;
+      moreInfo: (entityId: string) => void;
+      roomAllOff: (roomId: string) => void;
       getStatus: () => HudStatus | null;
       onPrefs: (p: UiPrefs) => void;
       /** Pour les messages d'aide : la carte affiche-t-elle un plan ? */
@@ -107,6 +125,8 @@ export class CardHud {
   setHidden(on: boolean) {
     this.hidden = on;
     this.applyVisibility();
+    this.lastPanel = '';
+    this.renderRoomPanel();
     if (on) { this.closeSheet(); this.hideHello(); }
   }
 
@@ -136,15 +156,114 @@ export class CardHud {
   setActiveRoom(id: string | null) {
     this.activeRoom = id;
     this.roomsEl?.querySelectorAll<HTMLButtonElement>('.ow-chip').forEach((b) => b.classList.toggle('ow-on', (b.dataset.room || null) === id));
+    this.lastPanel = '';
+    this.renderRoomPanel();
+  }
+
+  /**
+   * Le panneau de la pièce montrée : ses appareils, un interrupteur pour ce
+   * qui se bascule, et « Tout éteindre ». Sur une tablette murale, c'est plus
+   * rapide que de chercher chaque pastille.
+   */
+  private renderRoomPanel() {
+    const id = this.activeRoom;
+    const room = id && this.prefs.show.rooms && !this.hidden ? this.opts.getRooms().find((r) => r.id === id) : null;
+    const devices = room ? this.opts.getRoomDevices(room.id) : [];
+    if (!room || !this.roomsEl) { this.roomPanel?.remove(); this.roomPanel = null; this.lastPanel = ''; return; }
+    const key = JSON.stringify([room, devices]);
+    if (key === this.lastPanel && this.roomPanel) return;
+    this.lastPanel = key;
+    if (!this.roomPanel) {
+      const el = document.createElement('div');
+      el.className = 'ow-surface ow-roompanel';
+      el.setAttribute('role', 'region');
+      el.addEventListener('pointerdown', (e) => e.stopPropagation());
+      this.roomPanel = el;
+    }
+    // Juste sous (ou au-dessus de) la barre des pièces, dans le même emplacement.
+    if (this.roomPanel.previousElementSibling !== this.roomsEl) this.roomsEl.after(this.roomPanel);
+    const el = this.roomPanel;
+    el.setAttribute('aria-label', room.name);
+    el.innerHTML = '';
+    const head = document.createElement('div');
+    head.className = 'ow-rp-h';
+    const title = document.createElement('b');
+    title.textContent = room.name;
+    head.appendChild(title);
+    if (room.temp) {
+      const temp = document.createElement('span');
+      temp.className = 'ow-rp-temp';
+      temp.append(icon('temp', 15), document.createTextNode(room.temp));
+      head.appendChild(temp);
+    }
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'ow-ib';
+    close.style.cssText = 'width:28px;height:28px;margin-left:auto;';
+    close.setAttribute('aria-label', t('tourClose'));
+    close.append(icon('close', 15));
+    close.addEventListener('click', (e) => { e.stopPropagation(); this.setActiveRoom(null); this.opts.flyToRoom(null); });
+    head.appendChild(close);
+    el.appendChild(head);
+
+    const list = document.createElement('div');
+    list.className = 'ow-rp-list';
+    if (!devices.length) {
+      const empty = document.createElement('div');
+      empty.className = 'ow-rp-empty';
+      empty.textContent = t('uiRoomEmpty');
+      list.appendChild(empty);
+    }
+    for (const d of devices) {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'ow-rp-row';
+      const tileEl = document.createElement('span');
+      tileEl.className = `ow-rp-tile${d.on ? ' ow-on' : ''}`;
+      tileEl.append(icon(d.icon, 17));
+      const col = document.createElement('span');
+      col.className = 'ow-rp-nm';
+      const nm = document.createElement('b');
+      nm.textContent = d.name;
+      const st = document.createElement('span');
+      st.textContent = d.state;
+      col.append(nm, st);
+      row.append(tileEl, col);
+      if (d.toggle) {
+        const sw = document.createElement('span');
+        sw.className = `ow-switch${d.on ? ' ow-on' : ''}`;
+        sw.setAttribute('aria-hidden', 'true');
+        row.appendChild(sw);
+        row.setAttribute('role', 'switch');
+        row.setAttribute('aria-checked', String(d.on));
+      }
+      row.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (d.toggle) this.opts.toggleDevice(d.id); else this.opts.moreInfo(d.id);
+      });
+      list.appendChild(row);
+    }
+    el.appendChild(list);
+    if (room.lit > 0) {
+      const off = document.createElement('button');
+      off.type = 'button';
+      off.className = 'ow-btn ow-small';
+      off.style.cssText = 'width:100%;';
+      off.append(icon('moon', 15), document.createTextNode(t('uiRoomAllOff')));
+      off.addEventListener('click', (e) => { e.stopPropagation(); this.opts.roomAllOff(room.id); });
+      el.appendChild(off);
+    }
   }
 
   /** Les pièces ou leurs lampes ont pu changer : ne repeint que si quelque chose a bougé. */
   refreshRooms() {
     const rooms = this.prefs.show.rooms ? this.opts.getRooms() : [];
     const key = JSON.stringify(rooms);
-    if (key === this.lastRooms) return;
-    this.lastRooms = key;
-    this.renderRooms(rooms);
+    if (key !== this.lastRooms) {
+      this.lastRooms = key;
+      this.renderRooms(rooms);
+    }
+    this.renderRoomPanel();
   }
 
   get roomsModule() { return this.roomsEl; }
@@ -177,6 +296,9 @@ export class CardHud {
   private render() {
     this.host.classList.toggle('ow-names', this.prefs.show.names);
     for (const [, el] of this.slots) el.innerHTML = '';
+    this.roomPanel?.remove();
+    this.roomPanel = null;
+    this.lastPanel = '';
     this.dockEl = this.viewsEl = this.statusEl = this.roomsEl = null;
     this.renderDock();
     this.lastRooms = '';
@@ -239,12 +361,17 @@ export class CardHud {
       this.place('rooms', el);
     }
     this.roomsEl.innerHTML = '';
-    const chip = (id: string, label: string, lit: number) => {
+    const chip = (id: string, label: string, lit: number, temp?: string) => {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'ow-chip';
       b.dataset.room = id;
       b.textContent = label;
+      if (temp) {
+        const tEl = document.createElement('small');
+        tEl.textContent = temp;
+        b.append(tEl);
+      }
       if (lit > 0) {
         const badge = document.createElement('i');
         badge.textContent = String(lit);
@@ -261,7 +388,7 @@ export class CardHud {
       this.roomsEl!.append(b);
     };
     chip('', t('uiRoomsHome'), rooms.reduce((n, r) => n + r.lit, 0));
-    for (const r of rooms) chip(r.id, r.name, r.lit);
+    for (const r of rooms) chip(r.id, r.name, r.lit, r.temp);
   }
 
   private renderViews() {

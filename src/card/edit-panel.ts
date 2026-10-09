@@ -6,6 +6,7 @@ import type { OwlnestRule } from '../rules/types';
 import { normalizeRule } from '../rules/types';
 import { t, tn, setLang, type StringKey } from '../i18n';
 import { icon } from '../ui/icons';
+import { entityIconName } from '../ui/entity-icon';
 import { Tour, type TourStep } from '../ui/tour';
 import { EDITOR_STYLES, BAR_H, PANEL_W } from '../ui/editor-styles';
 import { loadRegistry, cachedRegistry, areaOf } from '../entities/registry';
@@ -115,18 +116,7 @@ const RULE_PANEL_W = 470;
 const EDITOR_TOUR_KEY = 'owlnest_tour_editor_seen';
 
 /** Le dessin d'un appareil dans la liste, d'après sa nature et son domaine. */
-function anchorIcon(a: { entity: string; kind?: AnchorKind }): string {
-  if (!a.entity && (a.kind ?? 'entity') === 'entity') return 'plus';
-  if (a.kind === 'label') return 'tag';
-  if (a.kind === 'menu') return 'menu';
-  if (a.kind === 'nav') return 'nav';
-  const domain = a.entity.split('.')[0];
-  const ICON: Record<string, string> = {
-    light: 'bulb', switch: 'plug', input_boolean: 'plug', cover: 'window', climate: 'temp', media_player: 'speaker',
-    camera: 'camera', binary_sensor: 'sensor', sensor: 'sensor', lock: 'lock', fan: 'gear', scene: 'sparkle', script: 'play',
-  };
-  return ICON[domain] ?? 'sensor';
-}
+const anchorIcon = (a: { entity: string; kind?: AnchorKind }) => entityIconName(a.entity, a.kind);
 
 /** Le dessin d'un ouvrant, d'après son mouvement. */
 const PART_ICON: Record<string, string> = { swing: 'door', slide: 'slider', extend: 'awning', animation: 'play' };

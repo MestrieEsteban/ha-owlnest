@@ -1052,6 +1052,9 @@ const STRINGS = {
     sheetDuplicate: 'Duplicate',
     sheetDelete: 'Remove',
     sheetDeleteConfirm: 'Tap again',
+    // Interface de la carte
+    uiRoomEmpty: 'No device in this room yet. Place one from the editor, in the Devices tab.',
+    uiRoomAllOff: 'Turn off the room',
   },
 
   fr: {
@@ -2090,6 +2093,9 @@ const STRINGS = {
     sheetDuplicate: 'Dupliquer',
     sheetDelete: 'Retirer',
     sheetDeleteConfirm: 'Touche encore',
+    // Interface de la carte
+    uiRoomEmpty: 'Aucun appareil dans cette pièce. Pose-en un depuis l\'éditeur, onglet Appareils.',
+    uiRoomAllOff: 'Tout éteindre dans la pièce',
   },
 } as const;
 

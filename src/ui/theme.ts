@@ -153,6 +153,21 @@ export const STYLES = `
 .ow-chip.ow-on { background: var(--ow-acc); color: var(--ow-acc-ink); }
 .ow-chip i { font-style: normal; display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; padding: 1px 6px; border-radius: 999px;
   background: #fbbf24; color: #3b2a05; font-size: 10.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ow-chip small { font-size: 11px; font-weight: 600; margin-left: 6px; opacity: .75; font-variant-numeric: tabular-nums; }
+.ow-roompanel { width: min(290px, calc(100vw - 24px)); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.ow-rp-h { display: flex; align-items: center; gap: 8px; padding: 2px 4px 4px; }
+.ow-rp-h b { font-size: 14px; }
+.ow-rp-temp { display: inline-flex; align-items: center; gap: 3px; font-size: 12.5px; color: var(--ow-muted); font-variant-numeric: tabular-nums; }
+.ow-rp-list { display: flex; flex-direction: column; gap: 2px; max-height: 260px; overflow-y: auto; }
+.ow-rp-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 6px; border: none; border-radius: 10px; background: transparent;
+  color: var(--ow-text); font: inherit; text-align: left; cursor: pointer; }
+.ow-rp-row:hover { background: var(--ow-chrome2); }
+.ow-rp-tile { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; background: var(--ow-chrome2); color: var(--ow-muted); flex-shrink: 0; }
+.ow-rp-tile.ow-on { background: #fbbf24; color: #3b2a05; }
+.ow-rp-nm { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ow-rp-nm b { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ow-rp-nm span { font-size: 11.5px; color: var(--ow-muted); }
+.ow-rp-empty { font-size: 12.5px; color: var(--ow-muted); padding: 6px 4px; line-height: 1.45; }
 .ow-rooms { display: flex; gap: 2px; padding: 4px; max-width: min(620px, 100%); overflow-x: auto; scrollbar-width: none; }
 .ow-rooms::-webkit-scrollbar { display: none; }
 
