@@ -18,7 +18,7 @@
 
 import type { PlanDoc, PlanOpening, OpeningKind } from '../plan/types';
 import { emptyPlan, OPENING_DEFAULTS } from '../plan/types';
-import { addWall, cleanup, reconcileRooms, wallAt, wallEnds, newId, faces } from '../plan/graph';
+import { addWall, cleanup, closeGaps, reconcileRooms, wallAt, wallEnds, newId, faces, degree, nodeOf } from '../plan/graph';
 import { type Pt, sub, norm, dot, perp, pointInPolygon, round3 } from '../plan/geometry';
 
 // ── Lecture du XML ─────────────────────────────────────────────────────────
@@ -232,6 +232,10 @@ export interface Sh3dConversion {
   levels: number;
   /** Ce qui n'a pas pu être repris, pour le dire. */
   skipped: { curvedWalls: number; slopedWalls: number; openings: number };
+  /** Bouts de mur recollés à leur voisin. */
+  gaps: number;
+  /** Limites de pièce ajoutées pour fermer les espaces ouverts. */
+  boundaries: number;
 }
 
 const CM = 0.01;
@@ -320,6 +324,8 @@ export function homeToPlan(home: Sh3dHome, names: { room: () => string; floor: (
     for (let i = 0; i + 1 < pts.length; i++) addWall(plan, pt(pts[i].x, pts[i].y), pt(pts[i + 1].x, pts[i + 1].y), opts);
   }
   cleanup(plan);
+  // Les murs qui s'arrêtent juste avant un autre ferment mal les pièces.
+  const gaps = closeGaps(plan);
 
   // Portes et fenêtres : sur le mur qui les porte, à leur place le long de lui.
   for (const p of pieces.filter((q) => q.kind === 'door')) {
@@ -357,6 +363,10 @@ export function homeToPlan(home: Sh3dHome, names: { room: () => string; floor: (
     plan.openings.push(o);
   }
 
+  // Les espaces ouverts (cuisine sur le salon, palier) : une limite de pièce
+  // les ferme, pour qu'ils aient un sol et un nom.
+  const boundaries = closeOpenAreas(plan);
+
   // Les pièces nommées dans Sweet Home 3D, puis celles que les murs ferment.
   const all = faces(plan);
   for (const r of home.rooms.filter(onLevel)) {
@@ -385,7 +395,62 @@ export function homeToPlan(home: Sh3dHome, names: { room: () => string; floor: (
       elevation: round3(p.elevation * CM),
     }));
 
-  return { plan, items, level, levels: home.levels.length, skipped };
+  return { plan, items, level, levels: home.levels.length, skipped, gaps, boundaries };
+}
+
+/**
+ * Ferme les espaces ouverts par des limites de pièce (des murs de hauteur
+ * nulle) : depuis chaque bout de mur libre, vers le mur qu'il vise ou le coin
+ * le plus proche devant lui, à moins de `reach`. Une limite n'est gardée que
+ * si elle ferme vraiment un espace de plus : sinon elle ne ferait que rayer
+ * le plan.
+ */
+export function closeOpenAreas(plan: PlanDoc, reach = 3): number {
+  let added = 0;
+  // Une pièce minuscule (un liseré entre un mur et sa limite) n'en est pas une.
+  const small = (fs: ReturnType<typeof faces>) => fs.filter((f) => f.area < 0.8).length;
+  for (let guard = 0; guard < 50; guard++) {
+    const fs = faces(plan);
+    const before = fs.length, smallBefore = small(fs);
+    let progress = false;
+    for (const node of plan.nodes) {
+      if (degree(plan, node.id) !== 1) continue;
+      const w = plan.walls.find((x) => x.a === node.id || x.b === node.id)!;
+      const o = nodeOf(plan, w.a === node.id ? w.b : w.a)!;
+      const dir = norm(sub(node, o));
+      const targets: Pt[] = [];
+      // Le mur droit devant.
+      for (const q of plan.walls) {
+        if (q === w) continue;
+        const [a, b] = wallEnds(plan, q);
+        const e = sub(b, a);
+        const den = dir.x * e.y - dir.y * e.x;
+        if (Math.abs(den) < 1e-9) continue;
+        const ax = sub(a, node);
+        const t = (ax.x * e.y - ax.y * e.x) / den, u = (ax.x * dir.y - ax.y * dir.x) / den;
+        if (t > 0.05 && t <= reach && u >= 0 && u <= 1) targets.push({ x: node.x + dir.x * t, y: node.y + dir.y * t });
+      }
+      // Les coins devant, du plus proche au plus loin ; un autre bout libre,
+      // dans n'importe quelle direction (le côté ouvert d'une pièce en U).
+      for (const q of plan.nodes) {
+        if (q.id === node.id || q.id === o.id) continue;
+        const v = sub(q, node), d = Math.hypot(v.x, v.y);
+        const free = degree(plan, q.id) === 1;
+        if (d > 0.05 && ((d <= reach && dot(v, dir) / d > 0.3) || (free && d <= reach * 4 / 3))) targets.push(q);
+      }
+      targets.sort((p, q) => Math.hypot(p.x - node.x, p.y - node.y) - Math.hypot(q.x - node.x, q.y - node.y));
+      for (const target of targets) {
+        const snapshot = JSON.stringify(plan);
+        addWall(plan, { x: node.x, y: node.y }, target, { height: 0 });
+        const after = faces(plan);
+        if (after.length > before && small(after) <= smallBefore) { added++; progress = true; break; }
+        Object.assign(plan, JSON.parse(snapshot));
+      }
+      if (progress) break;
+    }
+    if (!progress) break;
+  }
+  return added;
 }
 
 /** Un point à l'intérieur d'un polygone, quand son centre tombe dehors (pièce en L). */

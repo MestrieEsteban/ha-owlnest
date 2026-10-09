@@ -15,7 +15,7 @@
 
 import type { PlanDoc } from './types';
 import { type Pt, sub, add, mul, norm, perp, dist, lineCross, cross } from './geometry';
-import { thicknessOf } from './graph';
+import { thicknessOf, isBoundary } from './graph';
 
 interface End {
   wall: string;
@@ -33,7 +33,8 @@ export function wallFootprints(plan: PlanDoc): Map<string, Pt[]> {
   const ends = new Map<string, End[]>();
   for (const w of plan.walls) {
     const a = pos.get(w.a), b = pos.get(w.b);
-    if (!a || !b || dist(a, b) < 1e-6) continue;
+    // Une limite de pièce n'a pas d'épaisseur : les murs qui la touchent s'arrêtent net.
+    if (!a || !b || dist(a, b) < 1e-6 || isBoundary(plan, w)) continue;
     const half = thicknessOf(plan, w) / 2;
     ends.set(w.a, [...(ends.get(w.a) ?? []), { wall: w.id, dir: norm(sub(b, a)), half }]);
     ends.set(w.b, [...(ends.get(w.b) ?? []), { wall: w.id, dir: norm(sub(a, b)), half }]);

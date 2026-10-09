@@ -19,7 +19,7 @@ import {
   type Pt, sub, add, mul, dot, dist, norm, perp, project, insidePoint, pointInPolygon, clipAlong, round3,
 } from './geometry';
 import {
-  type Face, newId, wallEnds, wallLength, thicknessOf, heightOf, openingFits, wallAt, nodeAt, nodeOf,
+  type Face, newId, wallEnds, wallLength, thicknessOf, heightOf, isBoundary, openingFits, wallAt, nodeAt, nodeOf,
   addWall, addRect, removeWall, cleanup, moveNode, splitWall, faces, reconcileRooms, roomAtPoint,
   polygonArea, settle, roomShapes, reseedRooms,
 } from './graph';
@@ -1443,9 +1443,16 @@ export class PlanEditor {
     // Murs, découpés autour des ouvertures.
     const feet = wallFootprints(plan);
     for (const wall of plan.walls) {
+      const hit = { type: 'wall' as const, id: wall.id };
+      if (isBoundary(plan, wall)) {
+        // Limite de pièce : un pointillé, rien en 3D.
+        const [a, b] = wallEnds(plan, wall);
+        const on = this.same(this.sel, hit) ? C.select : this.same(this.hover, hit) ? (erasing ? C.danger : C.hover) : '#8a8f98';
+        svg.append(svgEl('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, stroke: on, 'stroke-width': px(2.5), 'stroke-dasharray': `${px(7)} ${px(5)}`, 'stroke-linecap': 'round' }));
+        continue;
+      }
       const foot = feet.get(wall.id);
       if (!foot) continue;
-      const hit = { type: 'wall' as const, id: wall.id };
       const color = this.same(this.sel, hit) ? C.select
         : this.same(this.hover, hit) ? (erasing ? C.danger : C.hover)
           : (wall.height ?? plan.wallHeight) < plan.wallHeight - 0.5 ? '#7c838c' : C.wall;
@@ -1484,7 +1491,7 @@ export class PlanEditor {
 
     // Cotes de chaque mur, côté extérieur.
     const showDims = plan.walls.length < 400;
-    if (showDims) for (const wall of plan.walls) this.drawDim(svg, wall, px);
+    if (showDims) for (const wall of plan.walls) if (!isBoundary(plan, wall)) this.drawDim(svg, wall, px);
 
     // Noms et surfaces
     for (const room of plan.rooms) {
@@ -2355,6 +2362,15 @@ export class PlanEditor {
   private wallBubble(id: string) {
     const w = this.plan.walls.find((q) => q.id === id);
     if (!w) return;
+    if (isBoundary(this.plan, w)) {
+      this.heading(t('planBoundaryTitle'), 'wall');
+      this.small(t('planBoundaryHelp'));
+      this.actions(
+        this.pill(t('planBoundaryToWall'), () => { this.commit(); delete w.height; cleanup(this.plan); this.changed(); }, true, 'wall'),
+        this.pill(t('planDeleteWall'), () => this.remove({ type: 'wall', id }), false, 'trash', true),
+      );
+      return;
+    }
     this.heading(t('planWallTitle'), 'wall');
     this.stepper(t('planLength'), wallLength(this.plan, w), 0.05, 0.1, 100, (v) => {
       // Le coin d'arrivée avance ou recule le long du mur.

@@ -173,3 +173,42 @@ test('chaque ancien ouvrant trouve le vantail le plus proche, une seule fois', (
   assert.ok(!m.has('c'), 'trop loin');
   assert.notEqual(m.get('a'), m.get('b'));
 });
+
+test('une pièce en U ouverte est fermée par une limite invisible, qui a un sol mais pas de mur', async () => {
+  const { closeOpenAreas } = await import('./sh3d-home.mjs');
+  const { isBoundary } = await import('../plan/graph.mjs');
+  const { buildPlan } = await import('../plan/build.mjs');
+  const xml = `<home wallHeight='250'>
+    <wall xStart='0' yStart='300' xEnd='0' yEnd='0' thickness='10'/>
+    <wall xStart='0' yStart='0' xEnd='310' yEnd='0' thickness='10'/>
+    <wall xStart='310' yStart='0' xEnd='310' yEnd='300' thickness='10'/>
+  </home>`;
+  const { plan, boundaries } = homeToPlan(readHome(xml), names());
+  assert.equal(boundaries, 1);
+  assert.equal(plan.rooms.length, 1);
+  const limit = plan.walls.filter((w) => isBoundary(plan, w));
+  assert.equal(limit.length, 1);
+  // En 3D : un sol, et pas de mur pour la limite.
+  const root = buildPlan(plan);
+  const names3d = []; root.traverse((o) => names3d.push(o.name));
+  assert.ok(names3d.some((n) => n.startsWith('room_')));
+  assert.equal(names3d.filter((n) => /^wall_/.test(n)).length > 0, true);
+  assert.equal(closeOpenAreas(plan), 0, 'plus rien à fermer');
+});
+
+test('une limite qui ne ferait qu’un liseré le long d’un mur est refusée', async () => {
+  const { closeOpenAreas } = await import('./sh3d-home.mjs');
+  const xml = `<home wallHeight='250'>
+    <wall xStart='0' yStart='0' xEnd='500' yEnd='0' thickness='10'/>
+    <wall xStart='500' yStart='0' xEnd='500' yEnd='400' thickness='10'/>
+    <wall xStart='500' yStart='400' xEnd='0' yEnd='400' thickness='10'/>
+    <wall xStart='0' yStart='400' xEnd='0' yEnd='0' thickness='10'/>
+    <wall xStart='250' yStart='0' xEnd='250' yEnd='200' thickness='10'/>
+    <wall xStart='250' yStart='200' xEnd='260' yEnd='200' thickness='10'/>
+  </home>`;
+  const { plan } = homeToPlan(readHome(xml), names());
+  assert.ok(plan.rooms.every((r) => r), 'des pièces');
+  const tiny = (await import('../plan/graph.mjs')).faces(plan).filter((f) => f.area < 0.8);
+  assert.equal(tiny.length, 0);
+  assert.equal(closeOpenAreas(plan), 0);
+});

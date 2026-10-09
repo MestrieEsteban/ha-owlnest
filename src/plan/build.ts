@@ -17,7 +17,7 @@ import * as THREE from 'three';
 import type { PlanDoc, PlanOpening, PlanWall, PlanRoom } from './types';
 import { PLAN_COLORS } from './types';
 import { type Pt, sub, add, mul, dot, norm, perp, clipAlong, area, pointInPolygon } from './geometry';
-import { wallEnds, heightOf, thicknessOf, openingFits, faces, wallLength, type Face } from './graph';
+import { wallEnds, heightOf, thicknessOf, openingFits, faces, wallLength, isBoundary, type Face } from './graph';
 import { wallFootprints } from './footprint';
 import { floorTexture, TEXTURE_METERS } from './textures';
 
@@ -348,7 +348,10 @@ export function buildPlan(plan: PlanDoc): THREE.Group {
     const foot = feet.get(w.id);
     if (foot && wallLength(plan, w) > 1e-3) buildWall(plan, w, foot, i, pal, rooms, root);
   });
-  for (const o of plan.openings) if (openingFits(plan, o)) buildOpening(plan, o, pal, root);
+  for (const o of plan.openings) {
+    const w = plan.walls.find((q) => q.id === o.wall);
+    if (w && !isBoundary(plan, w) && openingFits(plan, o)) buildOpening(plan, o, pal, root);
+  }
   return root;
 }
 

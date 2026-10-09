@@ -153,3 +153,25 @@ test('une pièce garde son nom quand on pousse un mur au-delà de sa graine', as
   reconcileRooms(p, () => 'Nouvelle', floor);
   assert.deepEqual(p.rooms.map((r) => r.name), ['Cuisine']);
 });
+
+test('recollage : un mur qui s’arrête 10 cm avant un autre le rejoint, et la pièce se ferme', async () => {
+  const { closeGaps } = await import('./graph.mjs');
+  const p = empty();
+  addWall(p, { x: 0, y: 0 }, { x: 4, y: 0 });
+  addWall(p, { x: 4, y: 0 }, { x: 4, y: 3 });
+  addWall(p, { x: 4, y: 3 }, { x: 0, y: 3 });
+  // Le dernier mur s'arrête à 20 cm du premier.
+  addWall(p, { x: 0, y: 3 }, { x: 0, y: 0.2 });
+  assert.equal(faces(p).length, 0);
+  assert.ok(closeGaps(p) >= 1);
+  assert.equal(faces(p).length, 1);
+});
+
+test('recollage : deux murs parallèles (un mur doublé) ne sont pas reliés', async () => {
+  const { closeGaps } = await import('./graph.mjs');
+  const p = empty();
+  addWall(p, { x: 0, y: 0 }, { x: 4, y: 0 });
+  addWall(p, { x: 0, y: 0.2 }, { x: 4, y: 0.2 });
+  assert.equal(closeGaps(p), 0);
+  assert.equal(p.walls.length, 2);
+});

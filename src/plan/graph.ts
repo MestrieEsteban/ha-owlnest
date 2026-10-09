@@ -41,6 +41,12 @@ export function wallEnds(plan: PlanDoc, w: PlanWall): [Pt, Pt] {
 export const wallLength = (plan: PlanDoc, w: PlanWall) => { const [a, b] = wallEnds(plan, w); return dist(a, b); };
 export const thicknessOf = (plan: PlanDoc, w: PlanWall) => w.thickness ?? plan.wallThickness;
 export const heightOf = (plan: PlanDoc, w: PlanWall) => w.height ?? plan.wallHeight;
+/**
+ * Une limite de pièce : un « mur » de hauteur nulle. Il ferme l'espace (la
+ * pièce existe, avec son sol et son nom) sans rien construire en 3D, comme le
+ * trait qui sépare une cuisine ouverte du salon sur un plan d'architecte.
+ */
+export const isBoundary = (plan: PlanDoc, w: PlanWall) => heightOf(plan, w) < 0.01;
 
 /** Point du milieu d'une ouverture, sur l'axe de son mur. */
 export function openingPoint(plan: PlanDoc, o: PlanOpening): Pt | null {
@@ -400,6 +406,78 @@ export function settle(plan: PlanDoc, tol = NODE_SNAP / 2) {
     mergeNodes(plan, m2.id, m1.id);
   }
   cleanup(plan);
+}
+
+/**
+ * Recolle les murs qui s'arrêtent juste avant un autre : un plan importé (ou
+ * dessiné vite) a souvent des bouts de mur à quelques centimètres de celui
+ * qu'ils devaient rejoindre. Sans ce recollage, l'espace n'est pas fermé :
+ * pas de pièce, donc ni sol ni nom.
+ *
+ * Pour chaque bout libre, dans l'ordre : le prolonger jusqu'au mur qu'il vise ;
+ * sinon, s'il est près d'un autre bout libre, les réunir à l'angle que font
+ * leurs deux murs ; sinon, s'il vise un coin tout proche, l'y accrocher. Deux
+ * murs parallèles (un mur doublé) ne sont jamais reliés en biais. Rend le
+ * nombre de bouts recollés.
+ */
+export function closeGaps(plan: PlanDoc, reach = 0.3): number {
+  let fixed = 0;
+  const freeEnd = (id: string) => {
+    if (degree(plan, id) !== 1) return null;
+    const w = plan.walls.find((x) => x.a === id || x.b === id)!;
+    const n = nodeOf(plan, id)!, o = nodeOf(plan, w.a === id ? w.b : w.a)!;
+    return { w, n, o, dir: norm(sub(n, o)) };
+  };
+  for (const node of [...plan.nodes]) {
+    if (!plan.nodes.includes(node)) continue;
+    const end = freeEnd(node.id);
+    if (!end) continue;
+    const { w, n, o, dir } = end;
+
+    // 1. Prolonger le mur jusqu'au premier mur qu'il rencontre.
+    let hit: { p: Pt; t: number } | null = null;
+    for (const q of plan.walls) {
+      if (q === w || q.a === node.id || q.b === node.id) continue;
+      const [a, b] = wallEnds(plan, q);
+      const e = sub(b, a);
+      const den = cross(dir, e);
+      if (Math.abs(den) < 1e-9) continue;
+      const t = cross(sub(a, n), e) / den;
+      const u = cross(sub(a, n), dir) / den;
+      if (t < 1e-4 || t > reach || u < -1e-6 || u > 1 + 1e-6) continue;
+      if (!hit || t < hit.t) hit = { p: add(n, mul(dir, t)), t };
+    }
+    if (hit) { moveNode(plan, node.id, hit.p); fixed++; continue; }
+
+    // 2. Un autre bout libre tout près : les deux murs se rejoignent en angle.
+    let joined = false;
+    for (const other of plan.nodes) {
+      if (other.id === node.id || other.id === o.id || dist(other, n) > reach) continue;
+      const end2 = freeEnd(other.id);
+      if (!end2 || end2.w === w) continue;
+      const den = cross(dir, end2.dir);
+      if (Math.abs(den) < 0.3) continue; // parallèles : un mur doublé, pas un angle
+      const t = cross(sub(end2.n, n), end2.dir) / den;
+      const corner = add(n, mul(dir, t));
+      if (dist(corner, n) > reach || dist(corner, end2.n) > reach) continue;
+      moveNode(plan, node.id, corner);
+      moveNode(plan, other.id, corner);
+      mergeNodes(plan, other.id, node.id);
+      fixed += 2;
+      joined = true;
+      break;
+    }
+    if (joined) continue;
+
+    // 3. Un coin déjà relié, droit devant : on s'y accroche.
+    const target = plan.nodes
+      .filter((q) => q.id !== node.id && q.id !== o.id && dist(q, n) <= reach && degree(plan, q.id) > 1)
+      .filter((q) => dot(norm(sub(q, n)), dir) > 0.7)
+      .sort((p, q) => dist(p, n) - dist(q, n))[0];
+    if (target) { mergeNodes(plan, node.id, target.id); fixed++; }
+  }
+  if (fixed) settle(plan, 0.01);
+  return fixed;
 }
 
 /** Les coins de chaque pièce, pour la retrouver après un geste qui la déforme. */
