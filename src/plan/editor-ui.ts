@@ -261,7 +261,7 @@ export class PlanEditor {
   private roomCounter = 0;
   /** Le catalogue de meubles : sa catégorie ouverte et la recherche. */
   private drawer: HTMLDivElement | null = null;
-  private shelf: ItemCategory | 'all' | 'mine' = 'living';
+  private shelf: ItemCategory | 'all' | 'mine' = 'all';
   private search = '';
   /** Les meubles s'aimantent aux murs ; Alt (ou ce réglage) les laisse libres. */
   private magnet = true;
@@ -1936,7 +1936,7 @@ export class PlanEditor {
       img.alt = '';
       void topView({ id: 'thumb', model: m.url, x: 0, y: 0, rotation: 0 }).then((u) => { if (u) img.src = u; });
       b.append(img, el('span', '', m.name));
-      b.addEventListener('click', () => void this.addItem(m.url, m.name));
+      this.shelfTile(b, img, m.url, m.name);
       list.append(b);
     }
     if (this.shelf === 'mine' && !q) {
@@ -1959,10 +1959,114 @@ export class PlanEditor {
         tag.append(icon('bulb', 12), document.createTextNode('HA'));
         b.append(tag);
       }
-      b.addEventListener('click', () => void this.addItem(c.id));
+      this.shelfTile(b, img, c.id);
       list.append(b);
     }
     if (!shown.length && !mine.length) list.append(el('div', `grid-column:1/-1;color:${C.muted};font-size:12px;padding:12px 4px;`, t('planFurnitureNone')));
+  }
+
+  /**
+   * Une vignette du tiroir : un appui pose le meuble au milieu de la vue, et
+   * on peut aussi le tirer jusqu'au plan. Il y apparaît sous le doigt,
+   * s'aimante aux murs comme un meuble qu'on déplace, et se pose au
+   * relâchement ; relâché ailleurs, il n'est pas posé. Au doigt, un geste
+   * vertical fait défiler la liste au lieu de tirer.
+   */
+  private shelfTile(b: HTMLButtonElement, img: HTMLImageElement, model: string, name?: string) {
+    b.style.touchAction = 'pan-y';
+    let dragged = false;
+    b.addEventListener('click', () => {
+      if (dragged) { dragged = false; return; }
+      void this.addItem(model, name);
+    });
+    b.addEventListener('pointerdown', (down) => {
+      if (down.button !== 0) return;
+      dragged = false;
+      // Le geste reste à la vignette : le plan ne doit pas le prendre pour un
+      // des siens (il annulerait l'étape au relâchement).
+      try { b.setPointerCapture(down.pointerId); } catch { /* pointeur déjà relâché */ }
+      const sx = down.clientX, sy = down.clientY;
+      let ready = false;
+      void loadFurniture(model).then(() => { ready = true; }, () => {});
+      let ghost: HTMLImageElement | null = null;
+      let placed: PlanItem | null = null;
+      let active = false;
+      const overPlan = (e: PointerEvent) => {
+        const r = this.svg.getBoundingClientRect();
+        const left = r.left + (this.drawer ? DRAWER_W : 0);
+        return e.clientX > left && e.clientX < r.right && e.clientY > r.top && e.clientY < r.bottom;
+      };
+      const move = (e: PointerEvent) => {
+        if (!active) {
+          const dx = e.clientX - sx, dy = e.clientY - sy;
+          if (Math.hypot(dx, dy) < 6) return;
+          if (e.pointerType === 'touch' && Math.abs(dy) > Math.abs(dx)) { stop(); return; }
+          active = true;
+          dragged = true;
+          ghost = img.cloneNode() as HTMLImageElement;
+          ghost.style.cssText = 'position:fixed;width:64px;height:64px;object-fit:contain;pointer-events:none;opacity:0.85;z-index:200;filter:drop-shadow(0 6px 12px rgba(0,0,0,0.35));';
+          this.root.append(ghost);
+        }
+        e.preventDefault();
+        const over = overPlan(e) && ready;
+        if (ghost) {
+          ghost.style.display = over ? 'none' : '';
+          ghost.style.left = `${e.clientX - 32}px`;
+          ghost.style.top = `${e.clientY - 32}px`;
+        }
+        if (over) {
+          if (!placed) {
+            this.commit();
+            placed = { id: newId('i'), model, x: 0, y: 0, rotation: 0, ...(name ? { name } : {}) };
+            this.plan.items = [...(this.plan.items ?? []), placed];
+            this.sel = { type: 'item', id: placed.id };
+            this.stuck = null;
+            // Le geste en cours : la 3D suit, comme pour un meuble qu'on déplace.
+            this.drag = { kind: 'item', id: placed.id, grab: { x: 0, y: 0 } };
+          }
+          this.moveItem(placed, this.toPlan(e), e.altKey || !this.magnet);
+          this.preview();
+          this.render();
+        } else if (placed) {
+          // Revenu sur le tiroir : le meuble repart.
+          const gone = placed;
+          this.plan.items = (this.plan.items ?? []).filter((i) => i !== gone);
+          this.history.pop();
+          placed = null;
+          this.drag = null;
+          this.sel = null;
+          this.render();
+        }
+      };
+      const stop = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', cancel);
+        ghost?.remove();
+        ghost = null;
+      };
+      const up = () => {
+        stop();
+        if (!placed) return;
+        this.drag = null;
+        this.sel = { type: 'item', id: placed.id };
+        this.changed();
+      };
+      const cancel = () => {
+        stop();
+        if (placed) {
+          const gone = placed;
+          this.plan.items = (this.plan.items ?? []).filter((i) => i !== gone);
+          this.history.pop();
+          this.drag = null;
+          this.sel = null;
+          this.render();
+        }
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+      window.addEventListener('pointercancel', cancel);
+    });
   }
 
   private itemBubble(id: string) {
