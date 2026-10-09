@@ -74,6 +74,8 @@ const STEP = 0.05;
 const MIN_SIDE = 0.4;
 /** Écart minimal entre deux mises à jour de la 3D pendant un glisser, en ms. */
 const PREVIEW_MS = 60;
+/** Largeur du tiroir des meubles, en pixels. */
+const DRAWER_W = 236;
 
 export interface PlanEditorOptions {
   container: HTMLElement;
@@ -249,6 +251,8 @@ export class PlanEditor {
   private longPress: ReturnType<typeof setTimeout> | null = null;
   private previewTimer: ReturnType<typeof setTimeout> | null = null;
   private previewAt = 0;
+  /** Le mur contre lequel le meuble qu'on déplace est collé. */
+  private stuck: string | null = null;
   private roomCounter = 0;
   /** Le catalogue de meubles : sa catégorie ouverte et la recherche. */
   private drawer: HTMLDivElement | null = null;
@@ -593,10 +597,12 @@ export class PlanEditor {
       x0 = Math.min(...this.plan.nodes.map((n) => n.x)); x1 = Math.max(...this.plan.nodes.map((n) => n.x));
       y0 = Math.min(...this.plan.nodes.map((n) => n.y)); y1 = Math.max(...this.plan.nodes.map((n) => n.y));
     }
-    // La bulle de réglages couvre la droite : on laisse de la place.
-    const usable = Math.max(w - 280, w * 0.55);
+    // La bulle de réglages couvre la droite, le tiroir des meubles la gauche :
+    // on cadre dans ce qui reste.
+    const left = this.drawer ? DRAWER_W : 0;
+    const usable = Math.max(w - left - 280, (w - left) * 0.55);
     this.view.scale = Math.max(12, Math.min(140, Math.min(usable / (x1 - x0 + 2.5), (h - 80) / (y1 - y0 + 2.5))));
-    this.view.cx = (x0 + x1) / 2 + (w - usable) / 2 / this.view.scale;
+    this.view.cx = (x0 + x1) / 2 - (left + usable / 2 - w / 2) / this.view.scale;
     this.view.cy = (y0 + y1) / 2;
   }
 
@@ -802,6 +808,7 @@ export class PlanEditor {
     } else if (h.type === 'item') {
       const it = this.item(h.id)!;
       this.drag = { kind: 'item', id: h.id, grab: sub(p, it) };
+      this.stuck = null;
     } else {
       const face = this.all.find((f) => f.nodes.length && pointInPolygon(this.plan.rooms.find((r) => r.id === h.id)!.seed, f.poly));
       // Une pièce seule (aucun mur partagé) se déplace d'un bloc ; une pièce
@@ -1270,6 +1277,28 @@ export class PlanEditor {
     box.style.top = `${Math.max(8, Math.min(at.y, s.h - r.height - 8))}px`;
   }
 
+  /**
+   * Une question à valider, au milieu du plan : un clic à côté ou Échap
+   * l'écarte. Remplace `window.confirm`, qui fige la page et ne suit ni le
+   * thème ni la langue de l'éditeur.
+   */
+  private confirmBox(text: string, yes: string, onYes: () => void) {
+    const box = el('div', `position:absolute;background:${C.chrome};border:1px solid ${C.line};border-radius:14px;padding:16px;box-shadow:0 16px 40px rgba(0,0,0,0.35);display:flex;flex-direction:column;gap:14px;z-index:6;max-width:300px;`);
+    box.setAttribute('role', 'alertdialog');
+    box.append(el('div', 'font-size:14px;line-height:1.45;color:#e2e8f0;', text));
+    const cancel = this.pill(t('btnCancel'), () => this.closePopup());
+    const ok = this.pill(yes, () => { this.closePopup(); onYes(); }, false, 'trash', true);
+    const row = el('div', 'display:flex;gap:8px;justify-content:flex-end;');
+    row.append(cancel, ok);
+    box.append(row);
+    const s = this.box();
+    this.placePopup(box, { x: 0, y: 0 });
+    const r = box.getBoundingClientRect();
+    box.style.left = `${Math.max(8, (s.w - r.width) / 2)}px`;
+    box.style.top = `${Math.max(8, (s.h - r.height) / 2)}px`;
+    setTimeout(() => cancel.focus(), 0);
+  }
+
   /** Une petite question posée sur le plan (un nom, une longueur). */
   private ask(at: { x: number; y: number }, value: string, type: 'text' | 'number', done: (v: string) => void, label?: string) {
     const box = el('div', `position:absolute;background:${C.chrome};border-radius:12px;padding:10px;box-shadow:0 10px 30px rgba(0,0,0,0.3);display:flex;flex-direction:column;gap:8px;z-index:5;`);
@@ -1692,16 +1721,20 @@ export class PlanEditor {
       it.y = round3(Math.round(to.y / 0.01) * 0.01);
       return;
     }
-    const { d } = itemSize(it);
-    const reach = Math.max(0.35, d / 2 + 0.25);
-    let best: { w: PlanWall; pr: ReturnType<typeof project>; a: Pt; b: Pt } | null = null;
+    const { w: width, d } = itemSize(it);
+    // Portée de l'aimant : 25 cm, ou 24 pixels quand on a dézoomé. Un meuble
+    // déjà collé ne décroche qu'en tirant franchement.
+    const reach = Math.min(0.5, Math.max(0.25, this.px(24)));
+    let best: { w: PlanWall; pr: ReturnType<typeof project>; a: Pt; b: Pt; gap: number } | null = null;
     for (const w of this.plan.walls) {
       const [a, b] = wallEnds(this.plan, w);
       const pr = project(to, a, b);
       if (pr.t <= 0 || pr.t >= 1) continue;
-      const gap = pr.d - thicknessOf(this.plan, w) / 2 - d / 2;
-      if (Math.abs(gap) < reach - d / 2 && (!best || pr.d < best.pr.d)) best = { w, pr, a, b };
+      const gap = Math.abs(pr.d - thicknessOf(this.plan, w) / 2 - d / 2);
+      const limit = w.id === this.stuck ? reach + 0.2 : reach;
+      if (gap < limit && (!best || gap < best.gap)) best = { w, pr, a, b, gap };
     }
+    this.stuck = best?.w.id ?? null;
     if (best) {
       const dir = norm(sub(best.b, best.a));
       let n = perp(dir);
@@ -1709,7 +1742,25 @@ export class PlanEditor {
       // L'avant du meuble regarde la pièce : l'arrière touche le mur.
       it.rotation = Math.round((Math.atan2(-n.x, n.y) * 180) / Math.PI);
       const c = add(best.pr.p, mul(n, thicknessOf(this.plan, best.w) / 2 + d / 2 + 0.005));
-      const along = dot(sub(to, best.pr.p), dir);
+      let along = dot(sub(to, best.pr.p), dir);
+      // Dans un angle : le côté du meuble se cale aussi contre le mur voisin.
+      const q0 = add(c, mul(dir, along));
+      let side: { shift: number; gap: number } | null = null;
+      for (const w of this.plan.walls) {
+        if (w === best.w) continue;
+        const [a, b] = wallEnds(this.plan, w);
+        const wd = norm(sub(b, a));
+        if (Math.abs(dot(wd, dir)) > 0.1) continue;
+        // Le meuble doit être en face de ce mur, pas au-delà de ses bouts
+        // (`project` borne sa position au segment : on la calcule ici sans borne).
+        const len = dist(a, b);
+        const u = dot(sub(q0, a), wd);
+        if (u < -0.02 * len || u > 1.02 * len) continue;
+        const s = dot(sub(q0, a), dir);
+        const gap = Math.abs(s) - thicknessOf(this.plan, w) / 2 - width / 2;
+        if (Math.abs(gap) < reach && (!side || Math.abs(gap) < side.gap)) side = { shift: -Math.sign(s) * gap, gap: Math.abs(gap) };
+      }
+      if (side) along += side.shift;
       const q = add(c, mul(dir, along));
       it.x = round3(q.x); it.y = round3(q.y);
       this.guides = [];
@@ -1778,8 +1829,9 @@ export class PlanEditor {
     }
     this.commit();
     const { w, h } = this.box();
-    // Le milieu de ce qui est visible, à gauche de la bulle de réglages.
-    const at = this.toPlan({ clientX: this.box().left + (w - 270) / 2 + 135, clientY: this.box().top + h / 2 });
+    // Le milieu de ce qui est visible, entre le tiroir et la bulle de réglages.
+    const left = this.drawer ? DRAWER_W : 0;
+    const at = this.toPlan({ clientX: this.box().left + left + (w - left - 270) / 2, clientY: this.box().top + h / 2 });
     const it: PlanItem = { id: newId('i'), model, x: round3(at.x), y: round3(at.y), rotation: 0, ...(name ? { name } : {}) };
     this.plan.items = [...(this.plan.items ?? []), it];
     this.sel = { type: 'item', id: it.id };
@@ -1817,10 +1869,16 @@ export class PlanEditor {
 
   /** Le tiroir du catalogue, à gauche du plan, quand l'outil Meubles est pris. */
   private renderDrawer() {
-    if (this.tool !== 'furniture') { this.drawer?.remove(); this.drawer = null; return; }
+    if (this.tool !== 'furniture') {
+      // Le tiroir se referme : le plan reprend la place qu'il avait.
+      if (this.drawer) { this.view.cx += DRAWER_W / 2 / this.view.scale; this.render(); }
+      this.drawer?.remove(); this.drawer = null; return;
+    }
     if (!this.drawer) {
+      // Le tiroir couvre la gauche : le plan glisse d'autant vers la droite.
+      this.view.cx -= DRAWER_W / 2 / this.view.scale;
       this.drawer = el('div', [
-        'position:absolute', 'left:0', 'top:0', 'bottom:0', 'width:236px', `background:${C.chrome}`,
+        'position:absolute', 'left:0', 'top:0', 'bottom:0', `width:${DRAWER_W}px`, `background:${C.chrome}`,
         `border-right:1px solid ${C.line}`, 'display:flex', 'flex-direction:column', 'z-index:3', 'box-shadow:6px 0 18px rgba(0,0,0,0.18)',
       ].join(';'));
       this.stage.append(this.drawer);
@@ -2281,13 +2339,13 @@ export class PlanEditor {
     }
     if (this.plan.walls.length) {
       this.bubble.append(el('div', `height:1px;background:${C.line};margin:12px 0;`));
-      this.actions(this.pill(t('planClear'), () => {
-        if (!window.confirm(t('planClearConfirm'))) return;
+      this.actions(this.pill(t('planClear'), () => this.confirmBox(t('planClearConfirm'), t('planClear'), () => {
         this.commit();
-        this.plan = { ...this.plan, nodes: [], walls: [], rooms: [], openings: [] };
+        // Les meubles partent avec la maison ; « Mes meubles » reste.
+        this.plan = { ...this.plan, nodes: [], walls: [], rooms: [], openings: [], items: [] };
         this.sel = null;
         this.changed();
-      }, false, 'trash', true));
+      }), false, 'trash', true));
     }
     this.bubble.append(el('div', `height:1px;background:${C.line};margin:12px 0;`));
     this.bubble.append(this.sweetHome());
