@@ -453,7 +453,7 @@ const STRINGS = {
 
     // Nature d'ancre
     anchorSectionKind:   'Kind',
-    anchorFieldKind:     'Anchor kind',
+    anchorFieldKind:     'Type',
     anchorKindEntity:    'Entity state',
     anchorKindLabel:     'Label',
     anchorKindMenu:      'Entity group',
@@ -1034,6 +1034,24 @@ const STRINGS = {
     tourRoomsText: 'Each room of your plan has its button, with the number of lights on. Nothing to set up: they follow the plan.',
     // Interface de la carte
     uiNames: 'Always show the names of the dots',
+    // Interface de la carte
+    sheetWhat: 'What it is',
+    sheetKindEntity: 'Device',
+    sheetKindLabel: 'Label',
+    sheetKindMenu: 'Wheel',
+    sheetKindNav: 'Go to a view',
+    sheetPickDevice: 'Choose a device',
+    sheetPickDeviceHint: 'The light, sensor or device shown here',
+    sheetLook: 'Look',
+    sheetIconAuto: 'Automatic (mdi:…)',
+    sheetPrecisionAuto: 'Auto',
+    sheetLightStyle: 'Light style',
+    sheetTap: 'On tap',
+    sheetTapHint: 'Automatic does what suits the device: switches a light, opens the details of a sensor.',
+    sheetVisibilitySet: 'condition set',
+    sheetDuplicate: 'Duplicate',
+    sheetDelete: 'Remove',
+    sheetDeleteConfirm: 'Tap again',
   },
 
   fr: {
@@ -1476,7 +1494,7 @@ const STRINGS = {
 
     // Nature d'ancre
     anchorSectionKind:   'Nature',
-    anchorFieldKind:     "Nature de l'ancre",
+    anchorFieldKind:     'Type',
     anchorKindEntity:    "État d'une entité",
     anchorKindLabel:     'Étiquette',
     anchorKindMenu:      "Groupe d'entités",
@@ -2054,6 +2072,24 @@ const STRINGS = {
     tourRoomsText: 'Chaque pièce de ton plan a son bouton, avec le nombre de lampes allumées. Rien à régler : elles suivent le plan.',
     // Interface de la carte
     uiNames: 'Toujours afficher le nom des pastilles',
+    // Interface de la carte
+    sheetWhat: 'Ce que c\'est',
+    sheetKindEntity: 'Appareil',
+    sheetKindLabel: 'Étiquette',
+    sheetKindMenu: 'Roue',
+    sheetKindNav: 'Vers une vue',
+    sheetPickDevice: 'Choisir un appareil',
+    sheetPickDeviceHint: 'La lampe, le capteur ou l\'appareil affiché ici',
+    sheetLook: 'Apparence',
+    sheetIconAuto: 'Automatique (mdi:…)',
+    sheetPrecisionAuto: 'Auto',
+    sheetLightStyle: 'Style de lumière',
+    sheetTap: 'Au toucher',
+    sheetTapHint: 'Automatique fait ce qui convient à l\'appareil : allume une lampe, ouvre les détails d\'un capteur.',
+    sheetVisibilitySet: 'condition réglée',
+    sheetDuplicate: 'Dupliquer',
+    sheetDelete: 'Retirer',
+    sheetDeleteConfirm: 'Touche encore',
   },
 } as const;
 

@@ -4,7 +4,7 @@ import { CARD_DEFAULT_ACCENT, CARD_TYPE_LABELS, CARDS_ENABLED } from '../cards/t
 import type { AnchorEditor, EditorTool } from '../editor';
 import type { OwlnestRule } from '../rules/types';
 import { normalizeRule } from '../rules/types';
-import { t, tn, setLang } from '../i18n';
+import { t, tn, setLang, type StringKey } from '../i18n';
 import { makeDraggable, type WindowPos } from './draggable';
 import { icon } from '../ui/icons';
 import { Tour, type TourStep } from '../ui/tour';
@@ -2108,7 +2108,11 @@ export class EditPanel {
    * Le capteur d'un ouvrant : un grand bouton qui montre ce qui est relié (nom,
    * état) et ouvre la liste des entités. Plus d'identifiant à taper.
    */
-  private _sensorPicker(value: string, onChange: (entityId: string) => void): { el: HTMLElement; refresh: () => void } {
+  private _sensorPicker(
+    value: string,
+    onChange: (entityId: string, name?: string) => void,
+    opts: { placed?: Set<string>; empty?: StringKey; emptyHint?: StringKey } = {},
+  ): { el: HTMLElement; refresh: () => void } {
     let current = value;
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -2126,8 +2130,8 @@ export class EditPanel {
       const sub = document.createElement('span');
       if (!id) {
         btn.classList.add('ow-empty-pick');
-        name.textContent = t('partPickSensor');
-        sub.textContent = t('partPickSensorHint');
+        name.textContent = t(opts.empty ?? 'partPickSensor');
+        sub.textContent = t(opts.emptyHint ?? 'partPickSensorHint');
       } else {
         btn.classList.remove('ow-empty-pick');
         const friendly = st?.attributes?.friendly_name;
@@ -2146,15 +2150,25 @@ export class EditPanel {
       openEntityPicker({
         container: this.overlayContainer,
         hass,
-        onPick: (entityId) => { current = entityId; paint(entityId); onChange(entityId); },
+        placed: opts.placed,
+        onPick: (entityId, name) => { current = entityId; paint(entityId); onChange(entityId, name); },
       });
     });
     paint(value);
     return { el: btn, refresh: () => paint(current) };
   }
 
+  /**
+   * La fiche d'un appareil, dans le panneau : les mêmes briques que celle des
+   * ouvrants. Chaque réglage s'applique tout de suite et s'enregistre seul.
+   *
+   * Ce qui change avec la nature de l'ancre (appareil, étiquette, roue, vers
+   * une vue) reconstruit la fiche : seuls les réglages utiles restent.
+   */
   private _buildPropsSection(container: HTMLDivElement, key: string, anchor: EditableAnchor, goBack?: () => void) {
     container.innerHTML = '';
+    container.classList.remove('ow-legacy');
+    container.classList.add('ow-sheet-host');
 
     const domain = anchor.entity.split('.')[0];
     const kind: AnchorKind = anchor.kind ?? 'entity';
@@ -2163,221 +2177,402 @@ export class EditPanel {
     // une ancre liée à une entité.
     const isLight = isEntityKind && domain === 'light';
     const isSensor = isEntityKind && (domain === 'sensor' || domain === 'binary_sensor');
+    const rebuild = () => {
+      const fresh = this.getEditor()?.anchors.get(key);
+      if (fresh) this._buildPropsSection(container, key, fresh, goBack);
+    };
+    const update = (props: Partial<EditableAnchor>) => {
+      this.getEditor()?.updateAnchor(key, props);
+      this.scheduleAutoSave();
+    };
 
-    // ── Back navigation ───────────────────────────────────────────────
+    const inputStyle = 'width:100%;box-sizing:border-box;background:var(--ow-chrome2);border:1px solid var(--ow-line);border-radius:9px;color:var(--ow-text);padding:8px 10px;font-size:13px;outline:none;font-family:inherit;';
+
+    // ── En-tête ───────────────────────────────────────────────────────
+    const hdr = document.createElement('div');
+    hdr.className = 'ow-form-h ow-sheet-h';
     if (goBack) {
-      const nav = document.createElement('div');
-      nav.style.cssText = 'display:flex;align-items:center;gap:6px;padding:0 0 10px;border-bottom:1px solid rgba(255,255,255,0.06);margin-bottom:12px;';
-      const backBtn = document.createElement('button');
-      backBtn.style.cssText = 'background:none;border:none;cursor:pointer;color:rgba(255,255,255,0.35);font-size:12px;padding:0;line-height:1;transition:color .12s;display:flex;align-items:center;gap:4px;font-family:inherit;';
-      backBtn.innerHTML = `← <span style="font-size:10px;text-transform:uppercase;letter-spacing:.04em;font-weight:600;">${t('backAnchors')}</span>`;
-      backBtn.addEventListener('mouseenter', () => { backBtn.style.color = '#7dd3fc'; });
-      backBtn.addEventListener('mouseleave', () => { backBtn.style.color = 'rgba(255,255,255,0.35)'; });
-      backBtn.addEventListener('click', goBack);
-      nav.appendChild(backBtn);
-      container.appendChild(nav);
+      const back = document.createElement('button');
+      back.type = 'button';
+      back.className = 'ow-ib';
+      back.title = t('backAnchors');
+      back.setAttribute('aria-label', t('backAnchors'));
+      back.append(icon('back', 18));
+      back.addEventListener('click', goBack);
+      hdr.appendChild(back);
     }
+    const tile = document.createElement('span');
+    tile.className = 'ow-tile';
+    tile.append(icon(anchorIcon(anchor), 18));
+    const titleCol = document.createElement('div');
+    titleCol.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;';
+    const title = document.createElement('b');
+    title.style.cssText = 'font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    title.textContent = anchorTitle(anchor);
+    const subtitle = document.createElement('span');
+    subtitle.style.cssText = 'font-size:12px;color:var(--ow-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    subtitle.textContent = anchorSubtitle(anchor);
+    titleCol.append(title, subtitle);
+    hdr.append(tile, titleCol);
+    container.appendChild(hdr);
 
-    // ── Section divider ──────────────────────────────────────────────
-    const secDiv = (label: string) => {
-      const d = document.createElement('div');
-      d.style.cssText = 'font-size:9px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.07em;margin:14px 0 7px;padding-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.06);';
-      d.textContent = label;
-      container.appendChild(d);
+    const body = document.createElement('div');
+    body.className = 'ow-form-b';
+    container.appendChild(body);
+
+    // ── Briques ───────────────────────────────────────────────────────
+    const card = (label: string, iconName: string, fold?: { key: string; open: boolean }) => {
+      const box = document.createElement(fold ? 'details' : 'section');
+      box.className = 'ow-card';
+      const head = document.createElement(fold ? 'summary' : 'div');
+      head.className = 'ow-card-h';
+      const name = document.createElement('b');
+      name.textContent = label;
+      const digest = document.createElement('span');
+      digest.className = 'ow-digest';
+      head.append(icon(iconName, 17), name, digest);
+      if (fold) head.append(Object.assign(document.createElement('span'), { className: 'ow-chev' }));
+      const inner = document.createElement('div');
+      inner.className = 'ow-card-b';
+      box.append(head, inner);
+      if (fold && box instanceof HTMLDetailsElement) {
+        box.open = this._sheetFold[fold.key] ?? fold.open;
+        box.addEventListener('toggle', () => { this._sheetFold[fold.key] = box.open; });
+      }
+      body.appendChild(box);
+      return { inner, digest };
     };
-
-    // ── Field helper ─────────────────────────────────────────────────
-    const field = (labelText: string, el: HTMLElement, parent = container) => {
+    const field = (label: string, control: HTMLElement, into: HTMLElement) => {
       const wrap = document.createElement('div');
-      wrap.style.cssText = 'margin-bottom:8px;';
-      const lbl = document.createElement('div');
-      lbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;';
-      lbl.textContent = labelText;
-      wrap.appendChild(lbl); wrap.appendChild(el);
-      parent.appendChild(wrap);
+      wrap.className = 'ow-field';
+      const l = document.createElement('label');
+      l.textContent = label;
+      wrap.append(l, control);
+      into.appendChild(wrap);
+      return wrap;
     };
-
-    // ── Slider helper ────────────────────────────────────────────────
-    const sliderField = (labelText: string, min: number, max: number, step: number, value: number, color: string, fmt: (v: number) => string, onChange: (v: number) => void) => {
-      const wrap = document.createElement('div');
-      wrap.style.cssText = 'margin-bottom:8px;';
-      const hdr = document.createElement('div');
-      hdr.style.cssText = 'display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px;';
-      const lbl = document.createElement('span');
-      lbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;';
-      lbl.textContent = labelText;
-      const val = document.createElement('span');
-      val.style.cssText = 'font-size:10px;color:#e2e8f0;font-weight:600;';
-      val.textContent = fmt(value);
-      hdr.appendChild(lbl); hdr.appendChild(val);
-      const sl = document.createElement('input');
-      sl.type = 'range'; sl.min = String(min); sl.max = String(max); sl.step = String(step); sl.value = String(value);
-      sl.style.cssText = `width:100%;cursor:pointer;margin:0;accent-color:${color};`;
-      sl.addEventListener('pointerdown', () => { this._editorDragging = true; });
-      sl.addEventListener('pointerup', () => { this._editorDragging = false; this.scheduleAutoSave(); });
-      sl.addEventListener('input', () => {
-        const v = parseFloat(sl.value);
-        val.textContent = fmt(v);
+    const hintLine = (into: HTMLElement, text: string, warn = false) => {
+      const h = document.createElement('div');
+      h.className = warn ? 'ow-warn-t' : 'ow-hint-line';
+      h.textContent = text;
+      into.appendChild(h);
+    };
+    const segmented = (
+      options: ReadonlyArray<readonly [string, string, string?]>,
+      value: string, onChange: (v: string) => void,
+    ) => {
+      const seg = document.createElement('div');
+      seg.className = 'ow-seg';
+      seg.setAttribute('role', 'radiogroup');
+      for (const [v, lab, ic] of options) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.setAttribute('role', 'radio');
+        const on = v === value;
+        b.classList.toggle('ow-on', on);
+        b.setAttribute('aria-checked', String(on));
+        if (ic) b.append(icon(ic, 16));
+        b.append(document.createTextNode(lab));
+        b.addEventListener('click', () => {
+          seg.querySelectorAll('button').forEach((x) => { x.classList.toggle('ow-on', x === b); x.setAttribute('aria-checked', String(x === b)); });
+          onChange(v);
+        });
+        seg.appendChild(b);
+      }
+      return seg;
+    };
+    const slider = (
+      into: HTMLElement, label: string, min: number, max: number, step: number, value: number,
+      fmt: (v: number) => string, onChange: (v: number) => void,
+    ) => {
+      const range = document.createElement('input');
+      range.type = 'range'; range.min = String(min); range.max = String(max); range.step = String(step);
+      range.value = String(value);
+      range.setAttribute('aria-label', label);
+      const out = document.createElement('span');
+      out.className = 'ow-range-v';
+      out.textContent = fmt(value);
+      range.addEventListener('pointerdown', () => { this._editorDragging = true; });
+      range.addEventListener('pointerup', () => { this._editorDragging = false; this.scheduleAutoSave(); });
+      range.addEventListener('input', () => {
+        const v = parseFloat(range.value);
+        out.textContent = fmt(v);
         onChange(v);
         this.syncLightsToScene();
         this.requestRender();
       });
-      wrap.appendChild(hdr); wrap.appendChild(sl);
-      container.appendChild(wrap);
+      const row = document.createElement('div');
+      row.className = 'ow-range';
+      row.append(range, out);
+      return field(label, row, into);
+    };
+    const selectOf = (options: ReadonlyArray<readonly [string, string]>, value: string, onChange: (v: string) => void) => {
+      const sel = document.createElement('select');
+      sel.style.cssText = inputStyle + SELECT_STYLE;
+      for (const [v, l] of options) {
+        const o = styleOption(document.createElement('option'));
+        o.value = v; o.textContent = l;
+        if (v === value) o.selected = true;
+        sel.appendChild(o);
+      }
+      sel.addEventListener('change', () => onChange(sel.value));
+      return sel;
     };
 
-    const inputStyle = [
-      'width:100%', 'box-sizing:border-box',
-      'background:rgba(255,255,255,0.04)', 'border:1px solid rgba(255,255,255,0.1)',
-      'border-radius:7px', 'color:#e2e8f0', 'padding:6px 9px',
-      'font-size:11px', 'outline:none', 'font-family:inherit',
-      'transition:border-color .15s',
-    ].join(';');
-
-    // Title
-    const title = document.createElement('div');
-    title.style.cssText = 'font-size:12px;font-weight:700;color:#7dd3fc;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-    title.textContent = anchorTitle(anchor);
-    container.appendChild(title);
-    const subtitle = document.createElement('div');
-    subtitle.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.3);margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-    subtitle.textContent = anchorSubtitle(anchor);
-    container.appendChild(subtitle);
-
-    // ── Section: Nature ──────────────────────────────────────────────
-    // La nature commande tout le reste du panneau : changer de nature
-    // reconstruit la section pour n'afficher que les champs pertinents.
-    secDiv(t('anchorSectionKind'));
-    {
-      const kindSel = document.createElement('select');
-      kindSel.style.cssText = inputStyle + SELECT_STYLE;
-      const kinds: [AnchorKind, string][] = [
-        ['entity', t('anchorKindEntity')],
-        ['label',  t('anchorKindLabel')],
-        ['menu',   t('anchorKindMenu')],
-        ['nav',    t('anchorKindNav')],
-      ];
-      for (const [val, lab] of kinds) {
-        const o = styleOption(document.createElement('option'));
-        o.value = val; o.textContent = lab;
-        if (kind === val) o.selected = true;
-        kindSel.appendChild(o);
-      }
-      kindSel.addEventListener('change', () => {
-        const next = kindSel.value as AnchorKind;
-        this.getEditor()?.updateAnchor(key, { kind: next === 'entity' ? undefined : next });
-        this.scheduleAutoSave();
-        // Rechargement complet : les champs affichés dépendent de la nature.
-        const fresh = this.getEditor()?.anchors.get(key);
-        if (fresh) this._buildPropsSection(container, key, fresh, goBack);
-      });
-      field(t('anchorFieldKind'), kindSel);
-
-      const kindHint = document.createElement('div');
-      kindHint.style.cssText = 'font-size:9px;color:#475569;margin-top:-5px;margin-bottom:8px;line-height:1.5;';
-      kindHint.textContent = t(
-        kind === 'label' ? 'anchorKindLabelHint'
-        : kind === 'menu' ? 'anchorKindMenuHint'
-        : kind === 'nav' ? 'anchorKindNavHint'
-        : 'anchorKindEntityHint',
-      );
-      container.appendChild(kindHint);
-    }
-
-    // ── Section: Liaison HA ──────────────────────────────────────────
-    if (isEntityKind) secDiv(t('anchorSectionHA'));
-
-    const entityWrap = document.createElement('div');
-    entityWrap.style.cssText = 'position:relative;';
-    const entityInput = document.createElement('input');
-    entityInput.value = anchor.entity;
-    entityInput.placeholder = t('anchorEntityPh');
-    entityInput.style.cssText = inputStyle;
-    entityInput.addEventListener('focus', () => { entityInput.style.borderColor = 'rgba(125,209,252,0.5)'; });
-    entityInput.addEventListener('blur', () => { entityInput.style.borderColor = 'rgba(255,255,255,0.1)'; });
-    entityInput.addEventListener('change', () => {
-      const v = entityInput.value.trim();
-      if (v) { this.getEditor()?.updateAnchor(key, { entity: v }); this.scheduleAutoSave(); }
-    });
-    // Le champ reste libre (coller un entity_id est parfois le plus rapide),
-    // mais le bouton ouvre le vrai sélecteur : pièces, états, recherche.
-    // Un datalist de 469 entrées ne rendait aucun de ces services.
-    const browseBtn = document.createElement('button');
-    browseBtn.textContent = t('anchorBrowse');
-    browseBtn.title = t('pickTitle');
-    browseBtn.style.cssText = 'flex:0 0 auto;background:rgba(125,209,252,0.12);border:1px solid rgba(125,209,252,0.3);border-radius:7px;color:#7dd3fc;font-size:11px;padding:6px 10px;cursor:pointer;font-family:inherit;';
-    browseBtn.addEventListener('click', () => {
-      const hass = this.getHass();
-      if (!hass) return;
+    // ── Ce que c'est ──────────────────────────────────────────────────
+    const what = card(t('sheetWhat'), 'bulb');
+    field(t('anchorFieldKind'), segmented([
+      ['entity', t('sheetKindEntity'), 'bulb'],
+      ['label', t('sheetKindLabel'), 'tag'],
+      ['menu', t('sheetKindMenu'), 'menu'],
+      ['nav', t('sheetKindNav'), 'nav'],
+    ], kind, (v) => {
+      update({ kind: v === 'entity' ? undefined : v as AnchorKind });
+      // Les champs affichés dépendent de la nature.
+      rebuild();
+    }), what.inner);
+    hintLine(what.inner, t(
+      kind === 'label' ? 'anchorKindLabelHint'
+      : kind === 'menu' ? 'anchorKindMenuHint'
+      : kind === 'nav' ? 'anchorKindNavHint'
+      : 'anchorKindEntityHint',
+    ));
+    if (isEntityKind) {
       const placed = new Set<string>();
       this.getEditor()?.anchors.forEach((a) => { if (a.entity) placed.add(a.entity); });
-      openEntityPicker({
-        container: this.overlayContainer,
-        hass,
-        placed,
-        onPick: (entity, name) => {
-          entityInput.value = entity;
-          this.getEditor()?.updateAnchor(key, {
-            entity,
-            // Un libellé encore au défaut de l'ancienne entité n'a plus de sens.
-            ...(anchor.label === anchor.entity.split('.')[1] ? { label: name } : {}),
-          });
-          this.scheduleAutoSave();
-          this.updateAnchorList();
-        },
-      });
+      const picker = this._sensorPicker(anchor.entity, (entity, name) => {
+        update({
+          entity,
+          // Un libellé encore au défaut de l'ancienne entité n'a plus de sens.
+          ...(!anchor.label || anchor.label === anchor.entity.split('.')[1] ? { label: name ?? entity } : {}),
+        });
+        this.updateAnchorList();
+      }, { placed, empty: 'sheetPickDevice', emptyHint: 'sheetPickDeviceHint' });
+      what.inner.appendChild(picker.el);
+      this._liveForm = () => picker.refresh();
+    } else {
+      this._liveForm = null;
+    }
+    const nameInput = document.createElement('input');
+    nameInput.value = anchor.label;
+    nameInput.placeholder = t('anchorNamePh');
+    nameInput.style.cssText = inputStyle;
+    nameInput.addEventListener('change', () => {
+      const label = nameInput.value.trim() || anchorTitle(anchor);
+      update({ label });
+      title.textContent = label;
     });
+    field(t('anchorFieldName'), nameInput, what.inner);
 
-    entityWrap.style.cssText = 'display:flex;gap:6px;align-items:center;';
-    entityInput.style.cssText = inputStyle + ';flex:1;min-width:0;';
-    entityInput.removeAttribute('list');
-    entityWrap.appendChild(entityInput);
-    entityWrap.appendChild(browseBtn);
-    if (isEntityKind) field(t('anchorFieldEntity'), entityWrap);
-
-    const labelInput = document.createElement('input');
-    labelInput.value = anchor.label;
-    labelInput.placeholder = t('anchorNamePh');
-    labelInput.style.cssText = inputStyle;
-    labelInput.addEventListener('focus', () => { labelInput.style.borderColor = 'rgba(125,209,252,0.5)'; });
-    labelInput.addEventListener('blur', () => { labelInput.style.borderColor = 'rgba(255,255,255,0.1)'; });
-    labelInput.addEventListener('change', () => {
-      this.getEditor()?.updateAnchor(key, { label: labelInput.value.trim() || anchorTitle(anchor) });
-      this.scheduleAutoSave();
-    });
-    field(t('anchorFieldName'), labelInput);
-
-    // ── Nature `nav` : vue cible ──────────────────────────────────────
+    // ── Nature « vers une vue » ───────────────────────────────────────
     if (kind === 'nav') {
-      secDiv(t('anchorSectionNav'));
+      const nav = card(t('anchorSectionNav'), 'camera');
       const views = this.getViews?.() ?? [];
-      const viewSel = document.createElement('select');
-      viewSel.style.cssText = inputStyle + SELECT_STYLE;
-      const none = styleOption(document.createElement('option'));
-      none.value = ''; none.textContent = t('anchorNavNone');
-      viewSel.appendChild(none);
-      for (const v of views) {
-        const o = styleOption(document.createElement('option'));
-        o.value = v.id ?? ''; o.textContent = v.label;
-        if (anchor.navViewId === v.id) o.selected = true;
-        viewSel.appendChild(o);
-      }
-      viewSel.addEventListener('change', () => {
-        this.getEditor()?.updateAnchor(key, { navViewId: viewSel.value || undefined });
-        this.scheduleAutoSave();
+      field(t('anchorNavView'), selectOf(
+        [['', t('anchorNavNone')], ...views.map((v) => [v.id ?? '', v.label] as const)],
+        anchor.navViewId ?? '',
+        (v) => update({ navViewId: v || undefined }),
+      ), nav.inner);
+      if (!views.length) hintLine(nav.inner, t('anchorNavNoViews'), true);
+    }
+
+    // ── Nature « roue d'actions » : reprise de l'éditeur d'actions ────
+    if (kind === 'menu') {
+      const menu = card(t('anchorSectionActions'), 'menu');
+      const legacy = document.createElement('div');
+      legacy.className = 'ow-legacy';
+      menu.inner.appendChild(legacy);
+      this._buildActionsEditor(legacy, key, inputStyle.replace('font-size:13px', 'font-size:11px').replace('padding:8px 10px', 'padding:6px 9px'));
+    }
+
+    // ── Apparence ─────────────────────────────────────────────────────
+    const look = card(t('sheetLook'), 'brush');
+    // Icône : le sélecteur de Home Assistant s'il est là, sinon un champ.
+    const iconWrap = document.createElement('div');
+    iconWrap.style.cssText = 'display:flex;align-items:center;gap:8px;';
+    const preview = document.createElement('ha-icon') as HTMLElement;
+    preview.setAttribute('icon', anchor.icon ?? 'mdi:help-circle-outline');
+    preview.style.cssText = `--mdi-icon-size:22px;width:36px;height:36px;border-radius:10px;background:var(--ow-chrome2);display:flex;align-items:center;justify-content:center;flex-shrink:0;color:${anchor.icon ? 'var(--ow-acc)' : 'var(--ow-muted)'};`;
+    if (customElements.get('ha-icon-picker') != null) {
+      const picker = document.createElement('ha-icon-picker') as HTMLElement;
+      picker.setAttribute('value', anchor.icon ?? '');
+      picker.setAttribute('label', '');
+      picker.style.cssText = 'flex:1;--mdc-text-field-fill-color:var(--ow-chrome2);--mdc-theme-primary:var(--ow-acc);';
+      picker.addEventListener('value-changed', ((e: CustomEvent) => {
+        const v = (e.detail?.value as string) || undefined;
+        update({ icon: v });
+        preview.setAttribute('icon', v ?? 'mdi:help-circle-outline');
+      }) as EventListener);
+      iconWrap.append(preview, picker);
+    } else {
+      const iconInput = document.createElement('input');
+      iconInput.value = anchor.icon ?? '';
+      iconInput.placeholder = t('sheetIconAuto');
+      iconInput.style.cssText = inputStyle + 'flex:1;';
+      iconInput.addEventListener('change', () => {
+        const v = iconInput.value.trim() || undefined;
+        update({ icon: v });
+        preview.setAttribute('icon', v ?? 'mdi:help-circle-outline');
       });
-      field(t('anchorNavView'), viewSel);
-      if (!views.length) {
-        const warn = document.createElement('div');
-        warn.style.cssText = 'font-size:9px;color:#fbbf24;margin-top:-5px;margin-bottom:8px;';
-        warn.textContent = t('anchorNavNoViews');
-        container.appendChild(warn);
+      iconWrap.append(preview, iconInput);
+    }
+    field(t('anchorFieldIcon'), iconWrap, look.inner);
+
+    // La couleur d'une lampe vient de l'entité elle-même : la surcharger
+    // n'aurait pas de sens.
+    if (isEntityKind && !isLight) {
+      const colorWrap = document.createElement('div');
+      colorWrap.style.cssText = 'display:flex;gap:8px;align-items:center;';
+      const colorInput = document.createElement('input');
+      colorInput.type = 'color';
+      colorInput.value = anchor.color ?? '#44aaff';
+      colorInput.setAttribute('aria-label', t('anchorFieldColor'));
+      const auto = document.createElement('button');
+      auto.type = 'button';
+      const paint = (on: boolean) => {
+        colorInput.style.cssText = `width:44px;height:34px;padding:0;border:1px solid var(--ow-line);border-radius:9px;background:transparent;cursor:pointer;opacity:${on ? 1 : 0.4};`;
+        auto.className = `ow-btn ow-small${on ? ' ow-ghost' : ''}`;
+        auto.style.flex = '1';
+      };
+      auto.textContent = t('anchorColorAuto');
+      paint(!!anchor.color);
+      colorInput.addEventListener('change', () => { update({ color: colorInput.value }); paint(true); });
+      auto.addEventListener('click', () => { update({ color: undefined }); paint(false); });
+      colorWrap.append(colorInput, auto);
+      field(t('anchorFieldColor'), colorWrap, look.inner);
+      hintLine(look.inner, t('anchorColorHint'));
+    }
+
+    // Vignette d'une caméra : proposée dès que le descripteur en prévoit une,
+    // même ramenée à une pastille, sinon on ne pourrait plus revenir en arrière.
+    if (isEntityKind && describeEntity(anchor.entity).overlay === 'thumbnail') {
+      const display = anchor.display === 'icon' ? 'icon' : 'auto';
+      field(t('anchorFieldDisplay'), segmented([
+        ['auto', t('anchorDisplayThumb'), 'camera'], ['icon', t('anchorDisplayIcon'), 'sensor'],
+      ], display, (v) => { update({ display: v === 'auto' ? undefined : 'icon' }); rebuild(); }), look.inner);
+      if (display !== 'icon') {
+        slider(look.inner, t('anchorThumbSize'), 0.3, 4, 0.1, anchor.size ?? 1, (v) => `× ${v.toFixed(1)}`,
+          (v) => update({ size: v }));
+        hintLine(look.inner, t('anchorThumbHint'));
       }
     }
 
-    // ── Nature `menu` : roue d'actions ────────────────────────────────
-    if (kind === 'menu') {
-      secDiv(t('anchorSectionActions'));
+    // Précision d'un capteur : quelques choix plutôt qu'un nombre à taper.
+    if (isSensor) {
+      field(t('anchorPrecision'), segmented([
+        ['', t('sheetPrecisionAuto')], ['0', '18'], ['1', '17,6'], ['2', '17,58'], ['3', '17,583'],
+      ], anchor.precision !== undefined ? String(Math.min(anchor.precision, 3)) : '', (v) =>
+        update({ precision: v === '' ? undefined : Number(v) })), look.inner);
+    }
+
+    // ── Lumière ───────────────────────────────────────────────────────
+    if (isLight) {
+      const light = card(t('anchorSectionLight'), 'sun');
+      slider(light.inner, t('anchorLightIntensity'), 0.1, 3, 0.1, anchor.lightIntensity ?? 1, (v) => `× ${v.toFixed(1)}`,
+        (v) => this.getEditor()?.updateAnchor(key, { lightIntensity: v }));
+      const tiles = document.createElement('div');
+      tiles.className = 'ow-tiles';
+      const styles: [import('../types').LightStyle, string, string][] = [
+        ['point', t('lightStyleAmbient'), 'bulb'], ['spot', t('lightStyleSpot'), 'target'], ['beam', t('lightStyleBeam'), 'sun'],
+      ];
+      let currentStyle = anchor.lightStyle ?? 'point';
+      const dir = document.createElement('div');
+      const paintTiles = () => {
+        tiles.querySelectorAll<HTMLButtonElement>('button').forEach((b) => b.classList.toggle('ow-on', b.dataset.style === currentStyle));
+        dir.style.display = currentStyle === 'spot' || currentStyle === 'beam' ? '' : 'none';
+      };
+      for (const [id, label, ic] of styles) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.dataset.style = id;
+        b.append(icon(ic, 22), document.createTextNode(label));
+        b.addEventListener('click', () => {
+          currentStyle = id;
+          paintTiles();
+          update({ lightStyle: id });
+        });
+        tiles.appendChild(b);
+      }
+      field(t('sheetLightStyle'), tiles, light.inner);
+      // Orientation d'un spot : lue sur la poignée de la 3D.
+      const [dx, dy, dz] = anchor.lightDirection ?? [0, -1, 0];
+      const elDeg = (Math.asin(Math.max(-1, Math.min(1, -dy))) * 180) / Math.PI;
+      const azDeg = Math.round((((Math.atan2(dx, dz) * 180) / Math.PI) + 360) % 360);
+      const readout = document.createElement('div');
+      readout.className = 'ow-readout';
+      const row = document.createElement('div');
+      row.className = 'ow-readout-row';
+      row.append(
+        Object.assign(document.createElement('span'), { textContent: t('anchorSectionOrientation') }),
+        Object.assign(document.createElement('span'), { className: 'ow-state', textContent: `Az ${azDeg}° · ${elDeg >= 0 ? '↓' : '↑'}${Math.abs(Math.round(elDeg))}°` }),
+      );
+      readout.appendChild(row);
+      dir.appendChild(readout);
+      const gizmo = document.createElement('div');
+      gizmo.className = 'ow-hint-line';
+      gizmo.innerHTML = t('orientationGizmoHint');
+      dir.appendChild(gizmo);
+      light.inner.appendChild(dir);
+      paintTiles();
+    }
+
+    // ── Au toucher ────────────────────────────────────────────────────
+    if (isEntityKind) {
+      const tap = card(t('sheetTap'), 'hand');
+      const tapSeg = segmented([
+        ['default', t('anchorTapDefault')], ['toggle', t('anchorTapToggle')], ['more_info', t('anchorTapMoreInfo')],
+        ['activate', t('anchorTapActivate')], ['media_play_pause', t('anchorTapPlayPause')], ['none', t('anchorTapNone')],
+      ], anchor.tapAction ?? 'default', (v) => update({ tapAction: v === 'default' ? undefined : (v as TapAction) }));
+      tapSeg.classList.add('ow-seg-wrap');
+      tap.inner.appendChild(tapSeg);
+      hintLine(tap.inner, t('sheetTapHint'));
+    }
+
+    // ── Visible seulement si… (repliée) ───────────────────────────────
+    const vis = card(t('anchorSectionVisibility'), 'eye', { key: 'visibility', open: !!anchor.visibleIf });
+    if (anchor.visibleIf) vis.digest.textContent = t('sheetVisibilitySet');
+    const visBox = document.createElement('div');
+    visBox.className = 'ow-legacy';
+    vis.inner.appendChild(visBox);
+    this._buildVisibleIfSection(visBox, `anc-${key}`, anchor.visibleIf, inputStyle.replace('font-size:13px', 'font-size:11px').replace('padding:8px 10px', 'padding:6px 9px'), (cond) => {
+      update({ visibleIf: cond });
+      vis.digest.textContent = cond ? t('sheetVisibilitySet') : '';
+    });
+
+    // ── Gérer ─────────────────────────────────────────────────────────
+    const actions = document.createElement('div');
+    actions.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:8px;';
+    const dupBtn = document.createElement('button');
+    dupBtn.type = 'button';
+    dupBtn.className = 'ow-btn';
+    dupBtn.title = 'Ctrl+D';
+    dupBtn.append(icon('copy', 16), document.createTextNode(t('sheetDuplicate')));
+    dupBtn.addEventListener('click', () => this.getEditor()?.duplicate());
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'ow-btn ow-danger';
+    delBtn.title = t('anchorDeleteTitle');
+    const delLabel = document.createTextNode(t('sheetDelete'));
+    delBtn.append(icon('trash', 16), delLabel);
+    delBtn.addEventListener('click', () => {
+      if (delBtn.dataset.confirm === '1') { this.getEditor()?.deleteSelected(); return; }
+      delBtn.dataset.confirm = '1';
+      delLabel.textContent = t('sheetDeleteConfirm');
+      setTimeout(() => {
+        if (delBtn.dataset.confirm !== '1') return;
+        delBtn.dataset.confirm = '';
+        delLabel.textContent = t('sheetDelete');
+      }, 3000);
+    });
+    actions.append(dupBtn, delBtn);
+    body.appendChild(actions);
+  }
+
+  /** Sections repliées de la fiche d'un appareil, d'une ouverture à l'autre. */
+  private _sheetFold: Record<string, boolean> = {};
+
+  /** L'éditeur des entrées d'une roue d'actions (nature `menu`). */
+  private _buildActionsEditor(container: HTMLElement, key: string, inputStyle: string) {
       const listWrap = document.createElement('div');
       container.appendChild(listWrap);
 
@@ -2585,331 +2780,6 @@ export class EditPanel {
       };
 
       renderActions();
-    }
-
-    // Icon override — use HA's <ha-icon-picker> for visual autocomplete, fallback to plain input
-    const iconWrap = document.createElement('div');
-    iconWrap.style.cssText = 'display:flex;align-items:center;gap:6px;';
-
-    const haIconPicker = customElements.get('ha-icon-picker') != null;
-    if (haIconPicker) {
-      const picker = document.createElement('ha-icon-picker') as HTMLElement & { value?: string; label?: string };
-      picker.setAttribute('value', anchor.icon ?? '');
-      picker.setAttribute('label', '');
-      picker.style.cssText = 'flex:1;--mdc-text-field-fill-color:rgba(255,255,255,0.04);--mdc-theme-primary:rgba(125,209,252,0.8);';
-      picker.addEventListener('value-changed', ((e: CustomEvent) => {
-        const v = (e.detail?.value as string) || undefined;
-        this.getEditor()?.updateAnchor(key, { icon: v });
-        this.scheduleAutoSave();
-        // Update preview
-        if (preview) preview.setAttribute('icon', v ?? '');
-      }) as EventListener);
-      iconWrap.appendChild(picker);
-    } else {
-      // Fallback: plain text input
-      const iconInput = document.createElement('input');
-      iconInput.value = anchor.icon ?? '';
-      iconInput.placeholder = 'mdi:thermometer';
-      iconInput.style.cssText = inputStyle + ';flex:1;';
-      iconInput.addEventListener('focus', () => { iconInput.style.borderColor = 'rgba(125,209,252,0.5)'; });
-      iconInput.addEventListener('blur', () => { iconInput.style.borderColor = 'rgba(255,255,255,0.1)'; });
-      iconInput.addEventListener('change', () => {
-        const v = iconInput.value.trim() || undefined;
-        this.getEditor()?.updateAnchor(key, { icon: v });
-        this.scheduleAutoSave();
-        if (preview) preview.setAttribute('icon', v ?? '');
-      });
-      iconWrap.appendChild(iconInput);
-    }
-
-    // Live preview of the chosen icon
-    const preview = document.createElement('ha-icon') as HTMLElement;
-    preview.setAttribute('icon', anchor.icon ?? 'mdi:help-circle-outline');
-    preview.style.cssText = '--mdi-icon-size:20px;width:24px;height:24px;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.5);flex-shrink:0;';
-    if (anchor.icon) preview.style.color = '#7dd3fc';
-    iconWrap.appendChild(preview);
-
-    field(t('anchorFieldIcon') || 'Icon', iconWrap);
-
-    // ── Section: Comportement ─────────────────────────────────────────
-    // Surcharges par ancre : le descripteur du domaine donne un défaut correct,
-    // ces champs servent aux cas particuliers (déverrouiller une serrure depuis
-    // la scène, neutraliser un appui, forcer une couleur de repérage).
-    if (isEntityKind) {
-      secDiv(t('anchorSectionBehavior'));
-
-      const tapSel = document.createElement('select');
-      tapSel.style.cssText = inputStyle + SELECT_STYLE;
-      const tapOptions: [string, string][] = [
-        ['default', t('anchorTapDefault')],
-        ['toggle', t('anchorTapToggle')],
-        ['more_info', t('anchorTapMoreInfo')],
-        ['activate', t('anchorTapActivate')],
-        ['media_play_pause', t('anchorTapPlayPause')],
-        ['none', t('anchorTapNone')],
-      ];
-      for (const [val, label] of tapOptions) {
-        const o = styleOption(document.createElement('option'));
-        o.value = val; o.textContent = label;
-        if ((anchor.tapAction ?? 'default') === val) o.selected = true;
-        tapSel.appendChild(o);
-      }
-      tapSel.addEventListener('change', () => {
-        const v = tapSel.value === 'default' ? undefined : (tapSel.value as TapAction);
-        this.getEditor()?.updateAnchor(key, { tapAction: v });
-        this.scheduleAutoSave();
-      });
-      field(t('anchorFieldTap'), tapSel);
-
-      // La couleur d'une lampe vient de l'entité elle-même : la surcharger
-      // n'aurait pas de sens.
-      if (!isLight) {
-        const colorWrap = document.createElement('div');
-        colorWrap.style.cssText = 'display:flex;gap:6px;align-items:center;';
-
-        const colorInput = document.createElement('input');
-        colorInput.type = 'color';
-        colorInput.value = anchor.color ?? '#44aaff';
-        colorInput.style.cssText = 'width:38px;height:28px;padding:0;border:1px solid rgba(255,255,255,0.1);border-radius:6px;background:transparent;cursor:pointer;';
-        colorInput.addEventListener('change', () => {
-          this.getEditor()?.updateAnchor(key, { color: colorInput.value });
-          this.scheduleAutoSave();
-        });
-
-        const resetBtn = document.createElement('button');
-        resetBtn.textContent = t('anchorColorAuto');
-        resetBtn.style.cssText = 'flex:1;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#94a3b8;font-size:10px;padding:6px;cursor:pointer;font-family:inherit;';
-        resetBtn.addEventListener('click', () => {
-          this.getEditor()?.updateAnchor(key, { color: undefined });
-          this.scheduleAutoSave();
-          resetBtn.style.color = '#94a3b8';
-        });
-
-        colorWrap.appendChild(colorInput);
-        colorWrap.appendChild(resetBtn);
-        field(t('anchorFieldColor'), colorWrap);
-
-        const colorHint = document.createElement('div');
-        colorHint.style.cssText = 'font-size:9px;color:#475569;margin-top:-5px;margin-bottom:8px;';
-        colorHint.textContent = t('anchorColorHint');
-        container.appendChild(colorHint);
-      }
-    }
-
-    // ── Section: Vignette (caméras) ───────────────────────────────────
-    // Proposée dès que le descripteur prévoit une vignette, même si l'ancre a
-    // été ramenée à une pastille : sinon on ne pourrait plus revenir en arrière.
-    if (isEntityKind && describeEntity(anchor.entity).overlay === 'thumbnail') {
-      secDiv(t('anchorSectionThumb'));
-
-      const display = anchor.display ?? 'auto';
-      const dispSel = document.createElement('select');
-      dispSel.style.cssText = inputStyle + SELECT_STYLE;
-      const dispOpts: [string, string][] = [
-        ['auto', t('anchorDisplayThumb')],
-        ['icon', t('anchorDisplayIcon')],
-      ];
-      for (const [v, l] of dispOpts) {
-        const o = styleOption(document.createElement('option'));
-        o.value = v; o.textContent = l;
-        if ((display === 'thumbnail' ? 'auto' : display) === v) o.selected = true;
-        dispSel.appendChild(o);
-      }
-      dispSel.addEventListener('change', () => {
-        const v = dispSel.value as 'auto' | 'icon';
-        this.getEditor()?.updateAnchor(key, { display: v === 'auto' ? undefined : v });
-        this.scheduleAutoSave();
-        // La présence du curseur dépend du choix : on reconstruit la section.
-        const fresh = this.getEditor()?.anchors.get(key);
-        if (fresh) this._buildPropsSection(container, key, fresh, goBack);
-      });
-      field(t('anchorFieldDisplay'), dispSel);
-
-      if (display !== 'icon') {
-        sliderField(t('anchorThumbSize'), 0.3, 4, 0.1, anchor.size ?? 1, '#7dd3fc',
-          (v) => '\u00d7' + v.toFixed(1),
-          (v) => { this.getEditor()?.updateAnchor(key, { size: v }); this.scheduleAutoSave(); });
-
-        const hint = document.createElement('div');
-        hint.style.cssText = 'font-size:9px;color:#475569;margin-top:-5px;margin-bottom:8px;line-height:1.5;';
-        hint.textContent = t('anchorThumbHint');
-        container.appendChild(hint);
-      }
-    }
-
-    // ── Section: Sensor precision ─────────────────────────────────────
-    if (isSensor) {
-      secDiv('Capteur');
-      const precInput = document.createElement('input');
-      precInput.type = 'number';
-      precInput.min = '0';
-      precInput.max = '6';
-      precInput.step = '1';
-      precInput.value = anchor.precision !== undefined ? String(anchor.precision) : '';
-      precInput.placeholder = 'auto';
-      precInput.style.cssText = inputStyle;
-      precInput.addEventListener('focus', () => { precInput.style.borderColor = 'rgba(125,209,252,0.5)'; });
-      precInput.addEventListener('blur', () => { precInput.style.borderColor = 'rgba(255,255,255,0.1)'; });
-      precInput.addEventListener('change', () => {
-        const v = precInput.value === '' ? undefined : parseInt(precInput.value, 10);
-        this.getEditor()?.updateAnchor(key, { precision: v });
-        this.scheduleAutoSave();
-      });
-      field(t('anchorPrecision'), precInput);
-      const precHint = document.createElement('div');
-      precHint.style.cssText = 'font-size:9px;color:#475569;margin-top:-5px;margin-bottom:8px;';
-      precHint.textContent = 'Ex : 0 → "18", 1 → "17.6"';
-      container.appendChild(precHint);
-    }
-
-    // ── Section: Lumière ─────────────────────────────────────────────
-    if (isLight) {
-      secDiv(t('anchorSectionLight'));
-
-      sliderField(t('anchorLightIntensity'), 0.1, 3, 0.1, anchor.lightIntensity ?? 1, '#fbbf24',
-        (v) => `×${v.toFixed(1)}`,
-        (v) => this.getEditor()?.updateAnchor(key, { lightIntensity: v }),
-      );
-
-      // Style buttons
-      const styleRow = document.createElement('div');
-      styleRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin-bottom:4px;';
-      const styleConfigs: { id: import('../types').LightStyle; label: string; icon: string }[] = [
-        { id: 'point', label: t('lightStyleAmbient'), icon: '○' },
-        { id: 'spot',  label: t('lightStyleSpot'),    icon: '◎' },
-        { id: 'beam',  label: t('lightStyleBeam'),    icon: '⊙' },
-      ];
-      let currentStyle = anchor.lightStyle ?? 'point';
-      const styleBtns: HTMLButtonElement[] = [];
-      let dirSection: HTMLDivElement | null = null;
-
-      const syncStyleBtns = () => {
-        styleBtns.forEach((b, i) => {
-          const on = styleConfigs[i].id === currentStyle;
-          b.style.background = on ? 'rgba(251,191,36,0.2)' : 'rgba(255,255,255,0.05)';
-          b.style.color = on ? '#fbbf24' : 'rgba(255,255,255,0.4)';
-          b.style.borderColor = on ? 'rgba(251,191,36,0.5)' : 'rgba(255,255,255,0.08)';
-        });
-      };
-
-      styleConfigs.forEach(({ id, label, icon }) => {
-        const btn = document.createElement('button');
-        btn.style.cssText = [
-          'border:1px solid rgba(255,255,255,0.08)',
-          'border-radius:7px', 'padding:5px 2px', 'cursor:pointer',
-          'font-size:10px', 'font-family:inherit', 'line-height:1.3',
-          'transition:all .15s', 'color:rgba(255,255,255,0.4)',
-          'background:rgba(255,255,255,0.05)',
-          'display:flex', 'flex-direction:column', 'align-items:center', 'gap:2px',
-        ].join(';');
-        btn.innerHTML = `<span style="font-size:14px">${icon}</span><span>${label}</span>`;
-        btn.addEventListener('click', () => {
-          currentStyle = id;
-          syncStyleBtns();
-          this.getEditor()?.updateAnchor(key, { lightStyle: id });
-          if (dirSection) dirSection.style.display = (id === 'spot' || id === 'beam') ? 'block' : 'none';
-          this.scheduleAutoSave();
-        });
-        styleBtns.push(btn);
-        styleRow.appendChild(btn);
-      });
-      syncStyleBtns();
-      container.appendChild(styleRow);
-
-      // ── Section: Orientation ─────────────────────────────────────
-      dirSection = document.createElement('div');
-      dirSection.style.display = (currentStyle === 'spot' || currentStyle === 'beam') ? 'block' : 'none';
-
-      const dirHeader = document.createElement('div');
-      dirHeader.style.cssText = 'font-size:9px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.07em;margin:14px 0 7px;padding-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.06);';
-      dirHeader.textContent = t('anchorSectionOrientation');
-      dirSection.appendChild(dirHeader);
-
-      // Read-only Az/El display
-      const dirDisplay = document.createElement('div');
-      dirDisplay.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px;';
-
-      const dirReadout = document.createElement('span');
-      dirReadout.style.cssText = 'font-size:11px;color:#e2e8f0;font-weight:600;font-variant-numeric:tabular-nums;flex:1;';
-      const dirToAzElStr = (dir?: [number, number, number]) => {
-        const [dx, dy, dz] = dir ?? [0, -1, 0];
-        const elRad = Math.asin(Math.max(-1, Math.min(1, -dy)));
-        const elDeg = elRad * 180 / Math.PI;
-        const az = Math.atan2(dx, dz);
-        const azDeg = Math.round(((az * 180 / Math.PI) + 360) % 360);
-        const sign = elDeg >= 0 ? '↓' : '↑';
-        return `Az ${azDeg}°  ${sign}${Math.abs(Math.round(elDeg))}°`;
-      };
-      dirReadout.textContent = dirToAzElStr(anchor.lightDirection);
-      dirDisplay.appendChild(dirReadout);
-
-      const gizmoHint = document.createElement('span');
-      gizmoHint.style.cssText = 'font-size:9px;color:rgba(255,255,255,0.28);line-height:1.4;text-align:right;';
-      gizmoHint.innerHTML = t('orientationGizmoHint');
-      dirDisplay.appendChild(gizmoHint);
-
-      dirSection.appendChild(dirDisplay);
-      container.appendChild(dirSection);
-    }
-
-    // ── Section: Visibilité conditionnelle ────────────────────────────
-    secDiv(t('anchorSectionVisibility'));
-    this._buildVisibleIfSection(container, `anc-${key}`, anchor.visibleIf, inputStyle, (cond) => {
-      this.getEditor()?.updateAnchor(key, { visibleIf: cond });
-      this.scheduleAutoSave();
-    });
-
-    // ── Section: Gérer ───────────────────────────────────────────────
-    secDiv(t('anchorSectionManage'));
-
-    const actRow = document.createElement('div');
-    actRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:6px;';
-
-    const dupBtn = document.createElement('button');
-    dupBtn.style.cssText = [
-      'background:rgba(255,255,255,0.06)', 'border:1px solid rgba(255,255,255,0.12)',
-      'border-radius:8px', 'color:#e2e8f0', 'padding:7px 4px',
-      'font-size:10px', 'font-family:inherit', 'cursor:pointer',
-      'transition:all .15s',
-    ].join(';');
-    dupBtn.innerHTML = t('anchorBtnDuplicate');
-    dupBtn.title = 'Ctrl+D';
-    dupBtn.addEventListener('mouseenter', () => { dupBtn.style.background = 'rgba(255,255,255,0.12)'; });
-    dupBtn.addEventListener('mouseleave', () => { dupBtn.style.background = 'rgba(255,255,255,0.06)'; });
-    dupBtn.addEventListener('click', () => this.getEditor()?.duplicate());
-
-    const delBtn = document.createElement('button');
-    delBtn.style.cssText = [
-      'background:rgba(239,68,68,0.1)', 'border:1px solid rgba(239,68,68,0.25)',
-      'border-radius:8px', 'color:#f87171', 'padding:7px 4px',
-      'font-size:10px', 'font-family:inherit', 'cursor:pointer',
-      'transition:all .15s',
-    ].join(';');
-    delBtn.innerHTML = t('anchorBtnDelete');
-    delBtn.title = t('anchorDeleteTitle');
-    delBtn.addEventListener('mouseenter', () => { delBtn.style.background = 'rgba(239,68,68,0.25)'; delBtn.style.borderColor = 'rgba(239,68,68,0.5)'; });
-    delBtn.addEventListener('mouseleave', () => { delBtn.style.background = 'rgba(239,68,68,0.1)'; delBtn.style.borderColor = 'rgba(239,68,68,0.25)'; });
-    delBtn.addEventListener('click', () => {
-      if (delBtn.dataset.confirm === '1') {
-        this.getEditor()?.deleteSelected();
-      } else {
-        delBtn.dataset.confirm = '1';
-        delBtn.innerHTML = t('anchorBtnConfirm');
-        delBtn.style.background = 'rgba(239,68,68,0.35)';
-        delBtn.style.borderColor = 'rgba(239,68,68,0.65)';
-        setTimeout(() => {
-          if (delBtn.dataset.confirm === '1') {
-            delBtn.dataset.confirm = '';
-            delBtn.innerHTML = t('anchorBtnDelete');
-            delBtn.style.background = 'rgba(239,68,68,0.1)';
-            delBtn.style.borderColor = 'rgba(239,68,68,0.25)';
-          }
-        }, 3000);
-      }
-    });
-
-    actRow.appendChild(dupBtn); actRow.appendChild(delBtn);
-    container.appendChild(actRow);
   }
 
   updateAnchorList() {

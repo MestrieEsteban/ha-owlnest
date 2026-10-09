@@ -129,6 +129,11 @@ details[open] > .ow-card-h .ow-chev { transform: rotate(45deg); }
 .ow-chip2.ow-on { background: color-mix(in srgb, var(--ow-acc) 16%, transparent); color: var(--ow-text); border-color: color-mix(in srgb, var(--ow-acc) 55%, transparent); }
 .ow-chip2.ow-miss { background: rgba(251,191,36,0.12); color: #fbbf24; border-color: rgba(251,191,36,0.45); }
 .ow-form .ow-row-opt { padding: 2px 0; }
+/* Fiche d'un appareil : elle défile dans le panneau, l'en-tête reste en haut. */
+.ow-sheet-host { padding: 0 !important; }
+.ow-sheet-host .ow-form-b { overflow: visible; }
+.ow-sheet-h { position: sticky; top: 0; z-index: 3; background: var(--ow-chrome); }
+.ow-seg.ow-seg-wrap button { flex: 1 1 40%; }
 .ow-picker { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px; border-radius: 12px; border: 1px solid var(--ow-line);
   background: var(--ow-chrome); color: var(--ow-text); font: inherit; text-align: left; cursor: pointer; }
 .ow-picker:hover { border-color: var(--ow-acc); }
