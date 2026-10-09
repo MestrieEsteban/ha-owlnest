@@ -44,6 +44,7 @@ const ENTRIES = [
   'src/card/lovelace-config.ts',
   'src/plan/walls.ts',
   'src/plan/edit.ts',
+  'src/plan/build.ts',
 ];
 
 /**

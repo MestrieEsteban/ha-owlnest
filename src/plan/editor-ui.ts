@@ -17,7 +17,7 @@ import {
 } from './edit';
 
 type Tool = 'select' | 'room' | 'door' | 'window' | 'slider' | 'calibrate' | 'image';
-type Selection = { type: 'room' | 'opening'; id: string } | null;
+type Selection = { type: 'room' | 'opening' | 'wall'; id: string } | null;
 
 const SVG = 'http://www.w3.org/2000/svg';
 const FONT = 'var(--primary-font-family, Inter, sans-serif)';
@@ -399,6 +399,17 @@ export class PlanEditor {
       this.render(); this.renderSide();
       return;
     }
+    // Un mur, sur sa ligne : on le règle à part (hauteur, épaisseur).
+    const wall = wallsOf(this.plan).find((w) => {
+      const along = w.axis === 'x' ? x : y, across = w.axis === 'x' ? y : x;
+      return Math.abs(across - w.at) < w.thickness / 2 + tol * 0.6 && along > w.from && along < w.to;
+    });
+    if (wall) {
+      this.sel = { type: 'wall', id: wall.id };
+      this.drag = { kind: 'pan', sx: e.clientX, sy: e.clientY, cx: this.view.cx, cy: this.view.cy };
+      this.render(); this.renderSide();
+      return;
+    }
     const r = roomAt(this.plan.rooms, x, y);
     if (r) {
       this.sel = { type: 'room', id: r.id };
@@ -457,7 +468,7 @@ export class PlanEditor {
   }
 
   private removeSelection() {
-    if (!this.sel) return;
+    if (!this.sel || this.sel.type === 'wall') return;
     this.commit();
     if (this.sel.type === 'room') this.plan.rooms = this.plan.rooms.filter((r) => r.id !== this.sel!.id);
     else this.plan.openings = this.plan.openings.filter((o) => o.id !== this.sel!.id);
@@ -513,8 +524,9 @@ export class PlanEditor {
     for (const wall of walls) {
       const x1 = wall.axis === 'x' ? wall.from : wall.at, x2 = wall.axis === 'x' ? wall.to : wall.at;
       const y1 = wall.axis === 'x' ? wall.at : wall.from, y2 = wall.axis === 'x' ? wall.at : wall.to;
+      const picked = this.sel?.type === 'wall' && this.sel.id === wall.id;
       svg.append(svgEl('line', {
-        x1, y1, x2, y2, stroke: '#e2e8f0', 'stroke-width': wall.thickness, 'stroke-linecap': 'square',
+        x1, y1, x2, y2, stroke: picked ? ACCENT : '#e2e8f0', 'stroke-width': wall.thickness, 'stroke-linecap': 'square',
       }));
     }
 
@@ -695,6 +707,27 @@ export class PlanEditor {
       }
       box.append(el('div', 'color:#94a3b8;margin-bottom:6px;', t('planFloor')), swatches);
       box.append(this.button(`✕ ${t('planDelete')}`, () => this.removeSelection()));
+      return;
+    }
+
+    const wall = this.sel?.type === 'wall' ? wallsOf(this.plan).find((w) => w.id === this.sel!.id) : null;
+    if (wall) {
+      const box = this.section(t('planWallTitle'));
+      box.append(el('div', 'color:#94a3b8;margin-bottom:8px;', `${t('planLength')} : ${m(wall.to - wall.from)}`));
+      const set = (patch: { height?: number; thickness?: number }) => {
+        this.plan.walls = { ...this.plan.walls, [wall.id]: { ...this.plan.walls?.[wall.id], ...patch } };
+      };
+      this.field(box, t('planWallHeight'), this.num(wall.height, (v) => set({ height: Math.max(0.3, v) })));
+      this.field(box, t('planWallThickness'), this.num(wall.thickness, (v) => set({ thickness: Math.max(0.05, v) }), 0.01, 0.05));
+      box.append(el('div', 'color:#64748b;font-size:11px;line-height:1.45;margin:6px 0 10px;', t('planWallHelp')));
+      if (this.plan.walls?.[wall.id]) {
+        box.append(this.button(t('planWallReset'), () => {
+          this.commit();
+          const { [wall.id]: _, ...rest } = this.plan.walls ?? {};
+          this.plan.walls = rest;
+          this.changed();
+        }));
+      }
       return;
     }
 
