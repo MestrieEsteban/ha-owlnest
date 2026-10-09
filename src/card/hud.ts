@@ -148,6 +148,7 @@ export class CardHud {
   }
 
   get roomsModule() { return this.roomsEl; }
+  get activeRoomId() { return this.activeRoom; }
 
   setActiveView(id: string | null) {
     this.activeView = id;

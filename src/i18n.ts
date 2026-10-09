@@ -1031,7 +1031,7 @@ const STRINGS = {
     uiModRooms: 'Rooms',
     uiRoomsHome: 'Whole house',
     tourRoomsTitle: 'Go into a room',
-    tourRoomsText: 'Each room of your plan has its button, with the number of lights on. Nothing to set up: they follow the plan.',
+    tourRoomsText: 'Each room of your plan has its button, with the number of lights on. You can also tap a room twice in the 3D view.',
     // Interface de la carte
     uiNames: 'Always show the names of the dots',
     // Interface de la carte
@@ -2069,7 +2069,7 @@ const STRINGS = {
     uiModRooms: 'Pièces',
     uiRoomsHome: 'Toute la maison',
     tourRoomsTitle: 'Va dans une pièce',
-    tourRoomsText: 'Chaque pièce de ton plan a son bouton, avec le nombre de lampes allumées. Rien à régler : elles suivent le plan.',
+    tourRoomsText: 'Chaque pièce de ton plan a son bouton, avec le nombre de lampes allumées. Tu peux aussi toucher deux fois une pièce dans la 3D.',
     // Interface de la carte
     uiNames: 'Toujours afficher le nom des pastilles',
     // Interface de la carte

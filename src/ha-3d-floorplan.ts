@@ -1265,6 +1265,13 @@ export class Ha3dFloorplan extends HTMLElement {
           this._lastClickCardId = null;
         }
 
+        // Deux touches sur une pièce : on y va. La première a pu masquer les
+        // pastilles (tap_to_toggle) : la seconde les rend.
+        if (this._floorDoubleTap(e)) {
+          if (this._config?.tap_to_toggle) this._toggleOverlays();
+          return;
+        }
+
         // Tap to toggle overlays
         if (this._config?.tap_to_toggle) {
           this._toggleOverlays();
@@ -1919,6 +1926,39 @@ export class Ha3dFloorplan extends HTMLElement {
       });
     }
     return rooms.map((r) => ({ id: r.id, name: r.name, lit: lit.get(r.id) ?? 0 }));
+  }
+
+  /**
+   * Deux touches rapprochées dans la 3D : la caméra va dans la pièce touchée.
+   * Sur la pièce déjà montrée, ou hors de la maison, elle revient à toute la
+   * maison. La pièce se trouve en coupant le rayon de la caméra avec le sol :
+   * pas de lancer de rayon sur les objets, rien à charger.
+   */
+  private _lastFloorTap = { t: 0, x: 0, y: 0 };
+  private _floorDoubleTap(e: PointerEvent): boolean {
+    const plan = this._plan;
+    if (!plan || !this.camera || !this.canvas) return false;
+    const prev = this._lastFloorTap;
+    const dbl = e.timeStamp - prev.t < 380 && Math.hypot(e.clientX - prev.x, e.clientY - prev.y) < 30;
+    this._lastFloorTap = dbl ? { t: 0, x: 0, y: 0 } : { t: e.timeStamp, x: e.clientX, y: e.clientY };
+    if (!dbl) return false;
+    const rect = this.canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, this.camera);
+    const floor = new THREE.Plane(new THREE.Vector3(0, 1, 0), -this._modelBox.min.y);
+    const hit = new THREE.Vector3();
+    const room = ray.ray.intersectPlane(floor, hit)
+      ? roomOfPoint(this._rooms(), this._planOrigin(plan), hit.x, hit.z)
+      : null;
+    const target = room && room.id !== this._ui?.activeRoomId ? room.id : null;
+    this._ui?.setActiveView(null);
+    this._ui?.setActiveRoom(target);
+    this._flyToRoom(target);
+    return true;
   }
 
   /** La caméra vole au-dessus d'une pièce ; `null` revient à toute la maison. */
