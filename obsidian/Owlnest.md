@@ -20,6 +20,7 @@ Ce dossier est un **second cerveau**, pas une documentation d'API. On y consigne
 - [[Import sh3d]] — un fichier Sweet Home 3D devenu plan modifiable, et la compatibilité avec l'ancien import OBJ.
 - [[Vues des murs]] — murs coupés, fantômes, bas, comme dans les Sims : les règles et les essais écartés.
 - [[Interface]] — thèmes, modules déplaçables, éditeur en onglets, plein écran, tutoriels.
+- [[Owlnest 2.0]] — la feuille de route : ce qui est fait, la suite, dans l'ordre.
 
 ## L'atelier
 
