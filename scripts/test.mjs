@@ -50,6 +50,9 @@ const ENTRIES = [
   'src/plan/templates.ts',
   'src/scene.ts',
   'src/plan/furniture.ts',
+  'src/import/sh3d-home.ts',
+  'src/import/sh3d-furniture.ts',
+  'src/import/sh3d-migrate.ts',
 ];
 
 /**
