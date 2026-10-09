@@ -62,6 +62,10 @@ import { catalogItem } from './plan/catalog';
 import { createUniforms, instrumentMaterials, updateXray, createGhost } from './cutaway';
 import type { CutawayUniforms } from './cutaway';
 import { evalCondition, RuleEngine } from './rules/engine';
+import { CardHud, type DockButton, type HudStatus } from './card/hud';
+import { STYLES as UI_STYLES, type UiPrefs } from './ui/theme';
+import { icon as uiIcon } from './ui/icons';
+import { Tour, tourSeen, markTourSeen, type TourStep } from './ui/tour';
 import type { OwlnestRule, Action } from './rules/types';
 
 type AnyOverlay = AnchorOverlay | SensorOverlay | LabelOverlay | ClusterOverlay | CameraOverlay;
@@ -117,19 +121,19 @@ export class Ha3dFloorplan extends HTMLElement {
   private camera: THREE.PerspectiveCamera | null = null;
   private controls: OrbitControls | null = null;
   private canvas: HTMLCanvasElement | null = null;
-  private lockBtn: HTMLButtonElement | null = null;
-  private editBtn: HTMLButtonElement | null = null;
   private _hud: HTMLDivElement | null = null;
   private _hudBar: HTMLDivElement | null = null;
   private _hudLeft: HTMLDivElement | null = null;
   private _hudSep: HTMLDivElement | null = null;
   private _hudRight: HTMLDivElement | null = null;
-  /** Murs qui s'abaissent devant la caméra (plans seulement), et son bouton. */
+  /** Murs qui s'abaissent devant la caméra (plans seulement). */
   private _lowWalls = new LowWalls();
-  private _lowWallsBtn: HTMLButtonElement | null = null;
   private _hudViews: HTMLDivElement | null = null;
-  private _lockOpenIcon = '🔓';
-  private _lockClosedIcon = '🔒';
+  /** Les modules de la carte (barre d'outils, vues, état) et leur personnalisation. */
+  private _ui: CardHud | null = null;
+  /** Les visites guidées. */
+  private _tour: Tour | null = null;
+  private _uiSaveTimer: ReturnType<typeof setTimeout> | null = null;
   private overlayContainer: HTMLDivElement | null = null;
 
   private anchors = new Map<string, AnchorEntry>();
@@ -397,6 +401,7 @@ export class Ha3dFloorplan extends HTMLElement {
       }
       this._evaluateRules();
       this._evaluatePassiveConditions();
+      this._ui?.refreshStatus();
       this._requestRender();
     }
   }
@@ -612,7 +617,10 @@ export class Ha3dFloorplan extends HTMLElement {
     // Les pièces des entités : chargées d'avance pour nommer les lampes reliées.
     if (this._hass) void loadRegistry(this._hass).catch(() => {});
     let fromDemo = this._isDemo;
-    this._enterFullscreen();
+    this._tour?.end();
+    this._closeWallMenu();
+    this._ui?.setHidden(true);
+    this._setFullscreen('plan', true);
     this._planEditor = new PlanEditor({
       container: this.overlayContainer,
       plan: this._planDoc() ?? emptyPlan(),
@@ -652,7 +660,8 @@ export class Ha3dFloorplan extends HTMLElement {
         this._planEditor = null;
         this._framedBox = null;
         this._viewShift = 0;
-        this._exitFullscreen();
+        this._ui?.setHidden(false);
+        this._setFullscreen('plan', false);
         this._applyViewShift();
         if (this._plan) this._frameModel();
         this._schedulePlanSave(0);
@@ -687,6 +696,23 @@ export class Ha3dFloorplan extends HTMLElement {
   private get _haCard(): HTMLElement | null {
     return (this._fullscreenHost?.querySelector('ha-card') ?? this.querySelector('ha-card')) as HTMLElement | null;
   }
+
+  /** Ce qui demande le plein écran : il dure tant qu'il reste une raison. */
+  private _fsReasons = new Set<string>();
+
+  private _setFullscreen(reason: string, on: boolean) {
+    if (on) this._fsReasons.add(reason); else this._fsReasons.delete(reason);
+    if (this._fsReasons.size) this._enterFullscreen(); else this._exitFullscreen();
+    if (this._fsReasons.has('user')) window.addEventListener('keydown', this._onFullscreenKey, true);
+    else window.removeEventListener('keydown', this._onFullscreenKey, true);
+    this._ui?.refreshDock();
+  }
+
+  /** Échap quitte le plein écran demandé par l'utilisateur, hors édition. */
+  private _onFullscreenKey = (e: KeyboardEvent) => {
+    if (e.key !== 'Escape' || this._editMode || this._planEditor || this._tour?.active || this._ui?.customizing || this._wallMenu) return;
+    this._setFullscreen('user', false);
+  };
 
   private _enterFullscreen() {
     const card = this._haCard;
@@ -762,6 +788,7 @@ export class Ha3dFloorplan extends HTMLElement {
           this._langFromScene = true;
           setLang(scene.settings.language);
         }
+        this._ui?.setPrefs(this._scene.settings?.ui);
         this._loadModel();
       })
       .catch((err) => {
@@ -818,18 +845,9 @@ export class Ha3dFloorplan extends HTMLElement {
   private _showToast(message: string, isError = false) {
     const toast = document.createElement('div');
     toast.textContent = message;
-    toast.style.cssText = [
-      'position:absolute', 'top:12px', 'left:50%',
-      'transform:translateX(-50%)',
-      'z-index:200',
-      `background:${isError ? 'rgba(220,38,38,0.9)' : 'rgba(22,163,74,0.9)'}`,
-      'backdrop-filter:blur(8px)',
-      'color:#fff', 'font-size:12px', 'font-weight:600',
-      'padding:6px 16px', 'border-radius:20px',
-      'pointer-events:none',
-      'font-family:var(--primary-font-family,sans-serif)',
-      'transition:opacity .3s ease',
-    ].join(';');
+    toast.className = 'ow-toast';
+    toast.setAttribute('role', 'status');
+    toast.style.background = isError ? 'rgba(220,38,38,0.92)' : 'rgba(22,163,74,0.92)';
     this.overlayContainer?.appendChild(toast);
     setTimeout(() => { toast.style.opacity = '0'; }, 2000);
     setTimeout(() => toast.remove(), 2400);
@@ -864,6 +882,11 @@ export class Ha3dFloorplan extends HTMLElement {
       'position:absolute;inset:0;pointer-events:none;overflow:hidden;';
     card.appendChild(this.overlayContainer);
 
+    // La feuille de styles commune : modules, menus, panneaux, éditeur.
+    const uiStyle = document.createElement('style');
+    uiStyle.textContent = UI_STYLES;
+    card.appendChild(uiStyle);
+
     this._detachDrop = attachDropZone(
       card,
       this.overlayContainer,
@@ -879,19 +902,16 @@ export class Ha3dFloorplan extends HTMLElement {
       card.appendChild(styleEl);
     }
 
-    // ── Unified HUD ───────────────────────────────────────────────────────
-    const ui = this._config?.ui ?? {};
-    const uiIcons = ui.icons ?? {};
-    this._lockOpenIcon  = uiIcons.lock_open   ?? '🔓';
-    this._lockClosedIcon = uiIcons.lock_closed ?? '🔒';
+    // ── Barre de l'éditeur d'ancres ───────────────────────────────────────
+    // Hors édition, ce sont les modules de `CardHud` qui s'affichent.
 
     // Hud: bottom-right corner, holds lock + pencil in normal mode.
     // In edit mode, repositioned to center and bar glassmorphism is restored.
     const hud = document.createElement('div');
     hud.style.cssText = [
       'position:absolute', 'bottom:12px', 'right:12px',
-      'z-index:10',
-      'display:flex', 'flex-direction:column', 'align-items:flex-end', 'gap:6px',
+      'z-index:10', 'display:none',
+      'flex-direction:column', 'align-items:flex-end', 'gap:6px',
       'opacity:0', 'transition:opacity .25s ease',
       'pointer-events:none',
     ].join(';');
@@ -944,17 +964,22 @@ export class Ha3dFloorplan extends HTMLElement {
     this._hudRight = hudRight;
     bar.appendChild(hudRight);
 
-    // Murs bas : seulement pour un plan, où l'on sait quel meuble est contre quel mur.
-    this._lowWallsBtn = this._makeLowWallsBtn();
-    hudRight.appendChild(this._lowWallsBtn);
-    if (ui.show_lock !== false) {
-      this.lockBtn = this._makeLockBtn();
-      hudRight.appendChild(this.lockBtn);
-    }
-    if (ui.show_editor !== false) {
-      this.editBtn = this._makeEditBtn(uiIcons.editor ?? '✏️');
-      hudRight.appendChild(this.editBtn);
-    }
+    // Les modules de la carte : barre d'outils, vues enregistrées, état.
+    this._restoreWallView();
+    this._tour = new Tour(this.overlayContainer);
+    this._ui = new CardHud(this.overlayContainer, this._scene?.settings?.ui, this._dockButtons(), {
+      getViews: () => normalizeViews(this._effectiveConfig.camera_views ?? [])
+        .filter((v) => !v.hidden && v.id)
+        .map((v) => ({ id: v.id!, label: v.label })),
+      flyTo: (id) => {
+        const v = normalizeViews(this._effectiveConfig.camera_views ?? []).find((x) => x.id === id);
+        if (v) this._viewMgr?.flyTo(v);
+      },
+      getStatus: () => this._homeStatus(),
+      onPrefs: (prefs) => this._saveUiPrefs(prefs),
+      startTour: () => this._startViewTour(),
+    });
+    this._ui.onHelloDismissed = () => markTourSeen();
 
     // Hover (desktop) — show/hide HUD
     card.addEventListener('mouseenter', () => this._showControls());
@@ -1782,77 +1807,151 @@ export class Ha3dFloorplan extends HTMLElement {
     this.overlayContainer?.appendChild(overlay);
   }
 
-  private _makeLowWallsBtn(): HTMLButtonElement {
-    const btn = document.createElement('button');
-    btn.style.cssText = this._hudBtnStyle();
-    btn.style.display = 'none';
+  /** La vue des murs retenue sur cet appareil. */
+  private _restoreWallView() {
     let saved = '0';
     try { saved = localStorage.getItem(LOW_WALLS_KEY) ?? '0'; } catch { /* stockage bloqué */ }
     this._lowWalls.setView(WALL_VIEWS[Number(saved)] ?? 'up', null);
-    btn.addEventListener('click', (e) => { e.stopPropagation(); this._toggleWallMenu(btn); });
-    this._paintLowWallsBtn(btn);
-    return btn;
   }
 
-  private _paintLowWallsBtn(btn = this._lowWallsBtn) {
-    if (!btn) return;
-    const view = this._lowWalls.view;
-    btn.textContent = WALL_VIEW_ICONS[view];
-    btn.title = `${t('wallViewTitle')} : ${t(WALL_VIEW_LABELS[view])}`;
-    btn.style.boxShadow = view !== 'up' ? '0 0 0 2px rgba(125,211,252,0.8)' : 'none';
-    btn.style.display = this._plan ? '' : 'none';
+  private _paintLowWallsBtn() {
+    this._ui?.refreshDock();
+  }
+
+  /**
+   * Les boutons de la barre d'outils, dans l'ordre. Les icônes du YAML
+   * (`ui.icons`) remplacent les dessins quand elles sont données.
+   */
+  private _dockButtons(): DockButton[] {
+    const ui = () => this._config?.ui ?? {};
+    const custom = () => ui().icons ?? {};
+    return [
+      {
+        id: 'walls', icon: 'walls', label: () => `${t('wallViewTitle')} : ${t(WALL_VIEW_LABELS[this._lowWalls.view])}`,
+        visible: () => !!this._plan,
+        active: () => this._lowWalls.view !== 'up',
+        onClick: (btn: HTMLButtonElement) => this._toggleWallMenu(btn),
+      },
+      { id: 'recenter', icon: 'target', label: () => t('uiRecenter'), onClick: () => this._frameModel(true) },
+      {
+        id: 'full', icon: 'full', label: () => (this._fsReasons.has('user') ? t('uiFullscreenExit') : t('uiFullscreen')),
+        active: () => this._fsReasons.has('user'),
+        onClick: () => this._setFullscreen('user', !this._fsReasons.has('user')),
+      },
+      {
+        id: 'lock', icon: 'unlock', label: () => (this._locked ? t('viewUnlock') : t('viewLock')),
+        visible: () => ui().show_lock !== false,
+        alert: () => this._locked,
+        onClick: () => this._toggleLock(),
+      },
+      { id: 'help', icon: 'help', label: () => t('uiHelp'), sepBefore: true, onClick: () => this._startViewTour() },
+      {
+        id: 'custom', icon: 'brush', label: () => t('uiCustomize'),
+        active: () => !!this._ui?.customizing,
+        onClick: () => { this._closeWallMenu(); this._ui?.toggleSheet(); },
+      },
+      {
+        id: 'edit', icon: 'pencil', label: () => t('editAnchorsTitle'),
+        visible: () => ui().show_editor !== false,
+        onClick: () => { this._closeWallMenu(); this._ui?.closeSheet(); this._requestEdit(); },
+      },
+    ].map((b) => {
+      // Icônes personnalisées : un texte à la place du dessin.
+      const text = b.id === 'edit' ? custom().editor : b.id === 'lock' ? (this._locked ? custom().lock_closed : custom().lock_open) : undefined;
+      return text ? { ...b, get text() { return text; } } as DockButton : b as DockButton;
+    });
+  }
+
+  /** L'état de la maison pour le module « État » : lampes allumées, météo. */
+  private _homeStatus(): HudStatus | null {
+    const hass = this._hass;
+    if (!hass || !this.modelLoaded) return null;
+    let lightsOn = 0;
+    this.anchors.forEach((a) => { if (a.domain === 'light' && hass.states[a.entityId]?.state === 'on') lightsOn++; });
+    const out: HudStatus = { lightsOn };
+    const id = this._effectiveConfig.weather_entity;
+    const w = id ? hass.states[id] : undefined;
+    if (w) {
+      const temp = Number(w.attributes?.temperature);
+      const unit = String(w.attributes?.temperature_unit ?? '°');
+      if (Number.isFinite(temp)) out.temp = `${Math.round(temp)}${unit.startsWith('°') ? '°' : ` ${unit}`}`;
+      const key = WEATHER_LABEL[w.state];
+      if (key) out.weather = t(key);
+    }
+    return out;
+  }
+
+  /** Les préférences d'affichage partent avec la scène, un peu après le dernier changement. */
+  private _saveUiPrefs(prefs: UiPrefs) {
+    const sceneId = this._getActiveSceneId();
+    if (!this._scene && sceneId) this._scene = emptyScene(sceneId);
+    if (!this._scene) return;
+    this._scene = { ...this._scene, settings: { ...this._scene.settings, ui: JSON.parse(JSON.stringify(prefs)) } };
+    if (this._uiSaveTimer) clearTimeout(this._uiSaveTimer);
+    this._uiSaveTimer = setTimeout(() => {
+      this._uiSaveTimer = null;
+      if (!sceneId || !this._hass || !this._scene || this._backendDown) return;
+      saveScene(this._hass, sceneId, this._scene).catch(() => this._showToast(t('toastSceneSaveError'), true));
+    }, 700);
+  }
+
+  /** La visite de la carte, hors édition. */
+  private _startViewTour() {
+    if (!this._tour) return;
+    markTourSeen();
+    this._ui?.hideHello();
+    this._ui?.closeSheet();
+    this._closeWallMenu();
+    this._showControls();
+    const dock = (id: string) => () => this._ui?.dockButton(id);
+    const steps: TourStep[] = [
+      { title: 'tourHomeTitle', text: 'tourHomeText', anim: 'orbit' },
+    ];
+    if (this.overlays.size) steps.push({ target: () => [...this.overlays.values()].find((o) => o.el.offsetParent && o.el.style.display !== 'none')?.el, title: 'tourTapTitle', text: 'tourTapText', anim: 'tap' });
+    if (this._ui?.viewsModule) steps.push({ target: () => this._ui?.viewsModule, title: 'tourViewsTitle', text: 'tourViewsText', anim: 'views' });
+    if (this._plan) steps.push({ target: dock('walls'), title: 'tourWallsTitle', text: 'tourWallsText', anim: 'walls' });
+    steps.push(
+      { target: dock('full'), title: 'tourFullTitle', text: 'tourFullText', anim: 'full' },
+      { target: dock('custom'), title: 'tourCustomTitle', text: 'tourCustomText', anim: 'layout' },
+    );
+    if (this._config?.ui?.show_editor !== false) steps.push({ target: dock('edit'), title: 'tourEditTitle', text: 'tourEditText', anim: 'add' });
+    this._ui?.setIdle(false);
+    this._tour.start(steps, () => this._showControlsTemporarily());
   }
 
   private _wallMenu: HTMLDivElement | null = null;
 
-  /** Le menu des vues des murs, au-dessus du bouton : debout, coupés, fantômes, bas. */
+  /** Le menu des vues des murs, à côté du bouton : debout, coupés, fantômes, bas. */
   private _toggleWallMenu(btn: HTMLButtonElement) {
     if (this._wallMenu) { this._closeWallMenu(); return; }
     const host = this.overlayContainer;
     if (!host) return;
     const menu = document.createElement('div');
+    menu.className = 'ow-surface ow-menu';
     menu.setAttribute('role', 'menu');
-    menu.style.cssText = [
-      'position:absolute', 'z-index:60', 'display:flex', 'flex-direction:column', 'gap:2px', 'padding:6px',
-      'border-radius:12px', 'background:rgba(8,12,24,0.92)', 'backdrop-filter:blur(10px)',
-      'border:1px solid rgba(255,255,255,0.12)', 'box-shadow:0 10px 28px rgba(0,0,0,0.35)',
-      'font-family:var(--primary-font-family,sans-serif)', 'min-width:220px', 'pointer-events:auto',
-    ].join(';');
     const title = document.createElement('div');
+    title.className = 'ow-menu-title';
     title.textContent = t('wallViewTitle');
-    title.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:rgba(255,255,255,0.5);padding:4px 8px 6px;';
     menu.appendChild(title);
     for (const view of WALL_VIEWS) {
       const on = view === this._lowWalls.view;
       const item = document.createElement('button');
+      item.type = 'button';
+      item.className = `ow-menu-item${on ? ' ow-on' : ''}`;
       item.setAttribute('role', 'menuitemradio');
       item.setAttribute('aria-checked', String(on));
-      item.style.cssText = [
-        'display:flex', 'align-items:center', 'gap:10px', 'text-align:left', 'cursor:pointer',
-        'padding:8px 10px', 'border-radius:9px', 'border:none', 'font:inherit',
-        `background:${on ? 'rgba(125,211,252,0.18)' : 'transparent'}`, 'color:#e2e8f0',
-      ].join(';');
-      const icon = document.createElement('span');
-      icon.textContent = WALL_VIEW_ICONS[view];
-      icon.style.cssText = 'font-size:17px;width:22px;text-align:center;';
       const text = document.createElement('span');
-      text.style.cssText = 'display:flex;flex-direction:column;gap:1px;';
-      const label = document.createElement('span');
+      const label = document.createElement('strong');
       label.textContent = t(WALL_VIEW_LABELS[view]);
-      label.style.cssText = `font-size:13px;font-weight:${on ? 700 : 600};`;
-      const hint = document.createElement('span');
+      const hint = document.createElement('small');
       hint.textContent = t(WALL_VIEW_HINTS[view]);
-      hint.style.cssText = 'font-size:11px;color:rgba(255,255,255,0.55);line-height:1.3;';
       text.append(label, hint);
-      item.append(icon, text);
+      item.append(uiIcon(WALL_VIEW_ICONS[view], 20), text);
       item.addEventListener('click', (e) => { e.stopPropagation(); this._closeWallMenu(); this._setWallView(view); });
       menu.appendChild(item);
     }
     host.appendChild(menu);
-    // Au-dessus du bouton, aligné sur son bord droit.
-    const hr = host.getBoundingClientRect(), br = btn.getBoundingClientRect();
-    menu.style.right = `${Math.max(8, hr.right - br.right)}px`;
-    menu.style.bottom = `${Math.max(8, hr.bottom - br.top + 8)}px`;
+    placePopover(menu, btn, host);
     this._wallMenu = menu;
     // Un clic ailleurs le referme.
     setTimeout(() => document.addEventListener('pointerdown', this._onWallMenuOutside, true), 0);
@@ -1890,41 +1989,11 @@ export class Ha3dFloorplan extends HTMLElement {
     this._requestRender();
   }
 
-  private _makeLockBtn(): HTMLButtonElement {
-    const btn = document.createElement('button');
-    btn.style.cssText = this._hudBtnStyle();
-    btn.textContent = this._lockOpenIcon;
-    btn.title = t('viewLock');
-    btn.addEventListener('click', (e) => { e.stopPropagation(); this._toggleLock(); });
-    return btn;
-  }
-
-  private _makeEditBtn(icon: string): HTMLButtonElement {
-    const btn = document.createElement('button');
-    btn.style.cssText = this._hudBtnStyle();
-    btn.textContent = icon;
-    btn.title = t('editAnchorsTitle');
-    btn.addEventListener('click', (e) => { e.stopPropagation(); this._toggleEditMode(); });
-    return btn;
-  }
-
-  private _hudBtnStyle(): string {
-    return [
-      'display:inline-flex', 'align-items:center', 'justify-content:center',
-      'width:32px', 'height:32px',
-      'border:1px solid rgba(255,255,255,0.1)', 'border-radius:50%',
-      'background:rgba(8,12,24,0.70)',
-      'backdrop-filter:blur(10px)', '-webkit-backdrop-filter:blur(10px)',
-      'color:rgba(255,255,255,0.7)', 'cursor:pointer',
-      'font-size:15px', 'line-height:1',
-      'flex-shrink:0',
-      'transition:background .15s, box-shadow .15s, border-color .15s',
-    ].join(';');
-  }
 
   // ── Controls visibility ────────────────────────────────────────────────
 
   private _showControls() {
+    this._ui?.setIdle(false);
     if (!this._hud) return;
     this._hud.style.opacity = '1';
     this._hud.style.pointerEvents = 'auto';
@@ -1934,6 +2003,8 @@ export class Ha3dFloorplan extends HTMLElement {
   private _hideControls() {
     if (this._editMode) return;
     if (this._sim?.isOpen) return; // keep visible while sim panel is open
+    if (this._ui?.customizing || this._wallMenu) return;
+    this._ui?.setIdle(true);
     if (!this._hud) return;
     this._hud.style.opacity = '0';
     this._hud.style.pointerEvents = 'none';
@@ -1993,9 +2064,7 @@ export class Ha3dFloorplan extends HTMLElement {
   private _toggleLock(force?: boolean) {
     this._locked = force !== undefined ? force : !this._locked;
     if (this.controls) this.controls.enabled = !this._locked && !this._editMode;
-    this.lockBtn!.textContent = this._locked ? this._lockClosedIcon : this._lockOpenIcon;
-    this.lockBtn!.title = this._locked ? t('viewUnlock') : t('viewLock');
-    this.lockBtn!.style.boxShadow = this._locked ? '0 0 0 2px rgba(239,68,68,0.8)' : 'none';
+    this._ui?.refreshDock();
     this._saveView();
   }
 
@@ -2006,16 +2075,71 @@ export class Ha3dFloorplan extends HTMLElement {
     this._editMode ? this._exitEditMode() : this._enterEditMode();
   }
 
-  private _enterEditMode() {
+  /**
+   * « Modifier » : sur une petite carte, l'éditeur est à l'étroit. On propose
+   * d'abord le plein écran, sauf si l'utilisateur a dit de ne plus demander.
+   */
+  private _requestEdit(tab?: string) {
+    if (!this.modelLoaded || !this._modelRoot) return;
+    if (this._editMode) { this._exitEditMode(); return; }
+    this._ui?.hideHello();
+    const w = this._haCard?.offsetWidth ?? 0;
+    let never = false;
+    try { never = localStorage.getItem(FULL_ASK_KEY) === 'never'; } catch { /* stockage bloqué */ }
+    if (this._fullscreenHost || w >= 900) { this._enterEditMode(tab); return; }
+    if (never) { this._setFullscreen('edit', localStorage.getItem(FULL_ASK_CHOICE) !== 'here'); this._enterEditMode(tab); return; }
+    this._askFullscreen((full, remember) => {
+      if (remember) {
+        try { localStorage.setItem(FULL_ASK_KEY, 'never'); localStorage.setItem(FULL_ASK_CHOICE, full ? 'full' : 'here'); } catch { /* stockage bloqué */ }
+      }
+      if (full) this._setFullscreen('edit', true);
+      this._enterEditMode(tab);
+    });
+  }
+
+  private _askFullscreen(done: (full: boolean, remember: boolean) => void) {
+    const host = this.overlayContainer;
+    if (!host || host.querySelector('.ow-scrim')) return;
+    const scrim = document.createElement('div');
+    scrim.className = 'ow-scrim ow-ui';
+    scrim.innerHTML = `<div class="ow-surface ow-dialog" role="dialog" aria-modal="true" aria-labelledby="ow-ask-t">
+      <div style="height:70px;border-radius:10px;background:var(--ow-chrome2);position:relative;overflow:hidden"><div class="ow-ask-grow"></div></div>
+      <h4 id="ow-ask-t">${t('uiAskFullTitle')}</h4>
+      <p>${t('uiAskFullText')}</p>
+      <div class="ow-row"><button type="button" class="ow-btn ow-primary" data-a="full"></button><button type="button" class="ow-btn ow-ghost" data-a="here">${t('uiAskFullHere')}</button></div>
+      <label><input type="checkbox" data-a="never"> ${t('uiAskFullNever')}</label></div>`;
+    const full = scrim.querySelector('[data-a="full"]') as HTMLButtonElement;
+    full.append(uiIcon('full', 16), document.createTextNode(t('uiAskFullGo')));
+    const close = (choice: boolean | null) => {
+      const remember = (scrim.querySelector('[data-a="never"]') as HTMLInputElement).checked;
+      scrim.remove();
+      window.removeEventListener('keydown', onKey, true);
+      if (choice !== null) done(choice, remember);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); close(null); } };
+    window.addEventListener('keydown', onKey, true);
+    scrim.addEventListener('pointerdown', (e) => e.stopPropagation());
+    scrim.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const a = (e.target as HTMLElement).closest('[data-a]')?.getAttribute('data-a');
+      if (e.target === scrim) close(null);
+      else if (a === 'full') close(true);
+      else if (a === 'here') close(false);
+    });
+    host.appendChild(scrim);
+    full.focus();
+  }
+
+  private _enterEditMode(tab?: string) {
     // Les marqueurs et gizmos de l'éditeur modifient la géométrie de la scène.
     this._requestShadowUpdate();
     this._editMode = true;
     // L'éditeur clique, survole et désigne les objets d'origine.
     this._batch?.unmerge();
-    if (this.editBtn) {
-      this.editBtn.style.boxShadow = '0 0 0 2px rgba(59,130,246,0.9)';
-      this.editBtn.title = t('exitEditMode');
-    }
+    this._closeWallMenu();
+    this._tour?.end();
+    this._ui?.setHidden(true);
+    if (this._hud) this._hud.style.display = 'flex';
     // Reposition HUD to center + restore bar glassmorphism for edit toolbar
     if (this._hud) {
       this._hud.style.bottom = '12px';
@@ -2247,10 +2371,8 @@ export class Ha3dFloorplan extends HTMLElement {
     this._requestShadowUpdate();
     this._editMode = false;
     this._mergeStatic();
-    if (this.editBtn) {
-      this.editBtn.style.boxShadow = 'none';
-      this.editBtn.title = t('editAnchorsTitle');
-    }
+    this._ui?.setHidden(false);
+    this._setFullscreen('edit', false);
 
     document.removeEventListener('keydown', this._onCardKeyDown);
     this._selectedCardId = null;
@@ -2758,28 +2880,14 @@ export class Ha3dFloorplan extends HTMLElement {
       this._hudLeft.innerHTML = '';
       this._hudLeft.style.display = 'flex';
     }
-    // Rebuild hudRight: murs bas, lock + pencil
     this._hudRight.innerHTML = '';
-    const ui = this._config?.ui ?? {};
-    if (this._lowWallsBtn) {
-      this._hudRight.appendChild(this._lowWallsBtn);
-      this._paintLowWallsBtn();
-    }
-    if (ui.show_lock !== false && this.lockBtn) {
-      this._hudRight.appendChild(this.lockBtn);
-    }
-    if (ui.show_editor !== false && this.editBtn) {
-      this._hudRight.appendChild(this.editBtn);
-    }
-    // Rebuild camera view buttons in hudLeft for normal mode
+    if (this._hud) this._hud.style.display = 'none';
+    // L'ancienne barre reçoit encore les vues (le gestionnaire y écrit) : les
+    // modules affichent les leurs.
     this._viewMgr?.buildHUDBar();
-    // Move view buttons from _hudLeft into the separate centered _hudViews pill
-    if (this._hudViews && this._hudLeft) {
-      this._hudViews.innerHTML = '';
-      const children = Array.from(this._hudLeft.children);
-      children.forEach(b => this._hudViews!.appendChild(b));
-      this._hudViews.style.display = this._hudViews.children.length > 0 ? 'flex' : 'none';
-    }
+    if (this._hudViews) { this._hudViews.innerHTML = ''; this._hudViews.style.display = 'none'; }
+    this._ui?.refreshViews();
+    this._ui?.refreshDock();
   }
 
   // ── Three.js init ─────────────────────────────────────────────────────
@@ -3348,7 +3456,7 @@ export class Ha3dFloorplan extends HTMLElement {
    * le plus étroit (vertical en paysage, horizontal en portrait) : le cadrage
    * tient quelle que soit l'échelle du modèle, mètres comme centimètres.
    */
-  private _frameModel() {
+  private _frameModel(animate = false) {
     if (!this.camera || !this.controls) return;
     const size = this._modelBox.getSize(new THREE.Vector3());
     const radius = Math.max(size.length() / 2, 1e-3);
@@ -3374,6 +3482,12 @@ export class Ha3dFloorplan extends HTMLElement {
     // chargement), pas forcément pour un plan qui a grandi depuis son origine.
     const centre = this._modelBox.isEmpty() ? new THREE.Vector3() : this._modelBox.getCenter(new THREE.Vector3());
     centre.y = 0;
+    if (animate) {
+      this._camAnimTo = { pos: centre.clone().add(dir.multiplyScalar(dist)), target: centre };
+      this._ui?.setActiveView(null);
+      this._requestRender();
+      return;
+    }
     this.controls.target.copy(centre);
     this.camera.position.copy(centre).add(dir.multiplyScalar(dist));
     this.camera.lookAt(centre);
@@ -3626,7 +3740,7 @@ export class Ha3dFloorplan extends HTMLElement {
       this._toggleLock(saved.locked);
     } else {
       this._frameModel();
-      this.lockBtn!.textContent = '\uD83D\uDD13';
+      this._ui?.refreshDock();
     }
 
     this._fitFog();
@@ -3706,13 +3820,15 @@ export class Ha3dFloorplan extends HTMLElement {
       () => this._hass,
       () => this._getActiveSceneId(),
       () => this._scene,
-      (scene) => { this._scene = scene; },
+      (scene) => { this._scene = scene; this._ui?.refreshViews(); },
       (msg, err) => this._showToast(msg, err),
       (pos, target) => { this._camAnimTo = { pos, target }; },
       () => this._hudRight,
     );
 
     this._rebuildNormalHUD();
+    this._ui?.refreshStatus();
+    if (!tourSeen() && !this._editMode && !this._planEditor) this._ui?.showHello();
 
     // Sync cards from scene
     const cards = this._scene?.cards ?? [];
@@ -4343,6 +4459,13 @@ export class Ha3dFloorplan extends HTMLElement {
   private _teardown() {
     // L'éditeur ouvert se ferme proprement : la carte quitte le plein écran.
     this._planEditor?.close();
+    this._tour?.end();
+    this._closeWallMenu();
+    this._ui?.destroy();
+    this._ui = null;
+    this._fsReasons.clear();
+    this._exitFullscreen();
+    window.removeEventListener('keydown', this._onFullscreenKey, true);
     cancelAnimationFrame(this.rafId);
     this._detachDrop?.();
     this._detachDrop = null;
@@ -4439,8 +4562,33 @@ async function sh3dFileOf(source: FileSystemEntry[] | File[]): Promise<File | nu
 
 /** Murs bas, retenus par appareil : une tablette murale et un téléphone n'ont pas le même usage. */
 const LOW_WALLS_KEY = 'owlnest_low_walls';
+/** Ne plus proposer le plein écran avant d'éditer, et le choix retenu. */
+const FULL_ASK_KEY = 'owlnest_edit_fullscreen_ask';
+const FULL_ASK_CHOICE = 'owlnest_edit_fullscreen_choice';
 
 /** Les vues des murs : icône, nom et explication. */
-const WALL_VIEW_ICONS: Record<WallView, string> = { up: '\u{1F3E0}', cutaway: '\u{1F9F1}', ghost: '\u{1F47B}', down: '\u{2B07}\u{FE0F}' };
+const WALL_VIEW_ICONS: Record<WallView, string> = { up: 'wallsUp', cutaway: 'wallsCut', ghost: 'wallsGhost', down: 'wallsDown' };
+
+/** La météo de Home Assistant, en clair. */
+const WEATHER_LABEL: Record<string, StringKey> = {
+  sunny: 'simWeatherClear', 'clear-night': 'uiWeatherNight', partlycloudy: 'uiWeatherPartly', cloudy: 'simWeatherCloudy',
+  rainy: 'simWeatherRain', pouring: 'simWeatherRain', 'snowy-rainy': 'simWeatherSnow', snowy: 'simWeatherSnow',
+  lightning: 'simWeatherStorm', 'lightning-rainy': 'simWeatherStorm', hail: 'simWeatherHail', fog: 'simWeatherFog',
+  windy: 'simWeatherWind', 'windy-variant': 'simWeatherWind',
+};
+
+/**
+ * Pose un menu à côté de son bouton, dans le calque de la carte : au-dessus
+ * s'il y a la place, sinon en dessous ; aligné sur le bord du bouton le plus
+ * proche du bord de la carte.
+ */
+function placePopover(menu: HTMLElement, btn: HTMLElement, host: HTMLElement) {
+  const hr = host.getBoundingClientRect(), br = btn.getBoundingClientRect();
+  const mh = menu.offsetHeight, mw = menu.offsetWidth;
+  if (br.top - hr.top > mh + 16) menu.style.bottom = `${Math.max(8, hr.bottom - br.top + 8)}px`;
+  else menu.style.top = `${Math.min(hr.height - mh - 8, br.bottom - hr.top + 8)}px`;
+  if (br.left + br.width / 2 > hr.left + hr.width / 2) menu.style.right = `${Math.max(8, hr.right - br.right)}px`;
+  else menu.style.left = `${Math.max(8, Math.min(hr.width - mw - 8, br.left - hr.left))}px`;
+}
 const WALL_VIEW_LABELS: Record<WallView, StringKey> = { up: 'wallViewUp', cutaway: 'wallViewCutaway', ghost: 'wallViewGhost', down: 'wallViewDown' };
 const WALL_VIEW_HINTS: Record<WallView, StringKey> = { up: 'wallViewUpHint', cutaway: 'wallViewCutawayHint', ghost: 'wallViewGhostHint', down: 'wallViewDownHint' };

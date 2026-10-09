@@ -13,6 +13,7 @@
  */
 
 import { t, getLang, type StringKey } from '../i18n';
+import { icon } from '../ui/icons';
 import type { PlanDoc, PlanOpening, OpeningKind, PlanWall, FloorMaterial, DoorStyle, WindowStyle, PlanItem } from './types';
 import { OPENING_DEFAULTS, PLAN_COLORS } from './types';
 import {
@@ -128,57 +129,6 @@ function meters(v: number): string {
 const parseNum = (s: string) => parseFloat(s.replace(',', '.').replace(/[^\d.\-]/g, ''));
 
 /** Icônes au trait, dessinées sur 24 × 24. */
-const ICONS: Record<string, string> = {
-  select: '<path d="M5 3l14 8-6 1.5L10 19z" fill="currentColor" stroke="none"/>',
-  room: '<rect x="4" y="5" width="16" height="14" rx="1.5"/><path d="M4 12h7v7"/>',
-  wall: '<path d="M4 18L10 6l10 4"/><circle cx="4" cy="18" r="1.8" fill="currentColor"/><circle cx="10" cy="6" r="1.8" fill="currentColor"/><circle cx="20" cy="10" r="1.8" fill="currentColor"/>',
-  door: '<path d="M4 20h16"/><path d="M6 20V6"/><path d="M6 6a14 14 0 0 1 14 14" stroke-dasharray="2 2"/>',
-  window: '<rect x="3" y="9" width="18" height="6"/><path d="M3 12h18"/>',
-  slider: '<path d="M3 10h12M3 14h18"/><path d="M12 7l3 3-3 3"/>',
-  passage: '<path d="M5 20V10a7 7 0 0 1 14 0v10"/>',
-  erase: '<path d="M15 4l5 5-9 9H6l-3-3z"/><path d="M9 10l5 5"/><path d="M11 20h9"/>',
-  undo: '<path d="M9 7L4 12l5 5"/><path d="M4 12h10a6 6 0 0 1 0 12"/>',
-  redo: '<path d="M15 7l5 5-5 5"/><path d="M20 12H10a6 6 0 0 0 0 12"/>',
-  plus: '<path d="M12 5v14M5 12h14"/>',
-  minus: '<path d="M5 12h14"/>',
-  fit: '<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>',
-  image: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-8 8"/>',
-  ruler: '<path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/>',
-  move: '<path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/>',
-  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
-  flip: '<path d="M12 3v18"/><path d="M8 7L4 12l4 5M16 7l4 5-4 5"/>',
-  swap: '<path d="M7 4v16M7 20l-3-3M7 20l3-3M17 20V4M17 4l-3 3M17 4l3 3"/>',
-  corner: '<path d="M4 20V4h16"/><circle cx="4" cy="4" r="2.2" fill="currentColor"/>',
-  pencil: '<path d="M4 20l1-5L16 4l4 4L9 19z"/><path d="M14 6l4 4"/>',
-  check: '<path d="M4 12l5 5L20 6"/>',
-  close: '<path d="M6 6l12 12M18 6L6 18"/>',
-  cube: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/>',
-  split: '<rect x="3" y="5" width="18" height="14" rx="1.5"/><path d="M12 5v14"/>',
-  plan: '<rect x="3" y="5" width="18" height="14" rx="1.5"/><path d="M3 12h9v7M12 5v4"/>',
-  sparkle: '<path d="M12 3l2 6 6 2-6 2-2 6-2-6-6-2 6-2z"/>',
-  sofa: '<path d="M5 11V8a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v3"/><path d="M3 13a2 2 0 0 1 4 0v2h10v-2a2 2 0 0 1 4 0v5H3z"/><path d="M5 18v2M19 18v2"/>',
-  rotl: '<path d="M4 12a8 8 0 1 0 3-6.2"/><path d="M4 4v4h4"/>',
-  rotr: '<path d="M20 12a8 8 0 1 1-3-6.2"/><path d="M20 4v4h-4"/>',
-  copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
-  bulb: '<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-4 10.5c.8.8 1 1.5 1 2.5h6c0-1 .2-1.7 1-2.5A6 6 0 0 0 12 3z"/>',
-  search: '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>',
-};
-
-function icon(name: string, size = 22): SVGSVGElement {
-  const s = document.createElementNS(SVG, 'svg') as SVGSVGElement;
-  s.setAttribute('viewBox', '0 0 24 24');
-  s.setAttribute('width', String(size));
-  s.setAttribute('height', String(size));
-  s.setAttribute('fill', 'none');
-  s.setAttribute('stroke', 'currentColor');
-  s.setAttribute('stroke-width', '1.8');
-  s.setAttribute('stroke-linecap', 'round');
-  s.setAttribute('stroke-linejoin', 'round');
-  s.innerHTML = ICONS[name] ?? '';
-  s.style.flexShrink = '0';
-  return s;
-}
-
 const TOOLS: { tool: Tool; icon: string; label: StringKey; key: string }[] = [
   { tool: 'select', icon: 'select', label: 'planToolSelect', key: 'v' },
   { tool: 'room', icon: 'room', label: 'planToolRoom', key: 'r' },

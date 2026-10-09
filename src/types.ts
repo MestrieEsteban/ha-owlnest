@@ -200,6 +200,8 @@ export interface SceneSettings {
     max_polar_angle?: number;
   };
   rendering?: RenderingConfig;
+  /** Thème, disposition et modules de la carte : voir ui/theme.ts. */
+  ui?: Partial<import('./ui/theme').UiPrefs>;
 }
 
 export type SunMode = 'showcase' | 'realistic';
