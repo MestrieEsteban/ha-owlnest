@@ -1088,6 +1088,12 @@ const STRINGS = {
     ruleSummaryHighlight: 'highlight',
     // Interface de la carte
     ruleSummaryGo: 'go to',
+    // Interface de la carte
+    autoPlace: 'Place the devices of each room',
+    autoPlaceHint: 'Each room of the plan named like a Home Assistant area gets its lights, sensors and switches.',
+    autoPlaceNoMatch: 'No room of the plan has the name of a Home Assistant area. Rename the rooms in the plan (double tap) to match.',
+    autoPlaceNothing: 'Every device of the matching rooms is already placed.',
+    autoPlaceDone: '{n} devices placed in {rooms} rooms. Move them where they really are.',
   },
 
   fr: {
@@ -2162,6 +2168,12 @@ const STRINGS = {
     ruleSummaryHighlight: 'mettre en avant',
     // Interface de la carte
     ruleSummaryGo: 'aller à',
+    // Interface de la carte
+    autoPlace: 'Poser les appareils de chaque pièce',
+    autoPlaceHint: 'Chaque pièce du plan qui porte le nom d\'une pièce de Home Assistant reçoit ses lampes, capteurs et prises.',
+    autoPlaceNoMatch: 'Aucune pièce du plan ne porte le nom d\'une pièce de Home Assistant. Renomme les pièces du plan (double toucher) pour qu\'elles correspondent.',
+    autoPlaceNothing: 'Tous les appareils des pièces correspondantes sont déjà posés.',
+    autoPlaceDone: '{n} appareils posés dans {rooms} pièces. Déplace-les là où ils sont vraiment.',
   },
 } as const;
 

@@ -187,6 +187,20 @@ export class AnchorEditor {
     this.onChanged?.();
   }
 
+  /** Ajoute plusieurs ancres d'un coup (une seule entrée d'annulation). */
+  addMany(list: { entity: string; label: string; position: THREE.Vector3 }[]) {
+    if (!list.length) return;
+    this._pushUndo();
+    const stamp = Date.now();
+    list.forEach((a, i) => {
+      const key = `anchor_${stamp}_${i}`;
+      const anchor: EditableAnchor = { entity: a.entity, label: a.label, position: a.position.clone() };
+      this._anchors.set(key, anchor);
+      this._addMarker(key, anchor.position, false);
+    });
+    this.onChanged?.();
+  }
+
   /** Batch-update a property on every anchor (single undo entry). */
   updateAll(props: Partial<EditableAnchor>) {
     this._pushUndo();

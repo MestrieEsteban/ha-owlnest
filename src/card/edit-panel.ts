@@ -317,6 +317,8 @@ export class EditPanel {
   getSetupSteps?: () => SetupStep[];
   /** Quitter l'éditeur et ouvrir « Personnaliser » sur la carte. */
   onCustomize?: () => void;
+  /** Pose les appareils des pièces de Home Assistant dans les pièces du même nom. */
+  onAutoPlace?: () => Promise<void>;
   /** Ouvre le sélecteur de fichiers pour importer un plan (admin seulement). */
   onImportModel?: () => void;
 
@@ -1080,6 +1082,7 @@ export class EditPanel {
       more.addEventListener('click', (e) => {
         e.preventDefault();
         this._openPopmenu(more, (menu) => {
+          if (this.onAutoPlace) this._menuItem(menu, 'sparkle', t('autoPlace'), () => void this.onAutoPlace?.());
           this._menuItem(menu, 'eye', t('edShowAll'), () => this.getEditor()?.updateAll({ hidden: false }));
           this._menuItem(menu, 'eyeOff', t('edHideAll'), () => this.getEditor()?.updateAll({ hidden: true }));
         });
@@ -1108,6 +1111,20 @@ export class EditPanel {
           const strong = document.createElement('b');
           strong.textContent = t('anchorEmpty');
           empty.append(strong, document.createTextNode(t('edEmptyHint')));
+          // Le raccourci : les appareils des pièces de Home Assistant, d'un coup.
+          if (this.onAutoPlace) {
+            const auto = document.createElement('button');
+            auto.type = 'button';
+            auto.className = 'ow-btn ow-primary';
+            auto.style.marginTop = '14px';
+            auto.append(icon('sparkle', 16), document.createTextNode(t('autoPlace')));
+            auto.addEventListener('click', () => void this.onAutoPlace?.());
+            const hint = document.createElement('div');
+            hint.className = 'ow-hint-line';
+            hint.style.marginTop = '8px';
+            hint.textContent = t('autoPlaceHint');
+            empty.append(document.createElement('br'), auto, hint);
+          }
           list.appendChild(empty);
           return;
         }

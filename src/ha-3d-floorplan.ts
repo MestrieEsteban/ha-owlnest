@@ -24,7 +24,8 @@ import { findLeaves, proposeParts, replaceParts } from './import/sh3d-parts';
 import { setLang, getLang, langFromLocale, t, type StringKey } from './i18n';
 import { demoModelUrl, isPlaceholder, seedDemoAnchors, type DemoAnchorId } from './demo';
 import { openEntityPicker } from './entities/picker';
-import { cachedRegistry, loadRegistry, areaOf, displayName } from './entities/registry';
+import { cachedRegistry, loadRegistry, areaOf, displayName, isTechnical } from './entities/registry';
+import { matchRooms, placeable, spreadPoints } from './plan/auto-place';
 import { publishHass } from './entities/live';
 
 /** Clé de traduction du libellé de chaque ancre de démonstration. */
@@ -1937,6 +1938,50 @@ export class Ha3dFloorplan extends HTMLElement {
     return steps;
   }
 
+  /**
+   * Pose les appareils de chaque pièce de Home Assistant dans la pièce du plan
+   * du même nom, répartis dans son contour : les lampes près du plafond, les
+   * capteurs à hauteur d'yeux. Ce qui est déjà posé n'est pas reposé.
+   */
+  private async _autoPlace() {
+    const plan = this._plan;
+    const hass = this._hass;
+    const editor = this._editor;
+    if (!plan || !hass || !editor) return;
+    const reg = await loadRegistry(hass).catch(() => cachedRegistry());
+    const rooms = this._rooms();
+    // Le nom de la pièce HA, ou l'un de ses alias.
+    const matches = matchRooms(rooms, [...reg.areas.values()].flatMap((a) => [a.name, ...(a.aliases ?? [])].map((name) => ({ id: a.area_id, name }))));
+    if (!matches.size) { this._showToast(t('autoPlaceNoMatch'), true); return; }
+    const placed = new Set([...editor.anchors.values()].map((a) => a.entity).filter(Boolean));
+    const origin = this._planOrigin(plan);
+    const floor = this._modelBox.min.y;
+    const ceiling = floor + (plan.wallHeight ?? 2.5) - 0.35;
+    const eye = floor + 1.4;
+    const add: { entity: string; label: string; position: THREE.Vector3 }[] = [];
+    let roomsUsed = 0;
+    for (const room of rooms) {
+      const areaId = matches.get(room.id);
+      if (!areaId) continue;
+      const ids = Object.keys(hass.states).filter((id) =>
+        !placed.has(id) && !isTechnical(reg, id) && areaOf(reg, id)?.area_id === areaId
+        && placeable(id, hass.states[id]?.attributes ?? {}));
+      if (!ids.length) continue;
+      roomsUsed++;
+      const pts = spreadPoints(room.poly, ids.length);
+      ids.forEach((id, i) => {
+        const p = pts[i];
+        const y = id.startsWith('light.') ? ceiling : eye;
+        add.push({ entity: id, label: displayName(reg, hass, id), position: new THREE.Vector3(p.x - origin.x, y, p.y - origin.y) });
+        placed.add(id);
+      });
+    }
+    if (!add.length) { this._showToast(t('autoPlaceNothing'), true); return; }
+    editor.addMany(add);
+    this._editPanel?.updateAnchorList();
+    this._showToast(t('autoPlaceDone').replace('{n}', String(add.length)).replace('{rooms}', String(roomsUsed)));
+  }
+
   /** Les pièces du plan, recalculées seulement quand le plan change. */
   private _roomsCache: { plan: PlanDoc; rooms: RoomView[] } | null = null;
   private _rooms(): RoomView[] {
@@ -2508,6 +2553,7 @@ export class Ha3dFloorplan extends HTMLElement {
     });
     this._editPanel.onDrawPlan = () => this.openPlanEditor();
     this._editPanel.getSetupSteps = () => this._setupSteps();
+    if (this._plan) this._editPanel.onAutoPlace = () => this._autoPlace();
     this._editPanel.onCustomize = () => { this._exitEditMode(); this._ui?.openSheet(); };
     this._editPanel.countDetectedOpenings = () => this._detectedOpenings().length;
     this._editPanel.onAddDetectedOpenings = () => this._addDetectedOpenings();

@@ -55,6 +55,7 @@ const ENTRIES = [
   'src/import/sh3d-migrate.ts',
   'src/plan/low-walls.ts',
   'src/plan/room-views.ts',
+  'src/plan/auto-place.ts',
 ];
 
 /**
