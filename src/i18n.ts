@@ -362,8 +362,8 @@ const STRINGS = {
     showAll:     '● All',
     hideAll:     '○ None',
     anchors_n:   (n: number) => `${n} anchor${n !== 1 ? 's' : ''}`,
-    anchorEmpty: 'No anchors',
-    anchorEmptyHint: 'Tool ＋ → click on model',
+    anchorEmpty: 'No device yet',
+    anchorEmptyHint: 'Choose Add, then tap the house where the device is.',
 
     // Cards tab
     addCard:   '+ Add',
@@ -662,7 +662,7 @@ const STRINGS = {
     cardEmptyListHint: 'Click + Add',
 
     // Inspector — back navigation labels
-    backAnchors:     'Anchors',
+    backAnchors:     'Devices',
     backCards:       'Cards',
     backRules:       'Rules',
 
@@ -861,13 +861,13 @@ const STRINGS = {
     toastSceneSaveError:   '✗ Error while saving',
     viewLock:              'Lock view',
     viewUnlock:            'Unlock view',
-    editAnchorsTitle:      'Edit anchors',
+    editAnchorsTitle:      'Edit my home',
     exitEditMode:          'Exit edit mode',
     overlaysHidden:        'Overlays hidden — tap to show',
     hintBarGrab:           'Move  ·  X/Y/Z axis  ·  Enter to confirm  ·  Esc to cancel',
     hintBarRotate:         'Orient  ·  Esc to leave',
     hintBarAxis:           'Move along axis  ·  Release to confirm',
-    hintBarPlaceAnchor:    'Click the model to place an anchor',
+    hintBarPlaceAnchor:    'Tap the house where the device is',
     hintBarMoveCard:       'Move card  ·  Enter to confirm  ·  Esc to cancel',
     hintBarPlaceCard:      '🎯 Click the model to place the card  ·  Esc to cancel',
     modelLoading:          'Loading model…',
@@ -1350,8 +1350,8 @@ const STRINGS = {
     showAll:     '● Tout',
     hideAll:     '○ Aucun',
     anchors_n:   (n: number) => `${n} ancre${n !== 1 ? 's' : ''}`,
-    anchorEmpty: 'Aucune ancre',
-    anchorEmptyHint: 'Outil ＋ → clic sur le modèle',
+    anchorEmpty: 'Aucun appareil pour l’instant',
+    anchorEmptyHint: 'Choisis Ajouter, puis touche la maison là où se trouve l’appareil.',
 
     addCard:   '+ Ajouter',
     cards_n:   (n: number) => `${n} carte${n !== 1 ? 's' : ''}`,
@@ -1637,7 +1637,7 @@ const STRINGS = {
     cardEmptyListHint: 'Cliquez + Ajouter',
 
     // Inspector — back navigation labels
-    backAnchors:     'Ancres',
+    backAnchors:     'Appareils',
     backCards:       'Cartes',
     backRules:       'Règles',
 
@@ -1836,13 +1836,13 @@ const STRINGS = {
     toastSceneSaveError:   '✗ Erreur lors de la sauvegarde',
     viewLock:              'Verrouiller la vue',
     viewUnlock:            'Déverrouiller la vue',
-    editAnchorsTitle:      'Éditer les ancres',
+    editAnchorsTitle:      'Modifier ma maison',
     exitEditMode:          'Quitter le mode édition',
     overlaysHidden:        'Overlays masqués — tapez pour afficher',
     hintBarGrab:           'Déplacer  ·  X/Y/Z axe  ·  Entrée confirmer  ·  Esc annuler',
     hintBarRotate:         'Orienter  ·  Esc quitter',
     hintBarAxis:           'Déplacer sur axe  ·  Relâcher pour confirmer',
-    hintBarPlaceAnchor:    'Cliquez sur le modèle pour placer une ancre',
+    hintBarPlaceAnchor:    'Touche la maison là où se trouve l’appareil',
     hintBarMoveCard:       'Déplacer la carte  ·  Entrée confirmer  ·  Esc annuler',
     hintBarPlaceCard:      '🎯 Cliquez sur le modèle pour placer la carte  ·  Esc pour annuler',
     modelLoading:          'Chargement du modèle…',
