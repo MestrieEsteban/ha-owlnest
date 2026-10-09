@@ -16,7 +16,19 @@ const wallOn = (p, test) => p.walls.find((w) => {
   return test(a, b);
 });
 const boxOf = (o) => new THREE.Box3().setFromObject(o);
-const walls = (root) => root.children.filter((c) => c.name.startsWith('wall_'));
+// Un bloc de mur peut avoir plusieurs faces colorées (wall_i_k_1, …) : on compte les blocs.
+const walls = (root) => {
+  const blocks = new Map();
+  for (const c of root.children) {
+    const m = /^wall_(\d+)_(\d+)/.exec(c.name);
+    if (!m) continue;
+    const key = `${m[1]}_${m[2]}`;
+    const box = blocks.get(key) ?? new THREE.Box3();
+    box.union(new THREE.Box3().setFromObject(c));
+    blocks.set(key, box);
+  }
+  return [...blocks.values()].map((box) => ({ box }));
+};
 
 test('une pièce : un sol et des murs à la bonne hauteur', () => {
   const p = room();
@@ -36,7 +48,7 @@ test('les angles sont fermés : la maison fait la taille des murs, épaisseur co
 test('un muret garde sa propre hauteur', () => {
   const p = room();
   wallOn(p, (a, b) => a.x === 0 && b.x === 0).height = 1.1;
-  const low = walls(buildPlan(p)).filter((c) => boxOf(c).max.y < 1.2);
+  const low = walls(buildPlan(p)).filter((c) => c.box.max.y < 1.2);
   assert.equal(low.length, 1);
 });
 
@@ -46,7 +58,7 @@ test('une porte : le mur est ouvert, et le vantail porte ses gonds', () => {
   p.openings.push({ id: 'd', kind: 'door', wall: w.id, offset: 2, width: 0.9, height: 2, sill: 0, hinge: 'end', swing: 'back' });
   const root = buildPlan(p);
   // Le mur du bas est coupé en trois : avant, linteau, après.
-  const bottom = walls(root).filter((c) => Math.abs(boxOf(c).getCenter(new THREE.Vector3()).z - 3) < 0.01);
+  const bottom = walls(root).filter((c) => Math.abs(c.box.getCenter(new THREE.Vector3()).z - 3) < 0.01);
   assert.equal(bottom.length, 3);
   root.updateMatrixWorld(true);
   const leaf = root.getObjectByName(leafName('d', 1));
@@ -109,4 +121,29 @@ test("un plan de la première version de l'éditeur est converti", () => {
   assert.deepEqual(p.rooms.map((r) => r.name).sort(), ['Chambre', 'Salon']);
   assert.equal(p.openings.length, 1);
   assert.ok(Math.abs(p.openings[0].offset - 1.5) < 1e-6);
+});
+
+test('chaque face de mur prend la couleur de la pièce qu’elle regarde', () => {
+  const p = room();
+  p.rooms[0].wall = '#ff0000';
+  p.outside = '#00ff00';
+  const root = buildPlan(p);
+  const colors = new Set();
+  root.traverse((o) => { if (o.isMesh && o.name.startsWith('wall_')) colors.add(`#${o.material.color.getHexString()}`); });
+  assert.ok(colors.has('#ff0000') && colors.has('#00ff00'));
+});
+
+test('portes à panneaux, vitrée, d’entrée ; fenêtre à petits bois', () => {
+  const p = room();
+  const w = p.walls[0].id;
+  p.openings.push(
+    { id: 'a', kind: 'door', wall: w, offset: 1, width: 0.8, height: 2, sill: 0, hinge: 'start', swing: 'front', style: 'panels', color: '#ffffff' },
+    { id: 'b', kind: 'door', wall: w, offset: 3, width: 0.8, height: 2, sill: 0, hinge: 'start', swing: 'front', style: 'glazed' },
+    { id: 'c', kind: 'window', wall: p.walls[1].id, offset: 1.5, width: 1, height: 1, sill: 1, hinge: 'start', swing: 'front', style: 'grid' },
+  );
+  const root = buildPlan(p);
+  assert.ok(root.getObjectByName(`${leafName('a', 1)}_panel_f0`));
+  assert.ok(root.getObjectByName(`${leafName('b', 1)}_pane`));
+  assert.equal(root.getObjectByName(leafName('b', 1)).userData.owlnestLeaf.pane, true);
+  assert.ok(root.getObjectByName(`${leafName('c', 1)}_muntin_v`));
 });

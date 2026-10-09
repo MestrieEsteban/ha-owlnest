@@ -5,25 +5,40 @@
  */
 
 import type { StringKey } from '../i18n';
+import type { FloorMaterial } from './types';
 
 export type RoomType =
   | 'living' | 'kitchen' | 'bedroom' | 'bathroom' | 'toilet' | 'entrance'
   | 'office' | 'corridor' | 'garage' | 'laundry' | 'dining' | 'terrace';
 
-export const ROOM_TYPES: Record<RoomType, { label: StringKey; floor: string }> = {
-  living: { label: 'planRoomLiving', floor: '#c9a27a' },
-  kitchen: { label: 'planRoomKitchen', floor: '#cfd3d6' },
-  dining: { label: 'planRoomDining', floor: '#c9a27a' },
-  bedroom: { label: 'planRoomBedroom', floor: '#d8b98f' },
-  bathroom: { label: 'planRoomBathroom', floor: '#bcd7e0' },
-  toilet: { label: 'planRoomToilet', floor: '#bcd7e0' },
-  entrance: { label: 'planRoomEntrance', floor: '#d6cfc4' },
-  corridor: { label: 'planRoomCorridor', floor: '#d6cfc4' },
-  office: { label: 'planRoomOffice', floor: '#b9a58c' },
-  laundry: { label: 'planRoomLaundry', floor: '#cfd3d6' },
-  garage: { label: 'planRoomGarage', floor: '#a9adb1' },
-  terrace: { label: 'planRoomTerrace', floor: '#b8a48a' },
+export const ROOM_TYPES: Record<RoomType, { label: StringKey; floor: string; material: FloorMaterial }> = {
+  living: { label: 'planRoomLiving', floor: '#c9a27a', material: 'wood' },
+  kitchen: { label: 'planRoomKitchen', floor: '#cfd3d6', material: 'tiles' },
+  dining: { label: 'planRoomDining', floor: '#c9a27a', material: 'wood' },
+  bedroom: { label: 'planRoomBedroom', floor: '#d8b98f', material: 'wood' },
+  bathroom: { label: 'planRoomBathroom', floor: '#bcd7e0', material: 'tiles' },
+  toilet: { label: 'planRoomToilet', floor: '#bcd7e0', material: 'tiles' },
+  entrance: { label: 'planRoomEntrance', floor: '#d6cfc4', material: 'tiles' },
+  corridor: { label: 'planRoomCorridor', floor: '#d6cfc4', material: 'wood' },
+  office: { label: 'planRoomOffice', floor: '#b9a58c', material: 'wood' },
+  laundry: { label: 'planRoomLaundry', floor: '#cfd3d6', material: 'tiles' },
+  garage: { label: 'planRoomGarage', floor: '#a9adb1', material: 'concrete' },
+  terrace: { label: 'planRoomTerrace', floor: '#b8a48a', material: 'wood' },
 };
+
+/** Couleurs de murs : blancs cassés, pastels, et quelques teintes franches. */
+export const WALL_COLORS = [
+  '#ece8e1', '#ffffff', '#f3ead8', '#e8dccb', '#d9e3e8', '#dfe8dc',
+  '#f1dede', '#c9d4de', '#8fa3b5', '#a3b18a', '#d8a48f', '#4a5560',
+];
+
+/** Vantaux de porte : bois, blanc, gris, noir. */
+export const DOOR_COLORS = ['#c8a77e', '#a97c55', '#5b4636', '#ffffff', '#9aa3ab', '#2f343b'];
+
+/** Cadres de fenêtre : blanc, gris anthracite, noir, bois. */
+export const FRAME_COLORS = ['#f4f4f2', '#3d434a', '#1f2226', '#a97c55'];
+
+export const FLOOR_MATERIALS: FloorMaterial[] = ['plain', 'wood', 'tiles', 'concrete', 'carpet'];
 
 /** Sols proposés en pastilles, du bois clair au béton. */
 export const FLOOR_COLORS = [

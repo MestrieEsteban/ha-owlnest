@@ -37,11 +37,21 @@ export interface PlanRoom {
   name: string;
   /** Couleur du sol, `#rrggbb`. */
   floor?: string;
+  /** Matière du sol ; un aplat sans elle. */
+  floorMaterial?: FloorMaterial;
+  /** Couleur des murs vus depuis la pièce. */
+  wall?: string;
   /** Un point à l'intérieur : la pièce est l'espace fermé qui le contient. */
   seed: { x: number; y: number };
 }
 
 export type OpeningKind = 'door' | 'window' | 'slider' | 'passage';
+
+export type FloorMaterial = 'plain' | 'wood' | 'tiles' | 'concrete' | 'carpet';
+
+/** Modèles de porte et de fenêtre. */
+export type DoorStyle = 'plain' | 'panels' | 'glazed' | 'entry';
+export type WindowStyle = 'plain' | 'grid';
 
 export interface PlanOpening {
   id: string;
@@ -59,6 +69,10 @@ export interface PlanOpening {
   swing: 'front' | 'back';
   /** Deux vantaux, pour une fenêtre ou une porte-fenêtre. */
   double?: boolean;
+  /** Modèle : `DoorStyle` pour une porte, `WindowStyle` pour une fenêtre ou une baie. */
+  style?: DoorStyle | WindowStyle;
+  /** Couleur du vantail (porte) ou du cadre (fenêtre, baie). */
+  color?: string;
 }
 
 /** Image de plan posée sous le dessin, pour le calquer. */
@@ -83,6 +97,8 @@ export interface PlanDoc {
   rooms: PlanRoom[];
   openings: PlanOpening[];
   background?: PlanBackground;
+  /** Couleur des murs côté extérieur. */
+  outside?: string;
   /**
    * Point du plan placé au centre de la scène 3D. Fixé au premier dessin et
    * plus jamais recalculé : les ancres sont posées en coordonnées de la scène,
@@ -101,4 +117,12 @@ export const OPENING_DEFAULTS: Record<OpeningKind, Pick<PlanOpening, 'width' | '
   window: { width: 1.2, height: 1.25, sill: 0.9 },
   slider: { width: 2.2, height: 2.15, sill: 0 },
   passage: { width: 0.9, height: 2.1, sill: 0 },
+};
+
+/** Couleurs par défaut. */
+export const PLAN_COLORS = {
+  wall: '#ece8e1',
+  outside: '#e4ddd0',
+  door: '#c8a77e',
+  frame: '#f4f4f2',
 };

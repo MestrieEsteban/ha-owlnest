@@ -117,7 +117,7 @@ export function templatePlan(id: TemplateId, base: PlanDoc = emptyPlan()): PlanD
   const plan: PlanDoc = { ...base, nodes: [], walls: [], rooms: [], openings: [] };
   for (const [, x0, y0, x1, y1] of spec.rooms) addRect(plan, x0, y0, x1, y1);
   plan.rooms = spec.rooms.map(([type, x0, y0, x1, y1]) => ({
-    id: newId('r'), name: t(ROOM_TYPES[type].label), floor: ROOM_TYPES[type].floor,
+    id: newId('r'), name: t(ROOM_TYPES[type].label), floor: ROOM_TYPES[type].floor, floorMaterial: ROOM_TYPES[type].material,
     seed: { x: round3((x0 + x1) / 2), y: round3((y0 + y1) / 2) },
   }));
   reconcileRooms(plan, () => t('planRoom'), () => '#d8c3a5');

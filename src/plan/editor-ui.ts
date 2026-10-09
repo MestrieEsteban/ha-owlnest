@@ -13,8 +13,8 @@
  */
 
 import { t, getLang, type StringKey } from '../i18n';
-import type { PlanDoc, PlanOpening, OpeningKind, PlanWall } from './types';
-import { OPENING_DEFAULTS } from './types';
+import type { PlanDoc, PlanOpening, OpeningKind, PlanWall, FloorMaterial, DoorStyle, WindowStyle } from './types';
+import { OPENING_DEFAULTS, PLAN_COLORS } from './types';
 import {
   type Pt, sub, add, mul, dot, dist, norm, perp, project, insidePoint, pointInPolygon, clipAlong, round3,
 } from './geometry';
@@ -25,7 +25,9 @@ import {
 } from './graph';
 import { wallFootprints } from './footprint';
 import { TEMPLATES, templatePlan, type TemplateId } from './templates';
-import { ROOM_TYPES, FLOOR_COLORS, type RoomType } from './rooms';
+import {
+  ROOM_TYPES, FLOOR_COLORS, WALL_COLORS, DOOR_COLORS, FRAME_COLORS, FLOOR_MATERIALS, type RoomType,
+} from './rooms';
 
 type Tool = 'select' | 'room' | 'wall' | OpeningKind | 'erase' | 'calibrate' | 'image';
 type ViewMode = 'plan' | 'split' | '3d';
@@ -159,6 +161,15 @@ const TOOLS: { tool: Tool; icon: string; label: StringKey; key: string }[] = [
   { tool: 'passage', icon: 'passage', label: 'planToolPassage', key: 'o' },
   { tool: 'erase', icon: 'erase', label: 'planToolErase', key: 'e' },
 ];
+
+const MATERIAL_LABEL: Record<FloorMaterial, StringKey> = {
+  plain: 'planMatPlain', wood: 'planMatWood', tiles: 'planMatTiles', concrete: 'planMatConcrete', carpet: 'planMatCarpet',
+};
+
+const DOOR_STYLES: DoorStyle[] = ['plain', 'panels', 'glazed', 'entry'];
+const DOOR_STYLE_LABEL: Record<DoorStyle, StringKey> = {
+  plain: 'planStylePlain', panels: 'planStylePanels', glazed: 'planStyleGlazed', entry: 'planStyleEntry',
+};
 
 const KIND_LABEL: Record<OpeningKind, StringKey> = {
   door: 'planToolDoor', window: 'planToolWindow', slider: 'planToolSlider', passage: 'planToolPassage',
@@ -1298,6 +1309,9 @@ export class PlanEditor {
         'fill-opacity': bg ? 0.45 : hov && !erasing ? 0.75 : 0.6,
         stroke: sel ? C.select : 'none', 'stroke-width': px(3),
       }));
+      // La matière du sol, en traits légers par-dessus la couleur.
+      const pattern = this.floorPattern(svg, room.floorMaterial, px);
+      if (pattern && !bg) svg.append(svgEl('polygon', { points: poly(f.poly), fill: `url(#${pattern})`, 'pointer-events': 'none' }));
     }
 
     // Murs, découpés autour des ouvertures.
@@ -1443,6 +1457,26 @@ export class PlanEditor {
     }
   }
 
+  /** Motif d'un sol sur le plan : lames de parquet, joints de carrelage. */
+  private floorPattern(svg: SVGElement, kind: FloorMaterial | undefined, px: (n: number) => number): string | null {
+    if (kind !== 'wood' && kind !== 'tiles') return null;
+    const id = `owlnest-floor-${kind}`;
+    if (svg.querySelector(`#${id}`)) return id;
+    let defs = svg.querySelector('defs');
+    if (!defs) { defs = svgEl('defs') as SVGDefsElement; svg.prepend(defs); }
+    const line = { stroke: 'rgba(60,40,20,0.18)', 'stroke-width': px(1) };
+    const p = svgEl('pattern', { id, patternUnits: 'userSpaceOnUse', width: kind === 'wood' ? 1.2 : 0.6, height: kind === 'wood' ? 0.4 : 0.6 });
+    if (kind === 'wood') {
+      // Deux rangées de lames de 20 cm, joints décalés.
+      p.append(svgEl('line', { x1: 0, y1: 0.2, x2: 1.2, y2: 0.2, ...line }), svgEl('line', { x1: 0, y1: 0.4, x2: 1.2, y2: 0.4, ...line }));
+      p.append(svgEl('line', { x1: 0.3, y1: 0, x2: 0.3, y2: 0.2, ...line }), svgEl('line', { x1: 0.9, y1: 0.2, x2: 0.9, y2: 0.4, ...line }));
+    } else {
+      p.append(svgEl('line', { x1: 0, y1: 0, x2: 0.6, y2: 0, ...line }), svgEl('line', { x1: 0, y1: 0, x2: 0, y2: 0.6, ...line }));
+    }
+    defs.append(p);
+    return id;
+  }
+
   private faceOf(seed: Pt): Face | undefined {
     return this.all.filter((f) => pointInPolygon(seed, f.poly)).sort((a, b) => a.area - b.area)[0];
   }
@@ -1574,7 +1608,7 @@ export class PlanEditor {
     const img = el('div', 'width:120px;height:80px;border-radius:10px;background:#f1f5f9;display:flex;align-items:center;justify-content:center;color:#64748b;');
     img.append(icon('image', 30));
     tile(t('planStartImage'), t('planStartImageSub'), img, () => this.loadImage());
-    card.append(grid);
+    card.append(grid, this.sweetHome(true));
     box.append(card);
     this.stage.append(box);
     this.emptyState = box;
@@ -1693,7 +1727,11 @@ export class PlanEditor {
     for (const type of Object.keys(ROOM_TYPES) as RoomType[]) {
       const label = t(ROOM_TYPES[type].label);
       const b = el('button', `padding:4px 9px;border-radius:999px;border:1px solid rgba(255,255,255,0.12);background:${label === room.name ? '#0ea5e9' : 'transparent'};color:#cbd5e1;font-size:11.5px;cursor:pointer;font-family:${FONT};`, label);
-      b.addEventListener('click', () => { this.commit(); room.name = label; room.floor = ROOM_TYPES[type].floor; this.changed(); });
+      b.addEventListener('click', () => {
+        this.commit();
+        room.name = label; room.floor = ROOM_TYPES[type].floor; room.floorMaterial = ROOM_TYPES[type].material;
+        this.changed();
+      });
       chips.append(b);
     }
     this.bubble.append(chips);
@@ -1710,14 +1748,10 @@ export class PlanEditor {
       }
     }
 
-    this.bubble.append(el('div', 'color:#cbd5e1;margin:6px 0;', t('planFloor')));
-    const sw = el('div', 'display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-bottom:12px;');
-    for (const c of FLOOR_COLORS) {
-      const b = el('button', `aspect-ratio:1;border-radius:8px;cursor:pointer;background:${c};border:2px solid ${room.floor === c ? '#fff' : 'transparent'};`);
-      b.addEventListener('click', () => { this.commit(); room.floor = c; this.changed(); });
-      sw.append(b);
-    }
-    this.bubble.append(sw);
+    this.chips(t('planFloor'), FLOOR_MATERIALS.map((m) => [m, t(MATERIAL_LABEL[m])] as [FloorMaterial, string]), room.floorMaterial ?? 'plain',
+      (m) => { room.floorMaterial = m === 'plain' ? undefined : m; });
+    this.swatches('', FLOOR_COLORS, room.floor, (c) => { room.floor = c; });
+    this.swatches(t('planWallColor'), WALL_COLORS, room.wall ?? PLAN_COLORS.wall, (c) => { room.wall = c === PLAN_COLORS.wall ? undefined : c; });
     this.actions(this.pill(t('planDeleteRoom'), () => this.remove({ type: 'room', id }), false, 'trash', true));
   }
 
@@ -1776,13 +1810,22 @@ export class PlanEditor {
     // Une porte peut devenir une fenêtre sans être redessinée.
     this.choice('', (['door', 'window', 'slider', 'passage'] as OpeningKind[]).map((k) => [k, t(KIND_LABEL[k])] as [OpeningKind, string]), o.kind, (k) => {
       const def = OPENING_DEFAULTS[k];
-      o.kind = k; o.height = def.height; o.sill = def.sill;
+      o.kind = k; o.height = def.height; o.sill = def.sill; o.style = undefined; o.color = undefined;
     });
     this.stepper(t('planWidth'), o.width, 0.05, 0.3, 10, (v) => { o.width = v; });
     this.stepper(t('planHeight'), o.height, 0.05, 0.3, 4, (v) => { o.height = v; });
     if (o.kind === 'window') this.stepper(t('planSill'), o.sill, 0.05, 0, 3, (v) => { o.sill = v; });
     if (o.kind === 'door' || o.kind === 'window') {
       this.choice(t('planLeaves'), [['1', '1'], ['2', '2']], o.double ? '2' : '1', (v) => { o.double = v === '2'; });
+    }
+    if (o.kind === 'door') {
+      this.chips(t('planStyle'), DOOR_STYLES.map((v) => [v, t(DOOR_STYLE_LABEL[v])] as [DoorStyle, string]), (o.style as DoorStyle) ?? 'plain',
+        (v) => { o.style = v === 'plain' ? undefined : v; });
+      this.swatches(t('planColor'), DOOR_COLORS, o.color ?? (o.style === 'entry' ? '#5b4636' : PLAN_COLORS.door), (c) => { o.color = c; });
+    } else if (o.kind === 'window' || o.kind === 'slider') {
+      this.chips(t('planStyle'), (['plain', 'grid'] as WindowStyle[]).map((v) => [v, t(v === 'plain' ? 'planStylePlain' : 'planStyleGrid')] as [WindowStyle, string]),
+        (o.style as WindowStyle) ?? 'plain', (v) => { o.style = v === 'plain' ? undefined : v; });
+      this.swatches(t('planFrameColor'), FRAME_COLORS, o.color ?? PLAN_COLORS.frame, (c) => { o.color = c === PLAN_COLORS.frame ? undefined : c; });
     }
     if (o.kind !== 'passage') {
       const buttons = [this.pill(o.kind === 'slider' ? t('planFlipSlide') : t('planFlipHinge'), () => this.flipOpening(id, 'hinge'), false, 'flip')];
@@ -1809,6 +1852,7 @@ export class PlanEditor {
     this.bubble.append(close);
     this.stepper(t('planWallHeight'), this.plan.wallHeight, 0.1, 1, 10, (v) => { this.plan.wallHeight = v; });
     this.stepper(t('planWallThickness'), this.plan.wallThickness, 0.01, 0.03, 1, (v) => { this.plan.wallThickness = v; });
+    this.swatches(t('planOutsideColor'), WALL_COLORS, this.plan.outside ?? PLAN_COLORS.outside, (c) => { this.plan.outside = c; });
 
     this.bubble.append(el('div', `height:1px;background:${C.line};margin:12px 0;`));
     this.heading(t('planImage'), 'image');
@@ -1841,5 +1885,55 @@ export class PlanEditor {
         this.changed();
       }, false, 'trash', true));
     }
+    this.bubble.append(el('div', `height:1px;background:${C.line};margin:12px 0;`));
+    this.bubble.append(this.sweetHome());
+  }
+
+  /**
+   * Le relais vers Sweet Home 3D : l'éditeur reste simple exprès, et ceux qui
+   * veulent aller plus loin ont un outil gratuit dont l'import est compatible.
+   */
+  private sweetHome(light = false): HTMLElement {
+    const box = el('div', light
+      ? 'margin-top:22px;padding:12px 14px;border-radius:14px;background:#fff;border:1px solid #e5e7eb;text-align:left;display:flex;gap:12px;align-items:flex-start;'
+      : 'display:flex;gap:10px;align-items:flex-start;');
+    const ic = el('div', `flex-shrink:0;color:${light ? '#0284c7' : '#7dd3fc'};padding-top:2px;`);
+    ic.append(icon('cube', 22));
+    const text = el('div', `font-size:12px;line-height:1.5;color:${light ? '#4b5563' : C.muted};`);
+    text.append(el('div', `font-weight:700;font-size:13px;color:${light ? '#111827' : '#fff'};margin-bottom:2px;`, t('planSh3dTitle')));
+    text.append(document.createTextNode(t('planSh3dText') + ' '));
+    const a = el('a', `color:${light ? '#0284c7' : '#7dd3fc'};font-weight:600;text-decoration:none;white-space:nowrap;`, t('planSh3dLink'));
+    a.href = 'https://www.sweethome3d.com/';
+    a.target = '_blank';
+    a.rel = 'noopener';
+    text.append(a);
+    box.append(ic, text);
+    return box;
+  }
+
+  /** Pastilles de couleur. */
+  private swatches(label: string, colors: readonly string[], value: string | undefined, apply: (c: string) => void) {
+    if (label) this.bubble.append(el('div', 'color:#cbd5e1;margin:8px 0 6px;', label));
+    const grid = el('div', 'display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-bottom:10px;');
+    for (const c of colors) {
+      const on = value?.toLowerCase() === c.toLowerCase();
+      const b = el('button', `aspect-ratio:1;border-radius:8px;cursor:pointer;background:${c};border:2px solid ${on ? '#38bdf8' : 'rgba(255,255,255,0.12)'};box-shadow:${on ? '0 0 0 2px #0b1220 inset' : 'none'};`);
+      b.addEventListener('click', () => { if (on) return; this.commit(); apply(c); this.changed(); });
+      grid.append(b);
+    }
+    this.bubble.append(grid);
+  }
+
+  /** Une rangée de choix en pastilles, qui passe à la ligne. */
+  private chips<T extends string>(label: string, options: [T, string][], value: T, apply: (v: T) => void) {
+    if (label) this.bubble.append(el('div', 'color:#cbd5e1;margin:8px 0 6px;', label));
+    const wrap = el('div', 'display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px;');
+    for (const [v, text] of options) {
+      const on = v === value;
+      const b = el('button', `padding:5px 10px;border-radius:999px;cursor:pointer;font-size:12px;font-family:${FONT};font-weight:600;border:1px solid ${on ? '#38bdf8' : 'rgba(255,255,255,0.12)'};background:${on ? '#0ea5e9' : 'transparent'};color:${on ? '#fff' : '#cbd5e1'};`, text);
+      b.addEventListener('click', () => { if (on) return; this.commit(); apply(v); this.changed(); });
+      wrap.append(b);
+    }
+    this.bubble.append(wrap);
   }
 }
