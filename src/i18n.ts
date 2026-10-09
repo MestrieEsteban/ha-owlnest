@@ -474,7 +474,7 @@ const STRINGS = {
     anchorActionEmpty:   'No action yet',
     anchorActionDelete:  'Remove this action',
     anchorActionLabelPh: 'Label…',
-    anchorActionLabelAuto: 'Label — auto from the target',
+    anchorActionLabelAuto: 'Name (automatic)',
     anchorActionNoService: 'No service set: this entry will do nothing.',
     anchorActionNoView:    'No view selected: this entry will do nothing.',
     anchorActionEntity:  'An entity (recommended)',
@@ -1055,6 +1055,16 @@ const STRINGS = {
     // Interface de la carte
     uiRoomEmpty: 'No device in this room yet. Place one from the editor, in the Devices tab.',
     uiRoomAllOff: 'Turn off the room',
+    // Interface de la carte
+    actPickTarget: 'Choose the target (optional)',
+    actPickTargetHint: 'The device the service acts on',
+    visPickDevice: 'Choose the device that decides',
+    visPickDeviceHint: 'Its state shows or hides this dot',
+    visOperator: 'Comparison',
+    // Interface de la carte
+    actTypeEntity: 'Device',
+    actTypeService: 'Service',
+    actTypeView: 'View',
   },
 
   fr: {
@@ -1518,7 +1528,7 @@ const STRINGS = {
     anchorActionEmpty:   'Aucune action',
     anchorActionDelete:  'Retirer cette action',
     anchorActionLabelPh: 'Libellé…',
-    anchorActionLabelAuto: "Libellé — auto d'après la cible",
+    anchorActionLabelAuto: 'Nom (automatique)',
     anchorActionNoService: 'Aucun service renseigné : cette entrée ne fera rien.',
     anchorActionNoView:    'Aucune vue choisie : cette entrée ne fera rien.',
     anchorActionEntity:  'Une entité (recommandé)',
@@ -2096,6 +2106,16 @@ const STRINGS = {
     // Interface de la carte
     uiRoomEmpty: 'Aucun appareil dans cette pièce. Pose-en un depuis l\'éditeur, onglet Appareils.',
     uiRoomAllOff: 'Tout éteindre dans la pièce',
+    // Interface de la carte
+    actPickTarget: 'Choisir la cible (facultatif)',
+    actPickTargetHint: 'L\'appareil sur lequel agit le service',
+    visPickDevice: 'Choisir l\'appareil qui décide',
+    visPickDeviceHint: 'Son état affiche ou masque cette pastille',
+    visOperator: 'Comparaison',
+    // Interface de la carte
+    actTypeEntity: 'Appareil',
+    actTypeService: 'Service',
+    actTypeView: 'Vue',
   },
 } as const;
 

@@ -2377,10 +2377,7 @@ export class EditPanel {
     // ── Nature « roue d'actions » : reprise de l'éditeur d'actions ────
     if (kind === 'menu') {
       const menu = card(t('anchorSectionActions'), 'menu');
-      const legacy = document.createElement('div');
-      legacy.className = 'ow-legacy';
-      menu.inner.appendChild(legacy);
-      this._buildActionsEditor(legacy, key, inputStyle.replace('font-size:13px', 'font-size:11px').replace('padding:8px 10px', 'padding:6px 9px'));
+      this._buildActionsEditor(menu.inner, key, inputStyle);
     }
 
     // ── Apparence ─────────────────────────────────────────────────────
@@ -2529,10 +2526,7 @@ export class EditPanel {
     // ── Visible seulement si… (repliée) ───────────────────────────────
     const vis = card(t('anchorSectionVisibility'), 'eye', { key: 'visibility', open: !!anchor.visibleIf });
     if (anchor.visibleIf) vis.digest.textContent = t('sheetVisibilitySet');
-    const visBox = document.createElement('div');
-    visBox.className = 'ow-legacy';
-    vis.inner.appendChild(visBox);
-    this._buildVisibleIfSection(visBox, `anc-${key}`, anchor.visibleIf, inputStyle.replace('font-size:13px', 'font-size:11px').replace('padding:8px 10px', 'padding:6px 9px'), (cond) => {
+    this._buildVisibleIfSection(vis.inner, `anc-${key}`, anchor.visibleIf, inputStyle, (cond) => {
       update({ visibleIf: cond });
       vis.digest.textContent = cond ? t('sheetVisibilitySet') : '';
     });
@@ -2568,217 +2562,6 @@ export class EditPanel {
 
   /** Sections repliées de la fiche d'un appareil, d'une ouverture à l'autre. */
   private _sheetFold: Record<string, boolean> = {};
-
-  /** L'éditeur des entrées d'une roue d'actions (nature `menu`). */
-  private _buildActionsEditor(container: HTMLElement, key: string, inputStyle: string) {
-      const listWrap = document.createElement('div');
-      container.appendChild(listWrap);
-
-      const getActions = (): import('../types').AnchorAction[] =>
-        this.getEditor()?.anchors.get(key)?.actions ?? [];
-
-      const writeActions = (next: import('../types').AnchorAction[]) => {
-        this.getEditor()?.updateAnchor(key, { actions: next });
-        this.scheduleAutoSave();
-        renderActions();
-      };
-
-      const renderActions = () => {
-        listWrap.innerHTML = '';
-        const actions = getActions();
-
-        actions.forEach((act, idx) => {
-          const row = document.createElement('div');
-          row.style.cssText = 'border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:7px;margin-bottom:6px;display:flex;flex-direction:column;gap:5px;';
-
-          const head = document.createElement('div');
-          head.style.cssText = 'display:flex;gap:5px;align-items:center;';
-
-          const labInp = document.createElement('input');
-          labInp.value = act.label;
-          labInp.placeholder = t('anchorActionLabelAuto');
-          labInp.style.cssText = inputStyle + ';flex:1;min-width:0;';
-          labInp.addEventListener('change', () => {
-            const next = [...getActions()];
-            next[idx] = { ...next[idx], label: labInp.value.trim() };
-            writeActions(next);
-          });
-
-          const icoInp = document.createElement('input');
-          icoInp.value = act.icon ?? '';
-          icoInp.placeholder = 'mdi:…';
-          icoInp.style.cssText = inputStyle + ';width:92px;flex:0 0 auto;';
-          icoInp.addEventListener('change', () => {
-            const next = [...getActions()];
-            next[idx] = { ...next[idx], icon: icoInp.value.trim() || undefined };
-            writeActions(next);
-          });
-
-          const del = document.createElement('button');
-          del.textContent = '×';
-          del.title = t('anchorActionDelete');
-          del.style.cssText = 'background:none;border:none;color:rgba(248,113,113,0.7);cursor:pointer;font-size:15px;padding:0 3px;line-height:1;flex:0 0 auto;';
-          del.addEventListener('click', () => writeActions(getActions().filter((_, j) => j !== idx)));
-
-          head.append(labInp, icoInp, del);
-          row.appendChild(head);
-
-          const typeSel = document.createElement('select');
-          typeSel.style.cssText = inputStyle + SELECT_STYLE;
-          const typeOpts: [string, string][] = [
-            ['entity', t('anchorActionEntity')],
-            ['service', t('anchorActionService')],
-            ['view', t('anchorActionView')],
-          ];
-          for (const [v, l] of typeOpts) {
-            const o = styleOption(document.createElement('option'));
-            o.value = v; o.textContent = l;
-            if (act.type === v) o.selected = true;
-            typeSel.appendChild(o);
-          }
-          typeSel.addEventListener('change', () => {
-            const next = [...getActions()];
-            next[idx] = { ...next[idx], type: typeSel.value as 'service' | 'view' };
-            writeActions(next);
-          });
-          row.appendChild(typeSel);
-
-          if (act.type === 'entity') {
-            // Tout vient du descripteur : il n'y a que la cible a choisir.
-            const target = this._entityField(
-              act.entity_id ?? (act.service_data?.entity_id as string) ?? '',
-              inputStyle,
-              (v) => {
-                const next = [...getActions()];
-                next[idx] = { ...next[idx], entity_id: v || undefined };
-                writeActions(next);
-              },
-            );
-            row.appendChild(target.wrap);
-          } else if (act.type === 'view') {
-            const vs = document.createElement('select');
-            vs.style.cssText = inputStyle + SELECT_STYLE;
-            const n0 = styleOption(document.createElement('option'));
-            n0.value = ''; n0.textContent = t('anchorNavNone');
-            vs.appendChild(n0);
-            for (const v of this.getViews?.() ?? []) {
-              const o = styleOption(document.createElement('option'));
-              o.value = v.id ?? ''; o.textContent = v.label;
-              if (act.view_id === v.id) o.selected = true;
-              vs.appendChild(o);
-            }
-            vs.addEventListener('change', () => {
-              const next = [...getActions()];
-              next[idx] = { ...next[idx], view_id: vs.value || undefined };
-              writeActions(next);
-            });
-            row.appendChild(vs);
-          } else {
-            // Un seul champ « domaine.service » : plus court a saisir que deux,
-            // et c'est la forme sous laquelle HA les documente.
-            const svc = document.createElement('input');
-            svc.value = act.domain && act.service ? act.domain + '.' + act.service : '';
-            svc.placeholder = t('anchorActionServicePh');
-            svc.style.cssText = inputStyle;
-            svc.addEventListener('change', () => {
-              const parts = svc.value.trim().split('.');
-              const d = parts.shift();
-              const next = [...getActions()];
-              next[idx] = { ...next[idx], domain: d || undefined, service: parts.join('.') || undefined };
-              writeActions(next);
-            });
-            row.appendChild(svc);
-
-            const target = this._entityField(
-              (act.service_data?.entity_id as string) ?? '',
-              inputStyle,
-              (v) => {
-                const next = [...getActions()];
-                const data: Record<string, unknown> = { ...(next[idx].service_data ?? {}) };
-                if (v) data.entity_id = v; else delete data.entity_id;
-                next[idx] = { ...next[idx], service_data: Object.keys(data).length ? data : undefined };
-                writeActions(next);
-              },
-            );
-            row.appendChild(target.wrap);
-          }
-
-          // Une action de service sans service ne fait rien : le dire, plutot
-          // que de laisser une entree muette dans la roue.
-          const missing =
-            act.type === 'entity' ? (!act.entity_id && !act.service_data?.entity_id ? t('anchorActionNoEntity') : null)
-            : act.type === 'service' ? (!act.domain || !act.service ? t('anchorActionNoService') : null)
-            : (!act.view_id ? t('anchorActionNoView') : null);
-          if (missing) {
-            const warn = document.createElement('div');
-            warn.style.cssText = 'font-size:9px;color:#fbbf24;line-height:1.4;';
-            warn.textContent = missing;
-            row.appendChild(warn);
-          }
-
-          listWrap.appendChild(row);
-        });
-
-        if (!actions.length) {
-          const empty = document.createElement('div');
-          empty.style.cssText = 'font-size:10px;color:#475569;text-align:center;padding:8px 0;';
-          empty.textContent = t('anchorActionEmpty');
-          listWrap.appendChild(empty);
-        }
-
-        const btnRow = document.createElement('div');
-        btnRow.style.cssText = 'display:flex;gap:5px;';
-
-        // Voie principale : composer un groupe en cochant plusieurs entités.
-        // Passer par « ajouter une action » puis « choisir le type » pour chaque
-        // entité était le vrai irritant.
-        const addEntities = document.createElement('button');
-        addEntities.textContent = t('anchorActionAddEntities');
-        addEntities.style.cssText = 'flex:1;background:rgba(125,209,252,0.12);border:1px solid rgba(125,209,252,0.3);border-radius:6px;color:#7dd3fc;padding:6px 10px;font-size:10px;font-family:inherit;cursor:pointer;';
-        addEntities.addEventListener('click', () => {
-          const hass = this.getHass();
-          if (!hass) return;
-          // Les entités déjà dans la roue sont signalées, pas ajoutées deux fois.
-          const already = new Set<string>();
-          for (const a of getActions()) {
-            const id = a.entity_id ?? (a.service_data?.entity_id as string | undefined);
-            if (id) already.add(id);
-          }
-          openEntityPicker({
-            container: this.overlayContainer,
-            hass,
-            placed: already,
-            multi: true,
-            onPick: () => {},
-            onPickMany: (ids) => writeActions([
-              ...getActions(),
-              ...ids
-                .filter((id) => !already.has(id))
-                .map((id, n) => ({
-                  id: `act_${Date.now()}_${n}`,
-                  label: '',
-                  type: 'entity' as const,
-                  entity_id: id,
-                })),
-            ]),
-          });
-        });
-
-        const add = document.createElement('button');
-        add.textContent = t('anchorActionAdd');
-        add.title = t('anchorActionAddHint');
-        add.style.cssText = 'flex:0 0 auto;background:rgba(255,255,255,0.04);border:1px dashed rgba(255,255,255,0.15);border-radius:6px;color:#64748b;padding:6px 10px;font-size:10px;font-family:inherit;cursor:pointer;';
-        add.addEventListener('click', () => writeActions([
-          ...getActions(),
-          { id: 'act_' + Date.now(), label: '', type: 'entity' },
-        ]));
-
-        btnRow.append(addEntities, add);
-        listWrap.appendChild(btnRow);
-      };
-
-      renderActions();
-  }
 
   updateAnchorList() {
     if (!this._panel) return;
@@ -3339,6 +3122,188 @@ export class EditPanel {
    * `idPrefix` must be unique per usage (used for datalist ids).
    * `onApply` is called with the new condition (or undefined to clear).
    */
+  /** L'éditeur des entrées d'une roue d'actions (nature `menu`). */
+  private _buildActionsEditor(container: HTMLElement, key: string, inputStyle: string) {
+    const listWrap = document.createElement('div');
+    listWrap.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
+    container.appendChild(listWrap);
+    type Act = import('../types').AnchorAction;
+
+    const getActions = (): Act[] => this.getEditor()?.anchors.get(key)?.actions ?? [];
+    const writeActions = (next: Act[]) => {
+      this.getEditor()?.updateAnchor(key, { actions: next });
+      this.scheduleAutoSave();
+      renderActions();
+    };
+    const patch = (idx: number, props: Partial<Act>) => {
+      const next = [...getActions()];
+      next[idx] = { ...next[idx], ...props };
+      writeActions(next);
+    };
+
+    const renderActions = () => {
+      listWrap.innerHTML = '';
+      const actions = getActions();
+
+      actions.forEach((act, idx) => {
+        const row = document.createElement('div');
+        row.className = 'ow-act-row';
+
+        // Nom et icône de l'entrée, et de quoi la retirer.
+        const head = document.createElement('div');
+        head.style.cssText = 'display:flex;gap:6px;align-items:center;';
+        const labInp = document.createElement('input');
+        labInp.value = act.label;
+        labInp.placeholder = t('anchorActionLabelAuto');
+        labInp.setAttribute('aria-label', t('anchorActionLabelAuto'));
+        labInp.style.cssText = inputStyle + 'flex:1;min-width:0;';
+        labInp.addEventListener('change', () => patch(idx, { label: labInp.value.trim() }));
+        const icoInp = document.createElement('input');
+        icoInp.value = act.icon ?? '';
+        icoInp.placeholder = 'mdi:…';
+        icoInp.setAttribute('aria-label', t('anchorFieldIcon'));
+        icoInp.style.cssText = inputStyle + 'width:96px;flex:0 0 auto;';
+        icoInp.addEventListener('change', () => patch(idx, { icon: icoInp.value.trim() || undefined }));
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'ow-ib';
+        del.title = t('anchorActionDelete');
+        del.setAttribute('aria-label', t('anchorActionDelete'));
+        del.style.color = '#f87171';
+        del.append(icon('trash', 16));
+        del.addEventListener('click', () => writeActions(getActions().filter((_, j) => j !== idx)));
+        head.append(labInp, icoInp, del);
+        row.appendChild(head);
+
+        // Ce que fait l'entrée.
+        const seg = document.createElement('div');
+        seg.className = 'ow-seg';
+        for (const [v, l, ic] of [
+          ['entity', t('actTypeEntity'), 'bulb'], ['service', t('actTypeService'), 'play'], ['view', t('actTypeView'), 'camera'],
+        ] as const) {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.classList.toggle('ow-on', act.type === v);
+          b.append(icon(ic, 15), document.createTextNode(l));
+          b.addEventListener('click', () => { if (act.type !== v) patch(idx, { type: v }); });
+          seg.appendChild(b);
+        }
+        row.appendChild(seg);
+
+        if (act.type === 'entity') {
+          // Tout vient du descripteur : il n'y a que la cible à choisir.
+          row.appendChild(this._sensorPicker(
+            act.entity_id ?? (act.service_data?.entity_id as string) ?? '',
+            (v) => patch(idx, { entity_id: v || undefined }),
+            { empty: 'sheetPickDevice', emptyHint: 'sheetPickDeviceHint' },
+          ).el);
+        } else if (act.type === 'view') {
+          const vs = document.createElement('select');
+          vs.style.cssText = inputStyle + SELECT_STYLE;
+          const n0 = styleOption(document.createElement('option'));
+          n0.value = ''; n0.textContent = t('anchorNavNone');
+          vs.appendChild(n0);
+          for (const v of this.getViews?.() ?? []) {
+            const o = styleOption(document.createElement('option'));
+            o.value = v.id ?? ''; o.textContent = v.label;
+            if (act.view_id === v.id) o.selected = true;
+            vs.appendChild(o);
+          }
+          vs.addEventListener('change', () => patch(idx, { view_id: vs.value || undefined }));
+          row.appendChild(vs);
+        } else {
+          // Un seul champ « domaine.service » : la forme sous laquelle HA les documente.
+          const svc = document.createElement('input');
+          svc.value = act.domain && act.service ? `${act.domain}.${act.service}` : '';
+          svc.placeholder = t('anchorActionServicePh');
+          svc.setAttribute('aria-label', t('anchorActionService'));
+          svc.style.cssText = inputStyle;
+          svc.addEventListener('change', () => {
+            const parts = svc.value.trim().split('.');
+            const d = parts.shift();
+            patch(idx, { domain: d || undefined, service: parts.join('.') || undefined });
+          });
+          row.appendChild(svc);
+          row.appendChild(this._sensorPicker(
+            (act.service_data?.entity_id as string) ?? '',
+            (v) => {
+              const data: Record<string, unknown> = { ...(getActions()[idx].service_data ?? {}) };
+              if (v) data.entity_id = v; else delete data.entity_id;
+              patch(idx, { service_data: Object.keys(data).length ? data : undefined });
+            },
+            { empty: 'actPickTarget', emptyHint: 'actPickTargetHint' },
+          ).el);
+        }
+
+        // Une entrée sans cible ne fait rien : le dire, plutôt qu'une entrée muette.
+        const missing =
+          act.type === 'entity' ? (!act.entity_id && !act.service_data?.entity_id ? t('anchorActionNoEntity') : null)
+          : act.type === 'service' ? (!act.domain || !act.service ? t('anchorActionNoService') : null)
+          : (!act.view_id ? t('anchorActionNoView') : null);
+        if (missing) {
+          const warn = document.createElement('div');
+          warn.className = 'ow-warn-t';
+          warn.textContent = missing;
+          row.appendChild(warn);
+        }
+        listWrap.appendChild(row);
+      });
+
+      if (!actions.length) {
+        const empty = document.createElement('div');
+        empty.className = 'ow-hint-line';
+        empty.textContent = t('anchorActionEmpty');
+        listWrap.appendChild(empty);
+      }
+
+      const btnRow = document.createElement('div');
+      btnRow.style.cssText = 'display:flex;gap:6px;';
+      // Voie principale : composer un groupe en cochant plusieurs entités.
+      const addEntities = document.createElement('button');
+      addEntities.type = 'button';
+      addEntities.className = 'ow-btn ow-primary ow-small';
+      addEntities.style.flex = '1';
+      addEntities.append(icon('plus', 15), document.createTextNode(t('anchorActionAddEntities').replace(/^[+＋]\s*/, '')));
+      addEntities.addEventListener('click', () => {
+        const hass = this.getHass();
+        if (!hass) return;
+        // Les entités déjà dans la roue sont signalées, pas ajoutées deux fois.
+        const already = new Set<string>();
+        for (const a of getActions()) {
+          const id = a.entity_id ?? (a.service_data?.entity_id as string | undefined);
+          if (id) already.add(id);
+        }
+        openEntityPicker({
+          container: this.overlayContainer,
+          hass,
+          placed: already,
+          multi: true,
+          onPick: () => {},
+          onPickMany: (ids) => writeActions([
+            ...getActions(),
+            ...ids.filter((id) => !already.has(id)).map((id, n) => ({
+              id: `act_${Date.now()}_${n}`, label: '', type: 'entity' as const, entity_id: id,
+            })),
+          ]),
+        });
+      });
+      const add = document.createElement('button');
+      add.type = 'button';
+      add.className = 'ow-btn ow-small';
+      add.title = t('anchorActionAddHint');
+      add.textContent = t('anchorActionAdd').replace(/^[+＋]\s*/, '');
+      add.addEventListener('click', () => writeActions([...getActions(), { id: `act_${Date.now()}`, label: '', type: 'entity' }]));
+      btnRow.append(addEntities, add);
+      listWrap.appendChild(btnRow);
+    };
+
+    renderActions();
+  }
+
+  /**
+   * « Visible seulement si » : la pastille s'affiche ou se masque selon l'état
+   * d'un autre appareil (un capteur de présence, un mode de la maison…).
+   */
   private _buildVisibleIfSection(
     container: HTMLElement,
     idPrefix: string,
@@ -3346,142 +3311,122 @@ export class EditPanel {
     inputStyle: string,
     onApply: (cond: import('../rules/types').EntityCondition | undefined) => void,
   ) {
-    const hass = this.getHass();
     const ops: [string, string][] = [
       ['eq', t('opEq')], ['neq', t('opNeq')],
-      ['gt', t('opGt')], ['lt',  t('opLt')],
+      ['gt', t('opGt')], ['lt', t('opLt')],
       ['gte', t('opGte')], ['lte', t('opLte')],
       ['contains', t('opContains')],
     ];
-
-    // negate: true → "Masquer si" (hidden when condition is true)
-    //         false → "Afficher si" (visible when condition is true)
-    // Default for new conditions: true (most natural use case)
+    // negate : « Masquer si » ; sinon « Afficher si ». Par défaut, masquer.
     let negate = current ? (current.negate ?? false) : true;
+    let entity = current?.entity_id ?? '';
 
-    // Toggle row (enable/disable the whole section)
-    const toggleRow = document.createElement('div');
-    toggleRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:8px;';
-    const toggle = document.createElement('input');
-    toggle.type = 'checkbox';
-    toggle.checked = !!current;
-    toggle.style.cssText = 'cursor:pointer;flex-shrink:0;accent-color:#7dd3fc;';
-    const toggleLbl = document.createElement('span');
-    toggleLbl.style.cssText = 'font-size:11px;color:#94a3b8;cursor:pointer;';
-    toggleLbl.textContent = t('visibilityCondition');
-    toggleRow.appendChild(toggle); toggleRow.appendChild(toggleLbl);
-    toggleLbl.addEventListener('click', () => toggle.click());
-    container.appendChild(toggleRow);
-
-    // Fields (hidden until toggle on)
     const fields = document.createElement('div');
-    fields.style.cssText = `display:${current ? 'block' : 'none'};`;
-    container.appendChild(fields);
+    fields.style.cssText = `display:${current ? 'flex' : 'none'};flex-direction:column;gap:10px;`;
 
-    // Mode row: [Masquer si] [Afficher si]
-    const modeRow = document.createElement('div');
-    modeRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:8px;';
-    const mkModeBtn = (label: string, active: boolean) => {
-      const btn = document.createElement('button');
-      btn.textContent = label;
-      btn.style.cssText = `background:${active ? 'rgba(248,113,113,0.15)' : 'rgba(255,255,255,0.04)'};border:1px solid ${active ? 'rgba(248,113,113,0.4)' : 'rgba(255,255,255,0.1)'};border-radius:6px;color:${active ? '#f87171' : '#64748b'};padding:5px 4px;font-size:10px;font-family:inherit;cursor:pointer;transition:all .15s;`;
-      return btn;
+    // L'interrupteur de la section.
+    const toggleRow = document.createElement('div');
+    toggleRow.className = 'ow-row-opt';
+    const toggleLbl = document.createElement('span');
+    toggleLbl.textContent = t('visibilityCondition');
+    const sw = document.createElement('button');
+    sw.type = 'button';
+    sw.className = `ow-switch${current ? ' ow-on' : ''}`;
+    sw.setAttribute('role', 'switch');
+    sw.setAttribute('aria-checked', String(!!current));
+    sw.setAttribute('aria-label', t('visibilityCondition'));
+    sw.addEventListener('click', () => {
+      const on = !sw.classList.contains('ow-on');
+      sw.classList.toggle('ow-on', on);
+      sw.setAttribute('aria-checked', String(on));
+      fields.style.display = on ? 'flex' : 'none';
+      if (!on) onApply(undefined); else apply();
+    });
+    toggleRow.append(toggleLbl, sw);
+    container.append(toggleRow, fields);
+
+    // Masquer si / Afficher si.
+    const mode = document.createElement('div');
+    mode.className = 'ow-seg';
+    const modeBtn = (hide: boolean, label: string, ic: string) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.classList.toggle('ow-on', negate === hide);
+      b.append(icon(ic, 15), document.createTextNode(label));
+      b.addEventListener('click', () => {
+        negate = hide;
+        mode.querySelectorAll('button').forEach((x) => x.classList.toggle('ow-on', x === b));
+        apply();
+      });
+      mode.appendChild(b);
     };
-    const btnHide = mkModeBtn(t('visibilityHideIf'), negate);
-    const btnShow = mkModeBtn(t('visibilityShowIf'), !negate);
-    const setMode = (hide: boolean) => {
-      negate = hide;
-      btnHide.style.cssText = `background:${hide ? 'rgba(248,113,113,0.15)' : 'rgba(255,255,255,0.04)'};border:1px solid ${hide ? 'rgba(248,113,113,0.4)' : 'rgba(255,255,255,0.1)'};border-radius:6px;color:${hide ? '#f87171' : '#64748b'};padding:5px 4px;font-size:10px;font-family:inherit;cursor:pointer;transition:all .15s;`;
-      btnShow.style.cssText = `background:${!hide ? 'rgba(134,239,172,0.15)' : 'rgba(255,255,255,0.04)'};border:1px solid ${!hide ? 'rgba(134,239,172,0.4)' : 'rgba(255,255,255,0.1)'};border-radius:6px;color:${!hide ? '#86efac' : '#64748b'};padding:5px 4px;font-size:10px;font-family:inherit;cursor:pointer;transition:all .15s;`;
-    };
-    // Sync initial show-mode color
-    setMode(negate);
-    btnHide.addEventListener('click', () => { setMode(true); apply(); });
-    btnShow.addEventListener('click', () => { setMode(false); apply(); });
-    modeRow.appendChild(btnHide); modeRow.appendChild(btnShow);
-    fields.appendChild(modeRow);
+    modeBtn(true, t('visibilityHideIf'), 'eyeOff');
+    modeBtn(false, t('visibilityShowIf'), 'eye');
+    fields.appendChild(mode);
 
-    // Entity input
-    const entityWrap = document.createElement('div');
-    entityWrap.style.cssText = 'margin-bottom:4px;';
-    const entityField = this._entityField(current?.entity_id ?? '', inputStyle, () => apply());
-    const entityInp = entityField.input;
-    entityWrap.appendChild(entityField.wrap);
-    fields.appendChild(entityWrap);
+    // L'appareil dont l'état décide.
+    fields.appendChild(this._sensorPicker(entity, (v) => {
+      entity = v;
+      refreshSuggestions();
+      apply();
+    }, { empty: 'visPickDevice', emptyHint: 'visPickDeviceHint' }).el);
 
-    // State hint (current state of selected entity)
-    const hint = document.createElement('div');
-    hint.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.3);margin-bottom:6px;min-height:14px;padding-left:2px;';
-    fields.appendChild(hint);
-
-    // Operator + value row
+    // L'opérateur et la valeur, avec les états connus de l'appareil en puces.
     const condRow = document.createElement('div');
-    condRow.style.cssText = 'display:grid;grid-template-columns:90px 1fr;gap:5px;margin-bottom:6px;';
+    condRow.style.cssText = 'display:grid;grid-template-columns:auto 1fr;gap:6px;';
     const opSel = document.createElement('select');
-    opSel.style.cssText = 'background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:7px;color:#e2e8f0;padding:5px 6px;font-size:11px;outline:none;font-family:inherit;' + SELECT_STYLE;
-    ops.forEach(([v, l]) => {
-      const o = styleOption(document.createElement('option')); o.value = v; o.textContent = l;
+    opSel.style.cssText = inputStyle + SELECT_STYLE + 'width:auto;';
+    opSel.setAttribute('aria-label', t('visOperator'));
+    for (const [v, l] of ops) {
+      const o = styleOption(document.createElement('option'));
+      o.value = v; o.textContent = l;
       if (current?.operator === v) o.selected = true;
       opSel.appendChild(o);
-    });
-    const valDlId = `${idPrefix}-val`;
+    }
     const valInp = document.createElement('input');
     valInp.value = String(current?.value ?? '');
     valInp.placeholder = t('condValuePh');
-    valInp.setAttribute('list', valDlId);
+    valInp.setAttribute('aria-label', t('condValuePh'));
     valInp.style.cssText = inputStyle;
-    const valDl = document.createElement('datalist');
-    valDl.id = valDlId;
-    condRow.appendChild(opSel);
-    condRow.appendChild(valInp);
+    condRow.append(opSel, valInp);
     fields.appendChild(condRow);
-    fields.appendChild(valDl);
+    const chips = document.createElement('div');
+    chips.className = 'ow-chips';
+    fields.appendChild(chips);
 
-    // Helper: refresh hint + value suggestions for a given entity_id
-    const refreshEntityContext = (eid: string) => {
-      const stateObj = hass?.states[eid];
-      if (!stateObj) { hint.textContent = ''; valDl.innerHTML = ''; return; }
-
-      const friendlyName = (stateObj.attributes?.friendly_name as string) ?? '';
-      hint.textContent = `${t('condCurrentState')} ${stateObj.state}${friendlyName ? `  ·  ${friendlyName}` : ''}`;
-
-      valDl.innerHTML = '';
-      const domain = eid.split('.')[0];
-      const domainSuggestions = EditPanel._STATE_SUGGESTIONS[domain] ?? [];
-      const selectOptions = stateObj.attributes?.options as string[] | undefined;
-      const suggestions = selectOptions?.length
-        ? selectOptions
-        : domainSuggestions.length
-          ? domainSuggestions
-          : [stateObj.state];
-      const all = [...new Set([...suggestions, stateObj.state])];
-      for (const s of all) {
-        const opt = document.createElement('option'); opt.value = s; valDl.appendChild(opt);
+    const refreshSuggestions = () => {
+      chips.innerHTML = '';
+      const st = entity ? this.getHass()?.states[entity] : undefined;
+      if (!entity) return;
+      const domain = entity.split('.')[0];
+      const fromSelect = st?.attributes?.options as string[] | undefined;
+      const known = fromSelect?.length ? fromSelect : knownStates(entity, st?.state);
+      const values = [...new Set([...(known.length ? known : EditPanel._STATE_SUGGESTIONS[domain] ?? []), ...(st ? [st.state] : [])])];
+      for (const v of values.slice(0, 10)) {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = `ow-chip2${valInp.value === v ? ' ow-on' : ''}`;
+        chip.textContent = stateLabel(entity, v, st?.attributes ?? {});
+        chip.title = v;
+        chip.addEventListener('click', () => {
+          valInp.value = v;
+          refreshSuggestions();
+          apply();
+        });
+        chips.appendChild(chip);
       }
     };
+    refreshSuggestions();
 
-    if (current?.entity_id) refreshEntityContext(current.entity_id);
-
-    // Apply logic — include negate in stored condition
     const apply = () => {
-      const eid = entityInp.value.trim();
       const val = valInp.value.trim();
       const op = opSel.value as import('../rules/types').ConditionOperator;
-      if (!eid || !val) return;
-      onApply({ entity_id: eid, operator: op, value: val, negate });
+      if (!entity || !val) return;
+      onApply({ entity_id: entity, operator: op, value: val, negate });
     };
-
-    entityInp.addEventListener('change', () => {
-      refreshEntityContext(entityInp.value.trim());
-      apply();
-    });
-    valInp.addEventListener('change', apply);
+    valInp.addEventListener('change', () => { refreshSuggestions(); apply(); });
     opSel.addEventListener('change', apply);
-
-    toggle.addEventListener('change', () => {
-      fields.style.display = toggle.checked ? 'block' : 'none';
-      if (!toggle.checked) onApply(undefined);
-    });
+    void idPrefix;
   }
 
   // ── Rules UI ────────────────────────────────────────────────────────────────
