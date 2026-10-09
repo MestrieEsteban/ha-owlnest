@@ -224,12 +224,15 @@ export async function placeFurniture(plan: PlanDoc, root: THREE.Object3D, onRead
     holder.userData.owlnestItem = item.id;
     // Une lampe reliée change d'aspect avec son état : elle ne se fond pas
     // dans le regroupement des objets immobiles.
-    if (item.entity && catalogItem(item.model)?.light) holder.userData.owlnestLive = true;
+    const lamp = !!catalogItem(item.model)?.light;
+    if (item.entity && lamp) holder.userData.owlnestLive = true;
     obj.traverse((o) => {
       const m = o as THREE.Mesh;
       if (!m.isMesh) return;
       const mats = [m.material].flat();
-      m.castShadow = !mats.some((x) => x.transparent || x.name === 'glass');
+      // Une lampe ne fait pas d'ombre : sa lumière part de l'intérieur de
+      // l'abat-jour, qui la boucherait et ne laisserait qu'une flaque au sol.
+      m.castShadow = !lamp && !mats.some((x) => x.transparent || x.name === 'glass');
       m.receiveShadow = true;
     });
     holder.add(obj);
@@ -247,9 +250,11 @@ export const isGlowMaterial = (name: string) => name === 'lamp' || name === 'Lig
  * s'allumeraient ensemble. `level` va de 0 à 1.
  */
 export function setLampGlow(holder: THREE.Object3D, on: boolean, color: number, level: number): void {
+  const shade = new THREE.Box3();
+  holder.updateMatrixWorld(true);
   holder.traverse((o) => {
     const m = o as THREE.Mesh;
-    if (!m.isMesh) return;
+    if (!m.isMesh || m.name === GLOW_NAME) return;
     const swap = (mat: THREE.Material) => {
       if (!isGlowMaterial(mat.name)) return mat;
       const own = (mat.userData.owlnestGlow ? mat : mat.clone()) as THREE.MeshStandardMaterial;
@@ -259,7 +264,74 @@ export function setLampGlow(holder: THREE.Object3D, on: boolean, color: number, 
       return own;
     };
     m.material = Array.isArray(m.material) ? m.material.map(swap) : swap(m.material);
+    expandByGlow(shade, m);
   });
+  // Le halo : une lueur douce autour de l'abat-jour, comme un tissu éclairé
+  // de l'intérieur qui diffuse dans la pièce.
+  let halo = holder.getObjectByName(GLOW_NAME) as THREE.Sprite | undefined;
+  if (!on || shade.isEmpty()) { if (halo) halo.visible = false; return; }
+  if (!halo) {
+    halo = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: haloTexture(), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true,
+    }));
+    halo.name = GLOW_NAME;
+    halo.userData.owlnestHelper = true;
+    halo.renderOrder = 2;
+    holder.add(halo);
+  }
+  const size = shade.getSize(new THREE.Vector3());
+  const world = Math.max(size.x, size.y, size.z) * 2.6;
+  // Le support est étiré axe par axe : on compense pour garder un halo rond.
+  const s = holder.getWorldScale(new THREE.Vector3());
+  halo.position.copy(holder.worldToLocal(shade.getCenter(new THREE.Vector3())));
+  halo.scale.set(world / s.x, world / s.y, world / s.z);
+  const mat = halo.material;
+  mat.color.set(color);
+  mat.opacity = 0.25 + 0.45 * level;
+  halo.visible = true;
+}
+
+/**
+ * Agrandit `box` des seuls triangles de l'abat-jour, en coordonnées du monde.
+ * Chez Kenney, le pied et l'abat-jour forment un seul maillage à deux
+ * matières : sa boîte entière ferait un halo grand comme la lampe.
+ */
+function expandByGlow(box: THREE.Box3, m: THREE.Mesh): void {
+  const mats = [m.material].flat();
+  const pos = m.geometry.getAttribute('position');
+  if (!pos) return;
+  const idx = m.geometry.index;
+  const groups = Array.isArray(m.material) && m.geometry.groups.length
+    ? m.geometry.groups.filter((g) => isGlowMaterial(mats[g.materialIndex ?? 0]?.name ?? ''))
+    : isGlowMaterial(mats[0]?.name ?? '') ? [{ start: 0, count: idx ? idx.count : pos.count }] : [];
+  const v = new THREE.Vector3();
+  for (const g of groups) {
+    for (let i = g.start; i < g.start + g.count; i++) {
+      v.fromBufferAttribute(pos, idx ? idx.getX(i) : i).applyMatrix4(m.matrixWorld);
+      box.expandByPoint(v);
+    }
+  }
+}
+
+const GLOW_NAME = 'owlnest_lamp_halo';
+let halo: THREE.Texture | null = null;
+
+/** Un disque qui s'estompe du centre vers le bord, dessiné une fois. */
+function haloTexture(): THREE.Texture {
+  if (halo) return halo;
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d')!;
+  const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grad.addColorStop(0, 'rgba(255,255,255,0.9)');
+  grad.addColorStop(0.25, 'rgba(255,255,255,0.45)');
+  grad.addColorStop(0.6, 'rgba(255,255,255,0.1)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 128, 128);
+  halo = new THREE.CanvasTexture(c);
+  halo.colorSpace = THREE.SRGBColorSpace;
+  return halo;
 }
 
 /** Où se trouve l'ampoule d'une lampe posée, dans le repère du plan (x, hauteur, y). */
