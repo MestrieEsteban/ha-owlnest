@@ -509,6 +509,31 @@ export class Ha3dFloorplan extends HTMLElement {
     });
   }
 
+  /**
+   * Une ancre de lampe déplacée dans l'éditeur d'ancres a emmené sa lampe :
+   * le plan l'enregistre. La hauteur reste celle de l'ampoule, qui dépend du
+   * meuble ; l'ancre y revient quand la lampe est reposée.
+   */
+  private _lampAnchorsToPlan(editable: Map<string, EditableAnchor>) {
+    const plan = this._scene?.plan;
+    const items = plan?.items;
+    const group = this._modelRoot?.getObjectByName('plan_items');
+    if (!plan || !items?.length || !group) return;
+    let moved = false;
+    const next = items.map((it) => {
+      const ea = [...editable.values()].find((a) => a.planId === `plan_lamp_${it.id}`);
+      if (!ea) return it;
+      const local = group.worldToLocal(ea.position.clone());
+      if (Math.abs(local.x - it.x) < 1e-3 && Math.abs(local.z - it.y) < 1e-3) return it;
+      moved = true;
+      return { ...it, x: Math.round(local.x * 1000) / 1000, y: Math.round(local.z * 1000) / 1000 };
+    });
+    if (!moved) return;
+    const updated = { ...plan, items: next };
+    this.applyPlan(updated);
+    this._schedulePlanSave(0);
+  }
+
   /** Dernier aspect appliqué à chaque lampe reliée, pour ne rien refaire à chaque poussée d'état. */
   private _lampGlow = new Map<string, string>();
 
@@ -1783,6 +1808,7 @@ export class Ha3dFloorplan extends HTMLElement {
         navViewId: entry.navViewId,
         size: entry.size,
         display: entry.display,
+        planId: entry.planId,
       });
     });
 
@@ -1989,6 +2015,7 @@ export class Ha3dFloorplan extends HTMLElement {
 
     const editable = new Map<string, EditableAnchor>(this._editor!.anchors as Map<string, EditableAnchor>);
     this._editor!.deactivate();
+    this._lampAnchorsToPlan(editable);
 
     this.anchors.forEach((entry) => {
       if (entry.light) {
@@ -2023,6 +2050,16 @@ export class Ha3dFloorplan extends HTMLElement {
     this._editor.anchors.forEach((ea, key) => {
       const entry = this.anchors.get(key);
       if (!entry) return;
+      // L'ancre d'une lampe posée emmène la lampe avec elle.
+      if (ea.planId?.startsWith('plan_lamp_') && this._modelRoot) {
+        const holder = this._modelRoot.getObjectByName(`plan_item_${ea.planId.slice('plan_lamp_'.length)}`);
+        if (holder?.parent) {
+          const local = holder.parent.worldToLocal(ea.position.clone());
+          holder.position.x = local.x;
+          holder.position.z = local.z;
+          holder.updateMatrixWorld(true);
+        }
+      }
 
       // Always sync position (gizmo drag)
       entry.worldPos.copy(ea.position);

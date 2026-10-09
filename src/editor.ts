@@ -179,7 +179,8 @@ export class AnchorEditor {
     // posait à trois millimètres sur un export en centimètres, donc dessus.
     const step = this._markerRadius * 3;
     const pos = src.position.clone().add(new THREE.Vector3(step, 0, step));
-    const newAnchor: EditableAnchor = { ...src, position: pos };
+    // Le doublon est une ancre ordinaire : seul l'original suit sa lampe.
+    const newAnchor: EditableAnchor = { ...src, position: pos, planId: undefined };
     this._anchors.set(key, newAnchor);
     this._addMarker(key, pos, newAnchor.hidden);
     this._selectAnchor(key);

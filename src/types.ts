@@ -136,6 +136,12 @@ export interface AnchorConfig {
    * une simple pastille.
    */
   display?: 'auto' | 'icon' | 'thumbnail';
+  /**
+   * Identifiant fixé par le plan dessiné (`plan_lamp_…` : l'ancre d'une lampe
+   * posée). Il survit à l'éditeur d'ancres et à l'enregistrement, sinon la
+   * carte ne reconnaîtrait plus l'ancre et en recréerait une seconde.
+   */
+  planId?: string;
 }
 
 // ── Owlnest scene (backend-persisted) ─────────────────────────────────────
@@ -512,6 +518,12 @@ export interface AnchorEntry {
    * une simple pastille.
    */
   display?: 'auto' | 'icon' | 'thumbnail';
+  /**
+   * Identifiant fixé par le plan dessiné (`plan_lamp_…` : l'ancre d'une lampe
+   * posée). Il survit à l'éditeur d'ancres et à l'enregistrement, sinon la
+   * carte ne reconnaîtrait plus l'ancre et en recréerait une seconde.
+   */
+  planId?: string;
 }
 
 export interface SavedView {
@@ -558,4 +570,10 @@ export interface EditableAnchor {
    * une simple pastille.
    */
   display?: 'auto' | 'icon' | 'thumbnail';
+  /**
+   * Identifiant fixé par le plan dessiné (`plan_lamp_…` : l'ancre d'une lampe
+   * posée). Il survit à l'éditeur d'ancres et à l'enregistrement, sinon la
+   * carte ne reconnaîtrait plus l'ancre et en recréerait une seconde.
+   */
+  planId?: string;
 }
