@@ -85,10 +85,16 @@ export interface PlanItem {
   y: number;
   /** Rotation en degrés, dans le sens des aiguilles d'une montre vu de dessus. */
   rotation: number;
-  /** Hauteur du bas du meuble ; absente, celle du catalogue (sol, mur, plafond). */
+  /**
+   * Hauteur du bas du meuble. Absente, elle est déduite : au mur ou au
+   * plafond selon le catalogue, sur le meuble du dessous pour une lampe ou un
+   * objet posé, sinon au sol.
+   */
   elevation?: number;
-  /** Agrandissement par rapport à la taille du catalogue. */
+  /** Agrandissement par rapport à la taille du catalogue (anciens plans ; `size` le remplace). */
   scale?: number;
+  /** Taille voulue en mètres : largeur, profondeur, hauteur. Absente, celle du modèle. */
+  size?: [number, number, number];
   /** Couleur par matière du modèle : `carpet` (tissu), `wood`… */
   colors?: Record<string, string>;
   /** Pour une lampe : l'entité qu'elle représente. */

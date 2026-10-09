@@ -541,8 +541,9 @@ export class Ha3dFloorplan extends HTMLElement {
       };
     }
     this._buildParts();
-    // Pendant le dessin, la 3D suit la maison qui grandit.
-    if (this._planEditor) this._frameModel();
+    // Pendant le dessin, la 3D ne se recadre que si la maison déborde de ce
+    // qu'on voyait : une retouche ne doit pas défaire le point de vue choisi.
+    if (this._planEditor) this._frameIfOutgrown();
     this._requestShadowUpdate();
     this._requestRender();
   }
@@ -583,10 +584,11 @@ export class Ha3dFloorplan extends HTMLElement {
       onLayout: (covered) => {
         this._viewShift = covered;
         this._applyViewShift();
-        if (this._plan) this._frameModel();
+        if (this._plan && !this._framedBox) this._frameEditor();
       },
       onClose: () => {
         this._planEditor = null;
+        this._framedBox = null;
         this._viewShift = 0;
         this._exitFullscreen();
         this._applyViewShift();
@@ -595,6 +597,21 @@ export class Ha3dFloorplan extends HTMLElement {
         if (this._isDemo) this._showDemoBanner();
       },
     });
+  }
+
+  /** Ce que montrait la 3D au dernier cadrage pendant l'édition. */
+  private _framedBox: THREE.Box3 | null = null;
+
+  private _frameEditor() {
+    this._frameModel();
+    this._framedBox = this._modelBox.clone();
+  }
+
+  /** Recadre seulement si la maison est sortie de ce qu'on cadrait (avec un peu de marge). */
+  private _frameIfOutgrown() {
+    if (!this._plan) return;
+    const seen = this._framedBox?.clone().expandByScalar(0.5);
+    if (!seen || !seen.containsBox(this._modelBox)) this._frameEditor();
   }
 
   /**

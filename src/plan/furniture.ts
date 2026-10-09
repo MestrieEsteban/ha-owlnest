@@ -74,19 +74,58 @@ export function furnitureTints(model: string): Tintable[] {
   return ready.get(model)?.tints ?? [];
 }
 
-/** Emprise d'un meuble posé, en mètres : largeur (x local), profondeur, hauteur. */
-export function itemSize(item: PlanItem): { w: number; d: number; h: number } {
-  const s = furnitureSize(item.model);
-  const k = item.scale ?? 1;
-  return s ? { w: s.x * k, d: s.z * k, h: s.y * k } : { w: 0.5, d: 0.5, h: 0.5 };
+/** Taille d'origine d'un modèle, en mètres : largeur, profondeur, hauteur. */
+export function baseSize(model: string): { w: number; d: number; h: number } | null {
+  const s = furnitureSize(model);
+  return s ? { w: s.x, d: s.z, h: s.y } : null;
 }
 
-/** Hauteur du bas d'un meuble : au sol, au mur, ou sous le plafond. */
-export function itemElevation(plan: PlanDoc, item: PlanItem): number {
+/** Emprise d'un meuble posé, en mètres : largeur (x local), profondeur, hauteur. */
+export function itemSize(item: PlanItem): { w: number; d: number; h: number } {
+  if (item.size) return { w: item.size[0], d: item.size[1], h: item.size[2] };
+  const s = baseSize(item.model);
+  const k = item.scale ?? 1;
+  return s ? { w: s.w * k, d: s.d * k, h: s.h * k } : { w: 0.5, d: 0.5, h: 0.5 };
+}
+
+/** Le point est-il sur l'emprise de ce meuble (rectangle tourné) ? */
+export function overItem(item: PlanItem, p: { x: number; y: number }, margin = 0): boolean {
+  const { w, d } = itemSize(item);
+  const a = (item.rotation * Math.PI) / 180;
+  const vx = p.x - item.x, vy = p.y - item.y;
+  const lx = vx * Math.cos(a) + vy * Math.sin(a), ly = -vx * Math.sin(a) + vy * Math.cos(a);
+  return Math.abs(lx) <= w / 2 + margin && Math.abs(ly) <= d / 2 + margin;
+}
+
+/** Le meuble sur lequel un objet est posé, s'il y en a un. */
+export function supportOf(plan: PlanDoc, item: PlanItem): PlanItem | null {
+  if (!catalogItem(item.model)?.top) return null;
+  let best: PlanItem | null = null;
+  for (const other of plan.items ?? []) {
+    if (other.id === item.id || !catalogItem(other.model)?.surface || !overItem(other, item)) continue;
+    if (!best || itemTop(plan, other) > itemTop(plan, best)) best = other;
+  }
+  return best;
+}
+
+/** Hauteur du dessus d'un meuble. */
+export function itemTop(plan: PlanDoc, item: PlanItem, depth = 0): number {
+  return itemElevation(plan, item, depth) + itemSize(item).h;
+}
+
+/**
+ * Hauteur du bas d'un meuble : celle choisie, sinon au mur ou sous le
+ * plafond selon le catalogue, sur le meuble du dessous pour un objet posé
+ * (une lampe sur une table de chevet), et au sol pour le reste.
+ */
+export function itemElevation(plan: PlanDoc, item: PlanItem, depth = 0): number {
   if (item.elevation !== undefined) return item.elevation;
   const c = catalogItem(item.model);
   if (c?.ceiling) return Math.max(0, plan.wallHeight - itemSize(item).h);
-  return c?.wall ?? 0;
+  if (c?.wall !== undefined) return c.wall;
+  // Garde-fou : des objets empilés en boucle ne doivent pas tourner sans fin.
+  const under = depth < 4 ? supportOf(plan, item) : null;
+  return under ? itemTop(plan, under, depth + 1) : 0;
 }
 
 /** Une copie du modèle pour un meuble posé, aux couleurs choisies. */
@@ -143,7 +182,9 @@ export async function placeFurniture(plan: PlanDoc, root: THREE.Object3D, onRead
     holder.name = `${ITEM_PREFIX}${item.id}`;
     holder.position.set(item.x, itemElevation(plan, item), item.y);
     holder.rotation.y = -THREE.MathUtils.degToRad(item.rotation);
-    holder.scale.setScalar(item.scale ?? 1);
+    // Taille voulue, axe par axe : on étire le modèle d'origine.
+    const want = itemSize(item);
+    holder.scale.set(want.w / loaded.size.x, want.h / loaded.size.y, want.d / loaded.size.z);
     holder.userData.owlnestItem = item.id;
     obj.traverse((o) => {
       const m = o as THREE.Mesh;

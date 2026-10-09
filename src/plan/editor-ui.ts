@@ -26,7 +26,9 @@ import {
 import { wallFootprints } from './footprint';
 import { TEMPLATES, templatePlan, type TemplateId } from './templates';
 import { CATALOG, CATEGORIES, catalogItem, itemLabel, thumbUrl, type ItemCategory } from './catalog';
-import { loadFurniture, itemSize, topView, furnitureTints, type Tintable } from './furniture';
+import {
+  loadFurniture, itemSize, topView, furnitureTints, overItem, baseSize, itemElevation, supportOf, type Tintable,
+} from './furniture';
 import {
   ROOM_TYPES, FLOOR_COLORS, WALL_COLORS, DOOR_COLORS, FRAME_COLORS, FLOOR_MATERIALS, type RoomType,
 } from './rooms';
@@ -244,6 +246,8 @@ export class PlanEditor {
   private drawer: HTMLDivElement | null = null;
   private shelf: ItemCategory | 'all' = 'living';
   private search = '';
+  /** Les meubles s'aimantent aux murs ; Alt (ou ce réglage) les laisse libres. */
+  private magnet = true;
   /** Vues de dessus déjà rendues, par meuble. */
   private tops = new Map<string, string>();
   /** Les réglages généraux restent repliés tant qu'on ne les demande pas. */
@@ -913,7 +917,7 @@ export class PlanEditor {
         break;
       case 'item': {
         const it = this.item(d.id);
-        if (it) this.moveItem(it, sub(p, d.grab));
+        if (it) this.moveItem(it, sub(p, d.grab), e.altKey || !this.magnet);
         break;
       }
     }
@@ -1631,18 +1635,27 @@ export class PlanEditor {
 
   /** Le point est-il sur ce meuble (rectangle tourné) ? */
   private inItem(it: PlanItem, p: Pt, margin = 0): boolean {
-    const { w, d } = itemSize(it);
-    const a = (it.rotation * Math.PI) / 180;
-    const v = sub(p, it);
-    const lx = v.x * Math.cos(a) + v.y * Math.sin(a), ly = -v.x * Math.sin(a) + v.y * Math.cos(a);
-    return Math.abs(lx) <= w / 2 + margin && Math.abs(ly) <= d / 2 + margin;
+    return overItem(it, p, margin);
   }
 
   /**
    * Déplace un meuble. Près d'un mur, il s'y adosse : il se tourne dos au mur
    * et s'y colle. Ailleurs, il suit le doigt au pas de 5 cm.
    */
-  private moveItem(it: PlanItem, to: Pt) {
+  private moveItem(it: PlanItem, to: Pt, free = false) {
+    // Placement libre (touche Alt, ou aimant coupé) : au centimètre, sans mur.
+    if (free) {
+      it.x = round3(Math.round(to.x * 100) / 100);
+      it.y = round3(Math.round(to.y * 100) / 100);
+      this.guides = [];
+      return;
+    }
+    // Un objet posé sur un meuble le suit sans s'adosser aux murs.
+    if (catalogItem(it.model)?.top && (this.plan.items ?? []).some((o) => o.id !== it.id && catalogItem(o.model)?.surface && overItem(o, to))) {
+      it.x = round3(Math.round(to.x / 0.01) * 0.01);
+      it.y = round3(Math.round(to.y / 0.01) * 0.01);
+      return;
+    }
     const { d } = itemSize(it);
     const reach = Math.max(0.35, d / 2 + 0.25);
     let best: { w: PlanWall; pr: ReturnType<typeof project>; a: Pt; b: Pt } | null = null;
@@ -1809,9 +1822,38 @@ export class PlanEditor {
       this.pill(t('planRotateLeft'), () => this.rotateItem(id, -90), false, 'rotl'),
       this.pill(t('planRotateRight'), () => this.rotateItem(id, 90), false, 'rotr'),
     );
-    this.bubble.append(el('div', 'height:8px;'));
-    this.stepper(t('planItemSize'), Math.round((it.scale ?? 1) * 100), 5, 30, 300, (v) => { it.scale = v === 100 ? undefined : v / 100; });
-    this.stepper(t('planItemElevation'), it.elevation ?? (c?.wall ?? 0), 0.05, 0, 5, (v) => { it.elevation = v; });
+    this.stepper(t('planItemRotation'), it.rotation, 15, -360, 720, (v) => { it.rotation = ((Math.round(v) % 360) + 360) % 360; });
+    this.bubble.append(el('div', `height:1px;background:${C.line};margin:8px 0 10px;`));
+
+    // Taille au centimètre, axe par axe.
+    const size = itemSize(it);
+    const setSize = (k: 0 | 1 | 2, cm: number) => {
+      const cur = itemSize(it);
+      const next: [number, number, number] = [cur.w, cur.d, cur.h];
+      next[k] = cm / 100;
+      it.size = next;
+      delete it.scale;
+    };
+    this.stepper(t('planItemWidth'), Math.round(size.w * 100), 1, 2, 1000, (v) => setSize(0, v));
+    this.stepper(t('planItemDepth'), Math.round(size.d * 100), 1, 2, 1000, (v) => setSize(1, v));
+    this.stepper(t('planItemHeight'), Math.round(size.h * 100), 1, 1, 500, (v) => setSize(2, v));
+    const base = baseSize(it.model);
+    if (base && (it.size || it.scale)) {
+      this.actions(this.pill(t('planItemOriginal'), () => { this.commit(); delete it.size; delete it.scale; this.changed(); }));
+    }
+
+    // Hauteur : automatique (au sol, sur le meuble du dessous, au mur) ou choisie.
+    const elev = itemElevation(this.plan, it);
+    this.stepper(t('planItemElevation'), Math.round(elev * 100), 1, 0, 500, (v) => { it.elevation = v / 100; });
+    const under = supportOf(this.plan, it);
+    if (it.elevation === undefined) {
+      const on = under ? catalogItem(under.model) : null;
+      this.small(on ? t('planItemOnTop').replace('{name}', itemLabel(on).toLowerCase()) : t('planItemAuto'));
+    } else {
+      this.actions(this.pill(t('planItemAutoBtn'), () => { this.commit(); delete it.elevation; this.changed(); }, false, 'sparkle'));
+    }
+    this.chips('', [['on', t('planMagnetOn')], ['off', t('planMagnetOff')]], this.magnet ? 'on' : 'off', (v) => { this.magnet = v === 'on'; this.history.pop(); });
+    this.bubble.append(el('div', `height:1px;background:${C.line};margin:6px 0 4px;`));
     const tints = furnitureTints(it.model);
     const FABRIC = ['#c9c2b8', '#8a8f98', '#3e4a5c', '#5b7083', '#7a9a7e', '#b5655b', '#d9a441', '#2f343b', '#e8e4dc', '#9b7bb0', '#c97b8a', '#4f6d5a'];
     const WOOD = ['#e0c49a', '#c8a77e', '#a97c55', '#7a5a3f', '#4a3626', '#f4f4f2', '#d6d3cd', '#2f343b'];
