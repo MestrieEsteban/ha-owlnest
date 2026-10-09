@@ -67,6 +67,10 @@ Trois fois le même schéma : une liste blanche de champs qui n'a pas suivi l'aj
 - `_enterEditMode` en oubliait **5** → perte à l'entrée en édition, puis écrasement à l'enregistrement.
 - Corrigé et **vérifié par `audit_fields.py`**, qui contrôle les 5 sites de conversion.
 
+### Le plan effacé par l'éditeur d'ancres
+
+`buildSceneFromEditor` (scene.ts) reconstruit la scène champ par champ et **oubliait `plan`**. Premier enregistrement depuis l'éditeur d'ancres : le logement dessiné disparaissait du stockage. Même famille que plus haut. Il renumérotait aussi les ancres (`anchor_000`…) : l'ancre d'une lampe posée perdait son `plan_lamp_…`, et la carte en recréait une seconde, d'où deux lumières. Corrigé par `planId`, recopié aux cinq endroits (types, scene.ts dans les deux sens, model.ts deux fois, entrée en édition), et verrouillé par `scene.test.mjs`.
+
 ### L'enregistrement avalé
 
 ```ts
