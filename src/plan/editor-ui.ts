@@ -86,8 +86,13 @@ export interface PlanEditorOptions {
   onPreview?: (plan: PlanDoc) => void;
   /** Largeur couverte à gauche, en pixels : la 3D occupe le reste. */
   onLayout: (covered: number) => void;
-  /** Les lampes de Home Assistant, pour en relier une à une lampe posée. */
-  lights?: () => { id: string; name: string }[];
+  /**
+   * Ouvre le sélecteur d'entités d'Owlnest (groupé par étage et par pièce,
+   * avec recherche) pour relier une lampe posée à une entité.
+   */
+  pickEntity?: (current: string | undefined, done: (entityId: string) => void) => void;
+  /** Le nom d'une entité tel que l'utilisateur le connaît, avec sa pièce. */
+  entityLabel?: (entityId: string) => string;
   /** Envoie un meuble importé (GLB, ou OBJ et ses fichiers) et rend son adresse. */
   importFurniture?: (files: File[]) => Promise<string>;
   onClose: () => void;
@@ -2010,23 +2015,18 @@ export class PlanEditor {
     }
     if (c?.light) {
       this.bubble.append(el('div', 'color:#cbd5e1;margin:8px 0 6px;', t('planLampEntity')));
-      const select = el('select', `width:100%;background:${C.chrome2};border:1px solid rgba(255,255,255,0.14);border-radius:9px;color:#fff;padding:8px;font-size:13px;font-family:${FONT};margin-bottom:6px;`);
-      const none = el('option', '', t('planLampNone'));
-      none.value = '';
-      select.append(none);
-      for (const l of this.opts.lights?.() ?? []) {
-        const o = el('option', '', l.name);
-        o.value = l.id;
-        if (l.id === it.entity) o.selected = true;
-        select.append(o);
-      }
-      if (it.entity && !select.value) {
-        const o = el('option', '', it.entity);
-        o.value = it.entity; o.selected = true;
-        select.append(o);
-      }
-      select.addEventListener('change', () => { this.commit(); it.entity = select.value || undefined; this.changed(); });
-      this.bubble.append(select);
+      const row = el('div', 'display:flex;gap:6px;align-items:center;margin-bottom:6px;');
+      const label = it.entity ? (this.opts.entityLabel?.(it.entity) ?? it.entity) : t('planLampNone');
+      const pick = el('button', `flex:1;min-width:0;display:flex;align-items:center;gap:8px;text-align:left;background:${C.chrome2};border:1px solid rgba(255,255,255,0.14);border-radius:9px;color:${it.entity ? '#fff' : C.muted};padding:8px 10px;font-size:13px;font-family:${FONT};cursor:pointer;`);
+      const text = el('span', 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;', label);
+      pick.title = it.entity ?? '';
+      pick.append(icon('bulb', 16), text);
+      pick.addEventListener('click', () => this.opts.pickEntity?.(it.entity, (entity) => {
+        this.commit(); it.entity = entity; this.changed();
+      }));
+      row.append(pick);
+      if (it.entity) row.append(this.iconButton('close', t('planLampUnlink'), () => { this.commit(); it.entity = undefined; this.changed(); }));
+      this.bubble.append(row);
       this.small(t('planLampHelp'));
     }
     this.actions(

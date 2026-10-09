@@ -19,6 +19,7 @@ import { findLeaves, proposeParts, replaceParts } from './import/sh3d-parts';
 import { setLang, langFromLocale, t } from './i18n';
 import { demoModelUrl, isPlaceholder, seedDemoAnchors, type DemoAnchorId } from './demo';
 import { openEntityPicker } from './entities/picker';
+import { cachedRegistry, loadRegistry, areaOf, displayName } from './entities/registry';
 
 /** Clé de traduction du libellé de chaque ancre de démonstration. */
 const DEMO_LABEL: Record<DemoAnchorId, 'demoFloorLamp' | 'demoBedsideLamp' | 'demoKitchenLamp' | 'demoTelevision'> = {
@@ -600,6 +601,8 @@ export class Ha3dFloorplan extends HTMLElement {
     if (this._editMode) this._exitEditMode();
     if (!this._scene) this._scene = emptyScene(sceneId);
     this.overlayContainer.querySelector('#owlnest-demo-banner')?.remove();
+    // Les pièces des entités : chargées d'avance pour nommer les lampes reliées.
+    if (this._hass) void loadRegistry(this._hass).catch(() => {});
     let fromDemo = this._isDemo;
     this._enterFullscreen();
     this._planEditor = new PlanEditor({
@@ -618,10 +621,18 @@ export class Ha3dFloorplan extends HTMLElement {
       onPreview: (plan) => {
         if (this._scene && !fromDemo) this.applyPlan(plan);
       },
-      lights: () => Object.entries(this._hass?.states ?? {})
-        .filter(([id]) => /^(light|switch)\./.test(id))
-        .map(([id, st]) => ({ id, name: String(st.attributes?.friendly_name ?? id) }))
-        .sort((a, b) => a.name.localeCompare(b.name)),
+      // La même liste que pour poser une ancre : par étage et par pièce.
+      pickEntity: (_current, done) => {
+        if (!this._hass || !this.overlayContainer) return;
+        const placed = new Set((this._scene?.plan?.items ?? []).map((i) => i.entity).filter((e): e is string => !!e));
+        openEntityPicker({ container: this.overlayContainer, hass: this._hass, placed, onPick: (entity) => done(entity) });
+      },
+      entityLabel: (entity) => {
+        if (!this._hass) return entity;
+        const reg = cachedRegistry();
+        const area = areaOf(reg, entity)?.name;
+        return `${displayName(reg, this._hass, entity)}${area ? ` · ${area}` : ''}`;
+      },
       importFurniture: async (files) => (await importModel(this._hass as unknown as UploadHass, files, () => {})).url,
       onLayout: (covered) => {
         this._viewShift = covered;
