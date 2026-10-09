@@ -989,6 +989,16 @@ const STRINGS = {
     // Interface de la carte
     demoTitle: 'Demo house',
     edNotLinked: 'Not linked yet',
+    // Interface de la carte
+    tourPlanToolsTitle: 'Draw with the tools',
+    tourPlanToolsText: 'Room draws a rectangle, Wall a free line. Then doors, windows and openings go on the walls.',
+    tourPlanFurnTitle: 'Furnish',
+    tourPlanFurnText: 'Pick a piece in the catalog and drop it in a room. It snaps to the walls and sits on the furniture below.',
+    tourPlanModesTitle: 'Plan, 3D, or both',
+    tourPlanModesText: 'Draw on the plan and watch the 3D follow, side by side or one at a time.',
+    tourPlanSettingsTitle: 'Details and settings',
+    tourPlanSettingsText: 'Select something to change its size, floor or style. With nothing selected: the templates and the general settings.',
+    tourPlanDoneText: 'Every change is saved on its own. Done takes you back to the card.',
   },
 
   fr: {
@@ -1964,6 +1974,16 @@ const STRINGS = {
     // Interface de la carte
     demoTitle: 'Maison de démonstration',
     edNotLinked: 'Pas encore relié',
+    // Interface de la carte
+    tourPlanToolsTitle: 'Dessine avec les outils',
+    tourPlanToolsText: 'Pièce trace un rectangle, Mur une ligne libre. Portes, fenêtres et ouvertures se posent ensuite sur les murs.',
+    tourPlanFurnTitle: 'Meuble',
+    tourPlanFurnText: 'Choisis un meuble dans le catalogue et pose-le dans une pièce. Il se colle aux murs et se pose sur le meuble du dessous.',
+    tourPlanModesTitle: 'Plan, 3D, ou les deux',
+    tourPlanModesText: 'Dessine sur le plan et regarde la 3D suivre, côte à côte ou l\'une après l\'autre.',
+    tourPlanSettingsTitle: 'Détails et réglages',
+    tourPlanSettingsText: 'Choisis un élément pour changer sa taille, son sol ou son style. Sans rien de choisi : les modèles et les réglages généraux.',
+    tourPlanDoneText: 'Chaque changement s\'enregistre tout seul. Terminé te ramène à la carte.',
   },
 } as const;
 

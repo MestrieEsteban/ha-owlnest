@@ -14,6 +14,7 @@
 
 import { t, getLang, type StringKey } from '../i18n';
 import { icon } from '../ui/icons';
+import { Tour, type TourStep } from '../ui/tour';
 import type { PlanDoc, PlanOpening, OpeningKind, PlanWall, FloorMaterial, DoorStyle, WindowStyle, PlanItem } from './types';
 import { OPENING_DEFAULTS, PLAN_COLORS } from './types';
 import {
@@ -227,6 +228,21 @@ export class PlanEditor {
   private tops = new Map<string, string>();
   /** Les réglages généraux restent repliés tant qu'on ne les demande pas. */
   private showSettings = false;
+  private doneBtn: HTMLButtonElement | null = null;
+  private tour: Tour | null = null;
+
+  /** La visite de l'éditeur de plan : les outils, les vues, les réglages, la fin. */
+  startTour() {
+    this.tour ??= new Tour(this.root);
+    const steps: TourStep[] = [
+      { target: () => this.rail, title: 'tourPlanToolsTitle', text: 'tourPlanToolsText', anim: 'plan' },
+      { target: () => this.rail.querySelector<HTMLElement>('[data-tool="furniture"]'), title: 'tourPlanFurnTitle', text: 'tourPlanFurnText', anim: 'add' },
+      { target: () => this.modeBar, title: 'tourPlanModesTitle', text: 'tourPlanModesText', anim: 'views' },
+      { target: () => this.bubble, title: 'tourPlanSettingsTitle', text: 'tourPlanSettingsText', anim: 'gear' },
+      { target: () => this.doneBtn, title: 'tourEdDoneTitle', text: 'tourPlanDoneText', anim: 'full' },
+    ];
+    this.tour.start(steps);
+  }
 
   constructor(private opts: PlanEditorOptions) {
     this.plan = clone(opts.plan);
@@ -273,7 +289,9 @@ export class PlanEditor {
     this.undoBtn = this.iconButton('undo', t('planUndo'), () => this.undo());
     this.redoBtn = this.iconButton('redo', t('planRedo'), () => this.redo());
     const done = this.pill(t('planDone'), () => this.close(), true, 'check');
-    top.append(title, el('div', 'flex:1;'), this.modeBar, el('div', 'flex:1;'), this.undoBtn, this.redoBtn, done);
+    this.doneBtn = done;
+    const help = this.iconButton('help', t('edHelp'), () => this.startTour());
+    top.append(title, el('div', 'flex:1;'), this.modeBar, el('div', 'flex:1;'), help, this.undoBtn, this.redoBtn, done);
 
     const body = el('div', 'flex:1;display:flex;min-height:0;');
     this.rail = el('div', `width:78px;flex-shrink:0;display:flex;flex-direction:column;gap:4px;padding:8px 6px;border-right:1px solid ${C.line};overflow-y:auto;`);
@@ -337,6 +355,7 @@ export class PlanEditor {
     window.removeEventListener('keydown', this.onKey, true);
     this.resize.disconnect();
     this.closePopup();
+    this.tour?.end();
     this.root.remove();
     this.opts.onClose();
   }
@@ -532,6 +551,7 @@ export class PlanEditor {
           : `background:transparent;color:${tool === 'erase' ? '#fca5a5' : '#cbd5e1'};border:1px solid transparent`,
       ].join(';'));
       b.title = `${t(label)} (${key.toUpperCase()})`;
+      b.dataset.tool = tool;
       b.append(icon(ic, 24), el('span', '', t(label)));
       b.addEventListener('click', () => this.setTool(tool));
       if (tool === 'door' || tool === 'furniture' || tool === 'erase') this.rail.append(el('div', `height:1px;background:${C.line};margin:4px 6px;`));
