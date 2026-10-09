@@ -85,4 +85,3 @@ Tout le français est au **« tu »** depuis le 9 octobre 2026, et chaque texte 
 ## Reste à faire
 
 - La simulation météo de l'onglet Ambiance garde son ancien style, agrandi (`zoom: 1.15`), avec des icônes au trait.
-- La simulation de l'onglet Ambiance aussi (`zoom: 1.15`).
