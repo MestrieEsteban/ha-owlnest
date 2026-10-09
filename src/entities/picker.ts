@@ -21,6 +21,7 @@ import {
   type Registry,
 } from './registry';
 import { makeDraggable, type WindowPos } from '../card/draggable';
+import { onHass } from './live';
 
 export type GroupMode = 'area' | 'device' | 'domain';
 
@@ -100,7 +101,11 @@ const CSS = {
 let pickerPos: WindowPos | null = null;
 
 export function openEntityPicker(opts: PickerOptions): () => void {
-  const { container, hass, placed = new Set(), onPick, onPickNone, onCancel } = opts;
+  const { container, placed = new Set(), onPick, onPickNone, onCancel } = opts;
+  // Remplacé à chaque changement d'état : la liste affiche l'état en direct.
+  let hass = opts.hass;
+  /** Mise à jour de l'état affiché, par ligne. */
+  const live = new Map<string, () => void>();
   const multi = opts.multi === true && !!opts.onPickMany;
   /** Selection en cours, en mode multiple. */
   const chosen = new Set<string>();
@@ -202,6 +207,7 @@ export function openEntityPicker(opts: PickerOptions): () => void {
   const close = () => {
     if (closed) return;
     closed = true;
+    stopLive();
     document.removeEventListener('keydown', onKey, true);
     if (panel.open) panel.close();
     panel.remove();
@@ -321,6 +327,7 @@ export function openEntityPicker(opts: PickerOptions): () => void {
     const shown = q ? rows.filter((r) => r.haystack.includes(q)) : rows;
 
     list.innerHTML = '';
+    live.clear();
     flat = [];
     cursor = -1;
 
@@ -359,6 +366,14 @@ export function openEntityPicker(opts: PickerOptions): () => void {
     const on = desc.isOn(st);
     const hex = '#' + desc.color(st).toString(16).padStart(6, '0');
     const isPlaced = placed.has(row.entityId);
+    live.set(row.entityId, () => {
+      const s2 = hass.states[row.entityId];
+      const on2 = desc.isOn(s2);
+      const hex2 = '#' + desc.color(s2).toString(16).padStart(6, '0');
+      icon.style.color = on2 ? hex2 : '#556070';
+      state.style.color = on2 ? hex2 : '#64748b';
+      state.textContent = desc.stateText(s2);
+    });
 
     const el = document.createElement('div');
     el.dataset.entity = row.entityId;
@@ -473,6 +488,12 @@ export function openEntityPicker(opts: PickerOptions): () => void {
   document.addEventListener('keydown', onKey, true);
 
   search.addEventListener('input', () => { query = search.value; render(); });
+
+  // L'état suit Home Assistant tant que la liste est ouverte.
+  const stopLive = onHass((h) => {
+    hass = h;
+    for (const update of live.values()) update();
+  }, 500);
 
   // ── Démarrage ────────────────────────────────────────────────────────────
   rebuildFilters();

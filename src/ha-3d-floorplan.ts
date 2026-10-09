@@ -25,6 +25,7 @@ import { setLang, langFromLocale, t, type StringKey } from './i18n';
 import { demoModelUrl, isPlaceholder, seedDemoAnchors, type DemoAnchorId } from './demo';
 import { openEntityPicker } from './entities/picker';
 import { cachedRegistry, loadRegistry, areaOf, displayName } from './entities/registry';
+import { publishHass } from './entities/live';
 
 /** Clé de traduction du libellé de chaque ancre de démonstration. */
 const DEMO_LABEL: Record<DemoAnchorId, 'demoFloorLamp' | 'demoBedsideLamp' | 'demoKitchenLamp' | 'demoTelevision'> = {
@@ -358,6 +359,7 @@ export class Ha3dFloorplan extends HTMLElement {
   set hass(hass: Hass) {
     this._hass = hass;
     this._editor?.setHass(hass);
+    publishHass(hass);
 
     // Tant qu'aucune scene n'a choisi de langue, on suit celle du frontend :
     // sans cela un utilisateur francophone lirait l'anglais jusqu'a decouvrir

@@ -10,6 +10,7 @@ import { icon } from '../ui/icons';
 import { Tour, type TourStep } from '../ui/tour';
 import { EDITOR_STYLES, BAR_H, PANEL_W } from '../ui/editor-styles';
 import { loadRegistry, cachedRegistry, areaOf } from '../entities/registry';
+import { onHass } from '../entities/live';
 import { openEntityPicker } from '../entities/picker';
 import { deleteScene, summarizeScenes } from '../scene';
 import { PARTS_ENABLED } from '../parts';
@@ -434,6 +435,14 @@ export class EditPanel {
   private _popmenu: HTMLElement | null = null;
   private _helloEl: HTMLElement | null = null;
   private _registryAsked = false;
+  /**
+   * Ce qui suit l'état de Home Assistant pendant l'édition : les lignes des
+   * listes (mises à jour sur place, sans tout reconstruire) et la fiche ouverte.
+   */
+  private _liveRows = new Map<string, () => void>();
+  private _livePartRows = new Map<string, () => void>();
+  private _liveForm: (() => void) | null = null;
+  private _stopLive: (() => void) | null = null;
   /** La 3D se décale de la largeur du panneau ancré à droite (0 : rien ne la couvre). */
   onDock?: (px: number) => void;
 
@@ -470,6 +479,12 @@ export class EditPanel {
 
     this._saveStatus = 'saved';
     this.buildAnchorList();
+    this._stopLive?.();
+    this._stopLive = onHass(() => {
+      for (const update of this._liveRows.values()) update();
+      for (const update of this._livePartRows.values()) update();
+      this._liveForm?.();
+    }, 400);
     this._tour = new Tour(this.overlayContainer);
     this._widthObs = new ResizeObserver(() => this._applyWidth());
     this._widthObs.observe(this.cardContainer);
@@ -715,6 +730,11 @@ export class EditPanel {
   }
 
   hideToolbar() {
+    this._stopLive?.();
+    this._stopLive = null;
+    this._liveRows.clear();
+    this._livePartRows.clear();
+    this._liveForm = null;
     this._closePartModal?.();
     this._closePopmenu();
     this._tour?.end();
@@ -987,6 +1007,7 @@ export class EditPanel {
 
       const renderRows = () => {
         list.innerHTML = '';
+        this._liveRows.clear();
         if (anchors.size === 0) {
           const empty = document.createElement('div');
           empty.className = 'ow-empty';
@@ -1200,6 +1221,13 @@ export class EditPanel {
     sub.textContent = st ? stateLabel(a.entity, st.state, st.attributes ?? {}) : anchorSubtitle(a);
     sub.title = a.entity;
     col.append(name, sub);
+    if (a.entity) {
+      this._liveRows.set(key, () => {
+        const s2 = this.getHass()?.states[a.entity];
+        tile.classList.toggle('ow-lit', domain === 'light' && s2?.state === 'on');
+        sub.textContent = s2 ? stateLabel(a.entity, s2.state, s2.attributes ?? {}) : anchorSubtitle(a);
+      });
+    }
     const btns = document.createElement('span');
     btns.className = 'ow-rowbtns';
     const eye = document.createElement('button');
@@ -2080,7 +2108,8 @@ export class EditPanel {
    * Le capteur d'un ouvrant : un grand bouton qui montre ce qui est relié (nom,
    * état) et ouvre la liste des entités. Plus d'identifiant à taper.
    */
-  private _sensorPicker(value: string, onChange: (entityId: string) => void): HTMLElement {
+  private _sensorPicker(value: string, onChange: (entityId: string) => void): { el: HTMLElement; refresh: () => void } {
+    let current = value;
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'ow-picker';
@@ -2117,11 +2146,11 @@ export class EditPanel {
       openEntityPicker({
         container: this.overlayContainer,
         hass,
-        onPick: (entityId) => { paint(entityId); onChange(entityId); },
+        onPick: (entityId) => { current = entityId; paint(entityId); onChange(entityId); },
       });
     });
     paint(value);
-    return btn;
+    return { el: btn, refresh: () => paint(current) };
   }
 
   private _buildPropsSection(container: HTMLDivElement, key: string, anchor: EditableAnchor, goBack?: () => void) {
@@ -3744,6 +3773,7 @@ export class EditPanel {
 
   private _fillPartsList(pane: HTMLElement) {
     pane.innerHTML = '';
+    this._livePartRows.clear();
     const parts = this.getParts?.() ?? [];
     const hass = this.getHass();
 
@@ -3816,12 +3846,15 @@ export class EditPanel {
         const tile = document.createElement('span');
         tile.className = 'ow-tile';
         const st = part.entity ? hass?.states[part.entity] : undefined;
-        let frac = 0;
-        if (st) {
-          frac = openFraction(part.entity, st.state, st.attributes, part.openWhen);
-          if (part.invert) frac = 1 - frac;
-        }
-        if (frac > 0.5) tile.style.cssText = 'background:color-mix(in srgb, #34d399 22%, transparent);color:#34d399;';
+        const paintTile = (s2: typeof st) => {
+          let frac = 0;
+          if (s2) {
+            frac = openFraction(part.entity, s2.state, s2.attributes, part.openWhen);
+            if (part.invert) frac = 1 - frac;
+          }
+          tile.style.cssText = frac > 0.5 ? 'background:color-mix(in srgb, #34d399 22%, transparent);color:#34d399;' : '';
+        };
+        paintTile(st);
         tile.append(icon(PART_ICON[part.motion] ?? 'door', 18));
         const col = document.createElement('span');
         col.className = 'ow-nm';
@@ -3834,7 +3867,15 @@ export class EditPanel {
           sub.style.color = '#fbbf24';
         } else {
           const sensor = typeof friendly === 'string' && friendly !== name.textContent ? `${friendly} · ` : '';
-          sub.textContent = st ? `${sensor}${stateLabel(part.entity, st.state, st.attributes ?? {})}` : `${part.entity} · ${t('partEntityUnknown')}`;
+          const paintSub = (s2: typeof st) => {
+            sub.textContent = s2 ? `${sensor}${stateLabel(part.entity, s2.state, s2.attributes ?? {})}` : `${part.entity} · ${t('partEntityUnknown')}`;
+          };
+          paintSub(st);
+          this._livePartRows.set(part.id, () => {
+            const s2 = this.getHass()?.states[part.entity];
+            paintTile(s2);
+            paintSub(s2);
+          });
         }
         col.append(name, sub);
         const btns = document.createElement('span');
@@ -4096,14 +4137,17 @@ export class EditPanel {
 
     // ── Capteur ───────────────────────────────────────────────────────────
     const secEntity = card(t('partSecEntity'), 'sensor');
-    secEntity.inner.appendChild(this._sensorPicker(draft.entity, (id) => {
+    const sensor = this._sensorPicker(draft.entity, (id) => {
       draft.entity = id;
       refreshName();
       // L'entité change : les états proposés ne sont plus les mêmes.
       draft.openWhen = undefined;
       rebuildStates();
       apply();
-    }));
+    });
+    secEntity.inner.appendChild(sensor.el);
+    // « Ce qui bouge » juste après le capteur : c'est ce qu'on vérifie en premier.
+    const secWhat = card(t('partSecWhat'), 'cube', { key: 'what', open: false });
 
     // Ce que la carte lit de cette entité : sans ça, une entité mal
     // interprétée ressemble à une panne.
@@ -4475,8 +4519,6 @@ export class EditPanel {
 
     // ── Couleurs selon l'état (repliée) ───────────────────────────────────
     const secLook = card(t('partSecLook'), 'brush', { key: 'look', open: false });
-    // ── Ce qui bouge (repliée) : l'objet du modèle et ce qui le suit ──────
-    const secWhat = card(t('partSecWhat'), 'cube', { key: 'what', open: false });
 
     // Même contrôle que la couleur d'une ancre ; le bouton revient au défaut,
     // qui est ici l'absence de teinte.
@@ -4681,6 +4723,7 @@ export class EditPanel {
       if (this._closePartModal === flushAndClose) this._closePartModal = null;
       if (this._discardPartModal === close) { this._discardPartModal = null; this._partModalId = null; }
       closed = true;
+      if (this._liveForm === live) this._liveForm = null;
       form.remove();
       if (this._partsBody) this._fillPartsList(this._partsBody);
     };
@@ -4704,6 +4747,8 @@ export class EditPanel {
     this._closePartModal = flushAndClose;
     this._discardPartModal = close;
     this._partModalId = draft.id;
+    const live = () => { refreshReadout(); sensor.refresh(); };
+    this._liveForm = live;
 
     back.addEventListener('click', () => flushAndClose());
     cancelBtn.addEventListener('click', () => { void cancel(); });
