@@ -19,20 +19,24 @@ Owlnest 1.x montrait la maison. Owlnest 2.0 doit **servir tous les jours sur une
 - [x] État en direct dans l'éditeur (fiche d'un ouvrant, listes, sélecteur d'entités) — `entities/live.ts`.
 - [x] « Ce qui bouge » en deuxième place dans la fiche d'un ouvrant.
 - [x] **Module Pièces** : un bouton par pièce du plan, la caméra vole au-dessus d'elle, avec le nombre de lampes allumées dedans — `plan/room-views.ts`.
-
 - [x] **Les pastilles au doigt** : nom au toucher, réglage « Noms des pastilles ».
 - [x] **La fiche d'un appareil** refaite comme celle des ouvrants.
 - [x] **L'éditeur de règles** dans le panneau élargi ; liste avec interrupteurs.
 - [x] **Ambiance et Réglages** au nouveau style, sans le zoom de secours.
 - [x] **Pastilles plus petites au loin.**
+- [x] **Toucher deux fois une pièce dans la 3D** pour y aller (deux fois dehors, ou sur la même, pour revenir).
+- [x] **Panneau de la pièce** : ses appareils avec un interrupteur, « Tout éteindre », la température dans le bouton de la pièce.
+- [x] **Roue d'actions et visibilité conditionnelle** au nouveau style : plus aucun zoom de secours dans la fiche d'un appareil.
+- [x] **Premiers pas** dans l'éditeur : une pastille de progression, cinq étapes qui se cochent seules, chacune mène au bon endroit.
+- [x] **Carte étroite** : les modules face à face se partagent la ligne (`:has()` et requêtes de conteneur).
+- [x] **Plus de tiret cadratin** dans les textes de l'interface ; « ancre » remplacé par « appareil » partout.
 
 ## La suite, dans l'ordre
 
-1. **Toucher deux fois une pièce dans la 3D** pour y aller (et deux fois dehors pour revenir).
-2. **L'éditeur de la roue d'actions** et la **visibilité conditionnelle** au nouveau style.
+1. Relire tout le parcours sur le vrai Home Assistant d'Esteban (rien n'y a encore été essayé).
+2. Étages dans l'import Sweet Home 3D.
 
 ## Plus tard
 
-- Étages dans l'import Sweet Home 3D.
-- Toucher une pièce dans la 3D pour y aller.
-- Pièces du plan reliées aux pièces de Home Assistant (températures par pièce).
+- Pièces du plan reliées aux pièces de Home Assistant (appareils d'une pièce HA proposés dans le panneau de la pièce).
+- Les morceaux de phrase des règles au nouveau style (aujourd'hui agrandis par `.ow-rule-body`).

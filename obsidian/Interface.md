@@ -63,6 +63,10 @@ Mémoire par appareil : `owlnest_tour_seen`, `owlnest_tour_editor_seen`.
 - **Module Pièces** : un bouton par pièce du plan (de la plus grande à la plus petite, homonymes numérotés), avec le nombre de lampes allumées. La caméra vole au-dessus (`plan/room-views.ts`, testé). Défaut : en haut à gauche ; l'état passe en haut à droite.
 - **Noms des pastilles** : au toucher, et en permanence au choix (`.ow-names .ow-pin-label`). Les emplacements à relier de la démo gardent leur « + » et leur nom (`AnchorOverlay.setGlyph`).
 - **Profondeur** : pastilles plus petites et plus pâles au fond.
+- **Double toucher** sur une pièce de la 3D : la caméra y va. La pièce se trouve en coupant le rayon de la caméra avec le sol (`_modelBox.min.y`), sans lancer de rayon sur les objets.
+- **Panneau de la pièce** : ouvert quand une pièce est montrée. Appareils dont la pastille tombe dans le contour, interrupteur pour ceux qui se basculent, « Tout éteindre ». **Décision** : commander une lampe depuis la carte reste dans l'esprit d'Owlnest (la pastille le faisait déjà) ; ce sont les *règles* qui ne pilotent que la vue.
+- **Premiers pas** : `SetupStep` dans `edit-panel.ts`, étapes lues sur la scène par la carte (`_setupSteps`).
+- **Carte étroite** : `.ow-ui` est un conteneur ; deux modules face à face se partagent la ligne, l'état se réduit sous 640 px, les vues du bas montent au-dessus des coins.
 
 ## Langue
 
@@ -78,5 +82,5 @@ Tout le français est au **« tu »** depuis le 9 octobre 2026, et chaque texte 
 
 ## Reste à faire
 
-- L'éditeur de la roue d'actions, la visibilité conditionnelle et les morceaux de phrase des règles gardent leurs anciens styles, agrandis (`.ow-legacy`, `.ow-rule-body`).
+- Les morceaux de phrase des règles gardent leurs anciens styles, agrandis (`.ow-rule-body`). La roue d'actions et la visibilité conditionnelle sont refaites.
 - La simulation de l'onglet Ambiance aussi (`zoom: 1.15`).
