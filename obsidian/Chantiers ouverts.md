@@ -11,13 +11,13 @@ tags: [backlog]
 
 ~~**L'échelle en centimètres n'est pas absorbée partout.**~~ **Refermé en août 2026.** Tout ce qui dépendait de l'unité se déduit maintenant de l'envergure du modèle : vignettes de caméra, limites d'orbite, densité de brouillard, plans de coupe, portée et intensité des lumières. Voir [[Echelle du modele]].
 
-**Les étiquettes sont invisibles au toucher.** L'infobulle est au survol, et une tablette murale n'a pas de survol. **Approche non tranchée** — la question a été posée plusieurs fois sans réponse.
+~~**Les étiquettes sont invisibles au toucher.**~~ **Refermé le 10 octobre 2026** : toucher une pastille montre son nom 2,5 s, et « Personnaliser » propose de toujours afficher les noms. L'appui long ouvrait déjà les détails. Voir [[Interface]].
 
 **`scene_id` en `localStorage`.** Comportement bancal au changement de scène.
 
 ## Améliorations identifiées
 
-- **Taille et opacité des overlays selon la distance.** Rend la profondeur lisible sans masquer quoi que ce soit, et sans lancer de rayon : une simple division. C'est le remplaçant de l'occlusion, pas un ajout.
+- ~~**Taille et opacité des overlays selon la distance.**~~ **Fait le 10 octobre 2026** : racine du rapport entre la distance du point visé et celle de la pastille, bornée entre 0,72 et 1,15 ; l'opacité descend jusqu'à 0,62 au fond. Propriété CSS `scale` (elle se compose avec le `transform` du survol).
 - Regroupement par pièce, ce qui permettrait de **retirer `cluster_threshold`**.
 - Le même message « aucune vue enregistrée » pour l'action `go_to_view` que celui fait pour `highlight_anchor`. Voir [[Regles]].
 

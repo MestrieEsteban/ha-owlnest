@@ -20,13 +20,16 @@ Owlnest 1.x montrait la maison. Owlnest 2.0 doit **servir tous les jours sur une
 - [x] « Ce qui bouge » en deuxième place dans la fiche d'un ouvrant.
 - [x] **Module Pièces** : un bouton par pièce du plan, la caméra vole au-dessus d'elle, avec le nombre de lampes allumées dedans — `plan/room-views.ts`.
 
+- [x] **Les pastilles au doigt** : nom au toucher, réglage « Noms des pastilles ».
+- [x] **La fiche d'un appareil** refaite comme celle des ouvrants.
+- [x] **L'éditeur de règles** dans le panneau élargi ; liste avec interrupteurs.
+- [x] **Ambiance et Réglages** au nouveau style, sans le zoom de secours.
+- [x] **Pastilles plus petites au loin.**
+
 ## La suite, dans l'ordre
 
-1. **Les pastilles au doigt** : les noms affichés en permanence au choix (réglage « Noms des pastilles »), appui long qui ouvre les détails. Referme le bug « étiquettes invisibles au toucher » de [[Chantiers ouverts]].
-2. **La fiche d'un appareil** refaite comme celle des ouvrants : cartes, boutons côte à côte, plus d'identifiant à taper.
-3. **L'éditeur de règles** dans le panneau, en phrase : « Quand … alors … ».
-4. **Ambiance et Réglages** au nouveau style, sans le zoom de secours.
-5. **Pastilles plus petites au loin** (profondeur lisible sans occlusion), voir [[Chantiers ouverts]].
+1. **Toucher deux fois une pièce dans la 3D** pour y aller (et deux fois dehors pour revenir).
+2. **L'éditeur de la roue d'actions** et la **visibilité conditionnelle** au nouveau style.
 
 ## Plus tard
 

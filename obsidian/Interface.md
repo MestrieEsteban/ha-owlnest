@@ -51,6 +51,19 @@ Le contenu repris tel quel de l'ancien inspecteur (fiches des appareils, liste d
 
 Mémoire par appareil : `owlnest_tour_seen`, `owlnest_tour_editor_seen`.
 
+## Fiches refaites (nuit du 9 au 10 octobre)
+
+- **Appareil** : en-tête fixe (retour, icône, nom), cartes « Ce que c'est » (type en boutons, grand bouton de choix d'appareil, nom), « Apparence » (icône, couleur, vignette, précision en exemples « 18 / 17,6 / 17,58 »), « Lumière » (intensité, tuiles Ambiante / Spot / Rayon, orientation), « Au toucher », « Visibilité » repliée, Dupliquer / Retirer.
+- **Règle** : dans le panneau, élargi à 470 px le temps de l'édition (la 3D se recentre), avec le même pied que les autres fiches. La liste des règles a un interrupteur par règle.
+- **Ambiance et Réglages** : sections en cartes, libellés en 12 px, champs et boutons au nouveau style. Plus de zoom.
+- **État en direct** : `entities/live.ts`. La carte publie chaque `hass`, les écrans ouverts s'abonnent (fiche d'ouvrant, listes, sélecteur d'entités) au plus toutes les 300 à 500 ms.
+
+## La carte (nuit du 9 au 10 octobre)
+
+- **Module Pièces** : un bouton par pièce du plan (de la plus grande à la plus petite, homonymes numérotés), avec le nombre de lampes allumées. La caméra vole au-dessus (`plan/room-views.ts`, testé). Défaut : en haut à gauche ; l'état passe en haut à droite.
+- **Noms des pastilles** : au toucher, et en permanence au choix (`.ow-names .ow-pin-label`). Les emplacements à relier de la démo gardent leur « + » et leur nom (`AnchorOverlay.setGlyph`).
+- **Profondeur** : pastilles plus petites et plus pâles au fond.
+
 ## Langue
 
 Tout le français est au **« tu »** depuis le 9 octobre 2026, et chaque texte a son anglais. Un nouveau texte s'ajoute dans les deux langues (`i18n.test.mjs` vérifie que les clés correspondent).
@@ -65,5 +78,5 @@ Tout le français est au **« tu »** depuis le 9 octobre 2026, et chaque texte 
 
 ## Reste à faire
 
-- Réécrire les fiches héritées dans les composants `ow-` au lieu du zoom.
-- Les noms des pastilles affichés en permanence (prévu dans la maquette, pas encore dans la carte).
+- L'éditeur de la roue d'actions, la visibilité conditionnelle et les morceaux de phrase des règles gardent leurs anciens styles, agrandis (`.ow-legacy`, `.ow-rule-body`).
+- La simulation de l'onglet Ambiance aussi (`zoom: 1.15`).
