@@ -55,3 +55,7 @@ Mesuré dans le banc : une ancre posée au-dessus du canapé retombe au même en
 - Chaque modèle de meuble est envoyé à l'intégration (un envoi par variante). MaisonHA : 19 envois, 3,2 Mo. Un modèle de plus de 8 000 triangles est allégé.
 
 Voir [[Chantiers ouverts]] : les murs bas mis de côté attendaient justement ces données.
+
+## Plusieurs niveaux (10 octobre 2026)
+
+L'éditeur n'a pas d'étages : un seul niveau est importé. Depuis le 10 octobre, un fichier à plusieurs niveaux **demande lequel** (`levelChoices` liste ceux qui ont des murs, `homeToPlan(home, names, levelId)` importe le choisi). Réimporter le fichier permet de passer à un autre niveau. Voir [[Owlnest 2.0]].

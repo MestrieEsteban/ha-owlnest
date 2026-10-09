@@ -34,7 +34,7 @@ Owlnest 1.x montrait la maison. Owlnest 2.0 doit **servir tous les jours sur une
 ## La suite, dans l'ordre
 
 1. Relire tout le parcours sur le vrai Home Assistant d'Esteban (rien n'y a encore été essayé).
-2. Étages dans l'import Sweet Home 3D.
+2. Les vrais étages (plusieurs niveaux dans le plan, un sélecteur sur la carte). En attendant, l'import d'un fichier à plusieurs niveaux demande lequel importer (`levelChoices`).
 
 ## Plus tard
 
