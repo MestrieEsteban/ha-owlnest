@@ -74,7 +74,11 @@ function patch(material: THREE.Material, u: CutawayUniforms) {
    * propre, le moteur ressert le programme d'origine : les shaders sont bien
    * modifiés, mais l'image ne change pas. Symptôme parfaitement trompeur.
    */
-  m.customProgramCacheKey = () => 'owlnest-cutaway';
+  // On ajoute à la clé au lieu de la remplacer : d'autres retouches du même
+  // matériau (les murs bas) ont la leur, et l'écraser ressortirait leur
+  // programme d'origine.
+  const previousKey = m.customProgramCacheKey.bind(m);
+  m.customProgramCacheKey = () => `${previousKey()}|owlnest-cutaway`;
 
   const previous = m.onBeforeCompile;
   m.onBeforeCompile = (shader, renderer) => {

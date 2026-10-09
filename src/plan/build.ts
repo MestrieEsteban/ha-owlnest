@@ -19,6 +19,7 @@ import { PLAN_COLORS } from './types';
 import { type Pt, sub, add, mul, dot, norm, perp, clipAlong, area, pointInPolygon } from './geometry';
 import { wallEnds, heightOf, thicknessOf, openingFits, faces, wallLength, isBoundary, type Face } from './graph';
 import { wallFootprints } from './footprint';
+import { tagWall } from './low-walls';
 import { floorTexture, TEXTURE_METERS } from './textures';
 
 /** Préfixe des vantaux construits depuis le plan : `plan_leaf_<ouverture>_<n>`. */
@@ -182,6 +183,7 @@ function buildWall(
     // Mêmes matières des deux côtés : un seul maillage.
     const split = left === right && left === core ? () => 0 : side;
     for (const [g, geo] of prismFaces(poly, p.y0, p.y1, split)) {
+      tagWall(geo, index);
       group.add(mesh(`wall_${index}_${k}${g ? `_${g}` : ''}`, geo, mats[g]));
     }
   });
@@ -349,8 +351,14 @@ export function buildPlan(plan: PlanDoc): THREE.Group {
     if (foot && wallLength(plan, w) > 1e-3) buildWall(plan, w, foot, i, pal, rooms, root);
   });
   for (const o of plan.openings) {
-    const w = plan.walls.find((q) => q.id === o.wall);
-    if (w && !isBoundary(plan, w) && openingFits(plan, o)) buildOpening(plan, o, pal, root);
+    const i = plan.walls.findIndex((q) => q.id === o.wall);
+    const w = plan.walls[i];
+    if (!w || isBoundary(plan, w) || !openingFits(plan, o)) continue;
+    buildOpening(plan, o, pal, root);
+    // Les portes et fenêtres d'un mur qui s'abaisse sont coupées avec lui (voir low-walls.ts).
+    root.getObjectByName(`plan_opening_${o.id}`)?.traverse((m) => {
+      if ((m as THREE.Mesh).isMesh) tagWall((m as THREE.Mesh).geometry, i, true);
+    });
   }
   return root;
 }

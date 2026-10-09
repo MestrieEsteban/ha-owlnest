@@ -19,14 +19,15 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { WALL_ATTR, wallItemCode } from './plan/low-walls';
 
 /** En dessous, fusionner ne rapporte rien. */
 const MIN_GROUP = 2;
 
-/** Un objet qui appartient à un ouvrant, ou que la carte a ajouté elle-même. */
+/** Un objet qui appartient à un ouvrant, que la carte a ajouté elle-même, ou qu'elle cache seul (murs bas). */
 function isMoving(o: THREE.Object3D, root: THREE.Object3D): boolean {
   for (let n: THREE.Object3D | null = o; n && n !== root; n = n.parent) {
-    if (n.userData.owlnestPartId || n.userData.owlnestHelper || n.userData.owlnestBatch) return true;
+    if (n.userData.owlnestPartId || n.userData.owlnestHelper || n.userData.owlnestBatch || n.userData.owlnestLive) return true;
   }
   return false;
 }
@@ -50,6 +51,14 @@ function signature(g: THREE.BufferGeometry): string {
   const attrs = Object.keys(g.attributes).sort()
     .map((k) => `${k}:${g.attributes[k].itemSize}:${(g.attributes[k] as THREE.BufferAttribute).normalized ? 'n' : ''}`);
   return `${attrs.join(',')}|${g.index ? 'i' : 'n'}`;
+}
+
+/** Le mur auquel un meuble est adossé, pour les murs bas (voir plan/low-walls.ts). */
+function wallItemOf(o: THREE.Object3D, root: THREE.Object3D): number | undefined {
+  for (let n: THREE.Object3D | null = o; n && n !== root; n = n.parent) {
+    if (n.userData.owlnestWallItem !== undefined) return n.userData.owlnestWallItem as number;
+  }
+  return undefined;
 }
 
 export class StaticBatch {
@@ -76,7 +85,10 @@ export class StaticBatch {
       if (Array.isArray(mesh.material) || mesh.morphTargetInfluences?.length) return;
       if (isMoving(mesh, root)) return;
       const m = mesh.material as THREE.Material;
-      const key = `${look(m)}|${mesh.castShadow ? 1 : 0}${mesh.receiveShadow ? 1 : 0}|${signature(mesh.geometry)}`;
+      // Un meuble adossé à un mur reçoit le numéro de son mur : il disparaît avec
+      // lui dans le shader, sans quitter le regroupement.
+      const wall = wallItemOf(mesh, root) !== undefined ? '|w' : '';
+      const key = `${look(m)}|${mesh.castShadow ? 1 : 0}${mesh.receiveShadow ? 1 : 0}|${signature(mesh.geometry)}${wall}`;
       const list = groups.get(key);
       if (list) list.push(mesh);
       else groups.set(key, [mesh]);
@@ -88,6 +100,10 @@ export class StaticBatch {
       const geoms = meshes.map((mesh) => {
         const g = mesh.geometry.clone();
         g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(toRoot, mesh.matrixWorld));
+        const wall = wallItemOf(mesh, root);
+        if (wall !== undefined) {
+          g.setAttribute(WALL_ATTR, new THREE.BufferAttribute(new Float32Array(g.getAttribute('position').count).fill(wallItemCode(wall)), 1));
+        }
         return g;
       });
       const merged = mergeGeometries(geoms, false);

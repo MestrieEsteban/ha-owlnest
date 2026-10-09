@@ -52,6 +52,7 @@ import { partIndexOf, partFrame, guessPart, verticalAxis } from './parts';
 import { separateCoplanarSlabs } from './coplanar';
 import { StaticBatch } from './batching';
 import { buildPlan } from './plan/build';
+import { LowWalls } from './plan/low-walls';
 import { syncPlanParts } from './plan/parts';
 import { emptyPlan, type PlanDoc, type OpeningKind } from './plan/types';
 import { PlanEditor } from './plan/editor-ui';
@@ -123,6 +124,9 @@ export class Ha3dFloorplan extends HTMLElement {
   private _hudLeft: HTMLDivElement | null = null;
   private _hudSep: HTMLDivElement | null = null;
   private _hudRight: HTMLDivElement | null = null;
+  /** Murs qui s'abaissent devant la caméra (plans seulement), et son bouton. */
+  private _lowWalls = new LowWalls();
+  private _lowWallsBtn: HTMLButtonElement | null = null;
   private _hudViews: HTMLDivElement | null = null;
   private _lockOpenIcon = '🔓';
   private _lockClosedIcon = '🔒';
@@ -504,6 +508,7 @@ export class Ha3dFloorplan extends HTMLElement {
       // Les meubles arrivent après la fusion des objets immobiles : on la
       // refait pour qu'ils en profitent, sinon chacun coûte ses propres appels.
       this._batch?.unmerge();
+      this._lowWalls.attachItems(plan, root);
       this._mergeStatic();
       this._syncLampAnchors(root, plan);
       this._requestShadowUpdate();
@@ -567,6 +572,10 @@ export class Ha3dFloorplan extends HTMLElement {
 
   /** Bornes, ouvrants, ombres et rendu, après une (re)construction du plan. */
   private _afterPlanBuilt(root: THREE.Object3D) {
+    if (this._scene?.plan) {
+      this._lowWalls.setPlan(this._scene.plan, root);
+      this._lowWalls.instrument(root);
+    }
     this._modelBox.setFromObject(root);
     const span = this._modelBox.getSize(new THREE.Vector3());
     this._modelSpan = Math.max(span.x, span.y, span.z, 1e-3);
@@ -935,6 +944,9 @@ export class Ha3dFloorplan extends HTMLElement {
     this._hudRight = hudRight;
     bar.appendChild(hudRight);
 
+    // Murs bas : seulement pour un plan, où l'on sait quel meuble est contre quel mur.
+    this._lowWallsBtn = this._makeLowWallsBtn();
+    hudRight.appendChild(this._lowWallsBtn);
     if (ui.show_lock !== false) {
       this.lockBtn = this._makeLockBtn();
       hudRight.appendChild(this.lockBtn);
@@ -1768,6 +1780,41 @@ export class Ha3dFloorplan extends HTMLElement {
     overlay.appendChild(inputRow);
     overlay.appendChild(hint);
     this.overlayContainer?.appendChild(overlay);
+  }
+
+  private _makeLowWallsBtn(): HTMLButtonElement {
+    const btn = document.createElement('button');
+    btn.style.cssText = this._hudBtnStyle();
+    btn.textContent = '\u{1F9F1}';
+    btn.style.display = 'none';
+    try { this._lowWalls.enabled = localStorage.getItem(LOW_WALLS_KEY) === '1'; } catch { /* stockage bloqué */ }
+    btn.addEventListener('click', (e) => { e.stopPropagation(); this._toggleLowWalls(); });
+    this._paintLowWallsBtn(btn);
+    return btn;
+  }
+
+  private _paintLowWallsBtn(btn = this._lowWallsBtn) {
+    if (!btn) return;
+    btn.title = this._lowWalls.enabled ? t('lowWallsOff') : t('lowWallsOn');
+    btn.style.boxShadow = this._lowWalls.enabled ? '0 0 0 2px rgba(125,211,252,0.8)' : 'none';
+    btn.style.display = this._plan ? '' : 'none';
+  }
+
+  /** Murs bas : les meubles adossés sortent du regroupement le temps du mode. */
+  private _toggleLowWalls() {
+    this._lowWalls.enabled = !this._lowWalls.enabled;
+    try { localStorage.setItem(LOW_WALLS_KEY, this._lowWalls.enabled ? '1' : '0'); } catch { /* stockage bloqué */ }
+    const root = this._modelRoot, plan = this._plan;
+    if (root && plan) {
+      this._batch?.unmerge();
+      root.traverse((o) => { if (o.name.startsWith('plan_item_')) { delete o.userData.owlnestWallItem; o.visible = true; } });
+      if (!this._lowWalls.enabled) this._lowWalls.reset();
+      this._lowWalls.attachItems(plan, root);
+      this._mergeStatic();
+    }
+    this._paintLowWallsBtn();
+    this._requestShadowUpdate();
+    this._requestRender();
   }
 
   private _makeLockBtn(): HTMLButtonElement {
@@ -2839,6 +2886,12 @@ export class Ha3dFloorplan extends HTMLElement {
 
     const moved = this.controls?.update() ?? false;
     if (moved) this._dirty = true;
+    // Murs bas : ceux devant le point visé descendent, en douceur.
+    if (this._plan && this._modelRoot && this.camera && this.controls
+      && this._lowWalls.update(this.camera, this.controls.target, this._modelRoot, dt)) {
+      this._dirty = true;
+      this._requestShadowUpdate();
+    }
     // L'effacement à travers les murs dépend du point de vue : il doit suivre
     // la caméra, pas seulement les réglages.
     if (moved || this._camAnimTo) this._updateXray();
@@ -3292,6 +3345,8 @@ export class Ha3dFloorplan extends HTMLElement {
   private _mergeStatic() {
     if (!this._batch || this._editMode) return;
     const n = this._batch.merge();
+    // Les regroupements neufs portent les murs : leur matière et leur ombre suivent les murs bas.
+    if (this._modelRoot) this._lowWalls.instrument(this._modelRoot);
     if (n) {
       console.debug(`[Owlnest] ${n} static objects merged`);
       this._requestShadowUpdate();
@@ -3502,6 +3557,11 @@ export class Ha3dFloorplan extends HTMLElement {
     this.controls!.update();
     this.scene.add(model);
     this._modelRoot = model;
+    if (plan) {
+      this._lowWalls.setPlan(plan, model);
+      this._lowWalls.instrument(model);
+    }
+    this._paintLowWallsBtn();
     if (ec.rendering?.transparent_background !== true && this._env) {
       this._env.addGround(box, ec);
     }
@@ -4299,3 +4359,6 @@ async function sh3dFileOf(source: FileSystemEntry[] | File[]): Promise<File | nu
   }
   return null;
 }
+
+/** Murs bas, retenus par appareil : une tablette murale et un téléphone n'ont pas le même usage. */
+const LOW_WALLS_KEY = 'owlnest_low_walls';

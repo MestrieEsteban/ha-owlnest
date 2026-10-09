@@ -53,6 +53,7 @@ const ENTRIES = [
   'src/import/sh3d-home.ts',
   'src/import/sh3d-furniture.ts',
   'src/import/sh3d-migrate.ts',
+  'src/plan/low-walls.ts',
 ];
 
 /**
