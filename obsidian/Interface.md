@@ -67,6 +67,8 @@ Mémoire par appareil : `owlnest_tour_seen`, `owlnest_tour_editor_seen`.
 - **Panneau de la pièce** : ouvert quand une pièce est montrée. Appareils dont la pastille tombe dans le contour, interrupteur pour ceux qui se basculent, « Tout éteindre ». **Décision** : commander une lampe depuis la carte reste dans l'esprit d'Owlnest (la pastille le faisait déjà) ; ce sont les *règles* qui ne pilotent que la vue.
 - **Premiers pas** : `SetupStep` dans `edit-panel.ts`, étapes lues sur la scène par la carte (`_setupSteps`).
 - **Carte étroite** : `.ow-ui` est un conteneur ; deux modules face à face se partagent la ligne, l'état se réduit sous 640 px, les vues du bas montent au-dessus des coins.
+- **Pastilles au thème** : `overlay.ts` lit `--ow-chrome`, `--ow-line`, `--ow-text` (avec un repli sombre si la carte n'a pas encore posé ses variables).
+- **Poser les appareils de chaque pièce** (menu « … » de la liste, ou la liste vide) : `matchRooms` (nom ou alias, sans accents ni majuscules), `placeable` (lampes, prises, volets, climat, médias, serrures, capteurs de porte, fenêtre, mouvement, fumée, fuite, température, humidité, CO₂, luminosité ; jamais batterie ni signal), `spreadPoints` (grille dans le contour, à 50 cm des murs). Lampes à 35 cm sous le plafond, capteurs à 1,40 m. `AnchorEditor.addMany` : une seule annulation.
 
 ## Langue
 
@@ -82,5 +84,5 @@ Tout le français est au **« tu »** depuis le 9 octobre 2026, et chaque texte 
 
 ## Reste à faire
 
-- Les morceaux de phrase des règles gardent leurs anciens styles, agrandis (`.ow-rule-body`). La roue d'actions et la visibilité conditionnelle sont refaites.
+- La simulation météo de l'onglet Ambiance garde son ancien style, agrandi (`zoom: 1.15`), avec des icônes au trait.
 - La simulation de l'onglet Ambiance aussi (`zoom: 1.15`).

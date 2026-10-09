@@ -30,6 +30,12 @@ Owlnest 1.x montrait la maison. Owlnest 2.0 doit **servir tous les jours sur une
 - [x] **Premiers pas** dans l'éditeur : une pastille de progression, cinq étapes qui se cochent seules, chacune mène au bon endroit.
 - [x] **Carte étroite** : les modules face à face se partagent la ligne (`:has()` et requêtes de conteneur).
 - [x] **Plus de tiret cadratin** dans les textes de l'interface ; « ancre » remplacé par « appareil » partout.
+- [x] **Plus d'emoji** dans l'interface : icônes météo dessinées, mots dans les résumés de règles.
+- [x] **Règles** : les morceaux de phrase au style commun (plus de zoom nulle part dans l'éditeur, sauf la simulation météo).
+- [x] **Pastilles au thème** : fond, bordure et nom suivent le thème de la carte.
+- [x] **Poser les appareils de chaque pièce** : une pièce du plan qui porte le nom (ou un alias) d'une pièce de Home Assistant reçoit ses lampes, capteurs et prises, répartis dans son contour (`plan/auto-place.ts`, testé). Une seule annulation retire tout.
+- [x] **Import à plusieurs niveaux** : le fichier demande lequel importer.
+- [x] **Parcours de contrôle** : un script parcourt tous les écrans du banc sans une erreur de console.
 
 ## La suite, dans l'ordre
 
