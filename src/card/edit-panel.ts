@@ -1148,7 +1148,6 @@ export class EditPanel {
     weatherPane.style.cssText += ';overflow-y:auto;';
     buildTabHeader(weatherPane, t('tabAmbiance'), t('tabWeatherDesc'));
     const weatherBody = document.createElement('div');
-    weatherBody.className = 'ow-legacy';
     weatherPane.appendChild(weatherBody);
     this._buildWeatherTab(weatherBody);
 
@@ -1198,7 +1197,6 @@ export class EditPanel {
     settingsPane.style.cssText += ';overflow-y:auto;';
     buildTabHeader(settingsPane, t('tabSettings'), t('tabSettingsDesc'));
     const configBody = document.createElement('div');
-    configBody.className = 'ow-legacy';
     settingsPane.appendChild(configBody);
     this._buildConfigTab(configBody);
 
@@ -1274,14 +1272,14 @@ export class EditPanel {
 
     const inputStyle = [
       'width:100%', 'box-sizing:border-box',
-      'background:rgba(255,255,255,0.04)', 'border:1px solid rgba(255,255,255,0.1)',
-      'border-radius:7px', 'color:#e2e8f0', 'padding:6px 9px',
-      'font-size:11px', 'outline:none', 'font-family:inherit',
+      'background:var(--ow-chrome2)', 'border:1px solid var(--ow-line)',
+      'border-radius:9px', 'color:var(--ow-text)', 'padding:8px 10px',
+      'font-size:13px', 'outline:none', 'font-family:inherit',
       'transition:border-color .15s',
     ].join(';');
 
     const panelRoot = document.createElement('div');
-    panelRoot.style.cssText = 'padding:10px 12px 14px;display:flex;flex-direction:column;gap:0;';
+    panelRoot.style.cssText = 'padding:12px;display:flex;flex-direction:column;gap:10px;';
     container.appendChild(panelRoot);
 
     /**
@@ -1294,7 +1292,7 @@ export class EditPanel {
     const search = document.createElement('input');
     search.type = 'search';
     search.placeholder = t('cfgSearch');
-    search.style.cssText = inputStyle + ';margin-bottom:4px;';
+    search.style.cssText = inputStyle;
     panelRoot.appendChild(search);
 
     const emptyNote = document.createElement('div');
@@ -1318,7 +1316,7 @@ export class EditPanel {
 
     const sec = (label: string) => {
       const box = document.createElement('details');
-      box.style.cssText = 'border-bottom:1px solid rgba(255,255,255,0.06);';
+      box.className = 'ow-card';
       // Repliée par défaut, sauf la première : on ouvre ce qu'on cherche plutôt
       // que de tout subir.
       //
@@ -1331,25 +1329,17 @@ export class EditPanel {
       box.open = this._openConfigSections.has(label);
 
       const head = document.createElement('summary');
-      head.style.cssText = [
-        'cursor:pointer', 'list-style:none', 'padding:9px 2px',
-        'font-size:9px', 'font-weight:700', 'color:#94a3b8',
-        'text-transform:uppercase', 'letter-spacing:.07em',
-        'display:flex', 'align-items:center', 'gap:6px',
-      ].join(';');
-
-      const chevron = document.createElement('span');
-      chevron.textContent = '▸';
-      chevron.style.cssText = 'font-size:8px;color:#475569;transition:transform .15s;display:inline-block;';
-      const paint = () => {
-        chevron.style.transform = box.open ? 'rotate(90deg)' : 'none';
-        head.style.color = box.open ? '#cbd5e1' : '#94a3b8';
-      };
-      head.append(chevron, document.createTextNode(label));
+      head.className = 'ow-card-h';
+      head.style.cursor = 'pointer';
+      const name = document.createElement('b');
+      name.style.flex = '1';
+      name.textContent = label;
+      head.append(name, Object.assign(document.createElement('span'), { className: 'ow-chev' }));
+      const paint = () => {};
       box.appendChild(head);
 
       const body = document.createElement('div');
-      body.style.cssText = 'padding:2px 2px 12px;';
+      body.style.cssText = 'padding:0 12px 4px;';
 
 
       box.appendChild(body);
@@ -1420,7 +1410,7 @@ export class EditPanel {
       inp.value = value; inp.placeholder = placeholder;
       inp.style.cssText = inputStyle;
       inp.addEventListener('focus', () => { inp.style.borderColor = 'rgba(125,209,252,0.5)'; });
-      inp.addEventListener('blur',  () => { inp.style.borderColor = 'rgba(255,255,255,0.1)'; });
+      inp.addEventListener('blur',  () => { inp.style.borderColor = ''; });
       inp.addEventListener('change', () => onChange(inp.value.trim()));
       return inp;
     };
@@ -1436,11 +1426,11 @@ export class EditPanel {
       onChange: (v: string) => void,
     ) => {
       const wrap = document.createElement('div');
-      wrap.style.cssText = 'margin-bottom:8px;';
+      wrap.style.cssText = 'margin-bottom:12px;';
       const row = document.createElement('div');
-      row.style.cssText = 'display:flex;align-items:center;margin-bottom:3px;';
+      row.style.cssText = 'display:flex;align-items:center;margin-bottom:6px;';
       const lbl = document.createElement('span');
-      lbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;';
+      lbl.style.cssText = 'font-size:12px;color:var(--ow-muted);font-weight:600;';
       lbl.textContent = labelText;
       row.appendChild(lbl);
       if (helpText) row.appendChild(helpBadge(helpText));
@@ -1465,11 +1455,11 @@ export class EditPanel {
       fmt: (v: number) => string, onChange: (v: number) => void,
     ) => {
       const wrap = document.createElement('div');
-      wrap.style.cssText = 'margin-bottom:8px;';
+      wrap.style.cssText = 'margin-bottom:12px;';
       const hdr = document.createElement('div');
-      hdr.style.cssText = 'display:flex;align-items:center;margin-bottom:3px;';
+      hdr.style.cssText = 'display:flex;align-items:center;margin-bottom:6px;';
       const lbl = document.createElement('span');
-      lbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;';
+      lbl.style.cssText = 'font-size:12px;color:var(--ow-muted);font-weight:600;';
       lbl.textContent = labelText;
       hdr.appendChild(lbl);
       if (helpText) hdr.appendChild(helpBadge(helpText));
@@ -1477,12 +1467,12 @@ export class EditPanel {
       spacer.style.cssText = 'flex:1;';
       hdr.appendChild(spacer);
       const val = document.createElement('span');
-      val.style.cssText = 'font-size:10px;color:#e2e8f0;font-weight:600;';
+      val.style.cssText = 'font-size:12px;color:var(--ow-text);font-weight:600;font-variant-numeric:tabular-nums;';
       val.textContent = fmt(value);
       hdr.appendChild(val);
       const sl = document.createElement('input');
       sl.type = 'range'; sl.min = String(min); sl.max = String(max); sl.step = String(step); sl.value = String(value);
-      sl.style.cssText = 'width:100%;cursor:pointer;margin:0;accent-color:#7dd3fc;';
+      sl.style.cssText = 'width:100%;cursor:pointer;margin:0;accent-color:var(--ow-acc);';
       sl.addEventListener('input', () => { val.textContent = fmt(parseFloat(sl.value)); onChange(parseFloat(sl.value)); });
       wrap.appendChild(hdr); wrap.appendChild(sl);
       root.appendChild(wrap);
@@ -1491,9 +1481,9 @@ export class EditPanel {
     // ── Helper: toggle with help badge ───────────────────────────────────
     const toggleWithHelp = (labelText: string, helpText: string | null, checked: boolean, onChange: (v: boolean) => void) => {
       const wrap = document.createElement('label');
-      wrap.style.cssText = 'display:flex;align-items:center;gap:7px;margin-bottom:8px;cursor:pointer;font-size:11px;color:#e2e8f0;';
+      wrap.style.cssText = 'display:flex;align-items:center;gap:9px;margin-bottom:10px;cursor:pointer;font-size:13px;color:var(--ow-text);';
       const chk = document.createElement('input');
-      chk.type = 'checkbox'; chk.checked = checked; chk.style.cursor = 'pointer';
+      chk.type = 'checkbox'; chk.checked = checked; chk.style.cssText = 'cursor:pointer;width:16px;height:16px;accent-color:var(--ow-acc);';
       chk.addEventListener('change', () => onChange(chk.checked));
       const lbl = document.createElement('span');
       lbl.textContent = labelText;
@@ -1511,18 +1501,22 @@ export class EditPanel {
     // pour qui ne pense pas à glisser ou n'a pas de souris (tablette).
     if (this.onDrawPlan) {
       const draw = document.createElement('button');
-      draw.textContent = `✏️ ${t('planDraw')}`;
-      draw.style.cssText = 'width:100%;background:rgba(125,209,252,0.15);border:1px solid rgba(125,209,252,0.35);border-radius:7px;color:#7dd3fc;padding:8px 10px;font-size:11.5px;font-weight:600;font-family:inherit;cursor:pointer;margin-bottom:6px;';
+      draw.type = 'button';
+      draw.className = 'ow-btn ow-primary';
+      draw.style.cssText = 'width:100%;margin-bottom:8px;';
+      draw.append(icon('pencil', 16), document.createTextNode(t('planDraw')));
       draw.addEventListener('click', () => this.onDrawPlan?.());
       root.appendChild(draw);
     }
     if (this.onImportModel) {
       const btn = document.createElement('button');
-      btn.textContent = t('importButton');
-      btn.style.cssText = 'width:100%;background:rgba(125,209,252,0.15);border:1px solid rgba(125,209,252,0.35);border-radius:7px;color:#7dd3fc;padding:8px 10px;font-size:11.5px;font-weight:600;font-family:inherit;cursor:pointer;margin-bottom:4px;';
+      btn.type = 'button';
+      btn.className = 'ow-btn';
+      btn.style.cssText = 'width:100%;margin-bottom:6px;';
+      btn.append(icon('plus', 16), document.createTextNode(t('importButton')));
       btn.addEventListener('click', () => this.onImportModel?.());
       const hint = document.createElement('div');
-      hint.style.cssText = 'font-size:9.5px;color:#64748b;margin-bottom:10px;line-height:1.4;';
+      hint.style.cssText = 'font-size:11.5px;color:var(--ow-muted);margin-bottom:12px;line-height:1.45;';
       hint.textContent = t('importHint');
       root.append(btn, hint);
     }
@@ -1537,11 +1531,11 @@ export class EditPanel {
        * alors que le backend sait le faire depuis le début.
        */
       const list = document.createElement('div');
-      list.style.cssText = 'display:flex;flex-direction:column;gap:1px;margin-bottom:8px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:7px;overflow:hidden;';
+      list.style.cssText = 'display:flex;flex-direction:column;gap:1px;margin-bottom:10px;background:var(--ow-line);border:1px solid var(--ow-line);border-radius:10px;overflow:hidden;';
       root.appendChild(list);
 
       const loading = document.createElement('div');
-      loading.style.cssText = 'padding:11px 12px;font-size:11px;color:#64748b;background:#0f1420;';
+      loading.style.cssText = 'padding:11px 12px;font-size:12.5px;color:var(--ow-muted);background:var(--ow-chrome);';
       loading.textContent = t('cfgScenesLoading');
       list.appendChild(loading);
 
@@ -1575,7 +1569,7 @@ export class EditPanel {
         list.innerHTML = '';
         if (summaries.length === 0) {
           const empty = document.createElement('div');
-          empty.style.cssText = 'padding:11px 12px;font-size:11px;color:#64748b;background:#0f1420;';
+          empty.style.cssText = 'padding:11px 12px;font-size:12.5px;color:var(--ow-muted);background:var(--ow-chrome);';
           empty.textContent = t('cfgScenesEmpty');
           list.appendChild(empty);
           return;
@@ -1595,15 +1589,15 @@ export class EditPanel {
           row.style.cssText = [
             'display:flex', 'align-items:center', 'gap:6px', 'width:100%',
             'text-align:left', 'font-family:inherit',
-            'padding:7px 8px 7px 9px', 'border:none',
+            'padding:10px 10px 10px 11px', 'border:none',
             'border-left:2px solid ' + (isActive ? '#7dd3fc' : 'transparent'),
-            isActive ? 'background:rgba(125,209,252,0.08)' : 'background:#0f1420',
+            isActive ? 'background:color-mix(in srgb, var(--ow-acc) 12%, var(--ow-chrome))' : 'background:var(--ow-chrome)',
             isActive ? 'cursor:default' : 'cursor:pointer',
           ].join(';');
 
           if (!isActive) {
-            row.addEventListener('mouseenter', () => { row.style.background = '#151b2a'; });
-            row.addEventListener('mouseleave', () => { row.style.background = '#0f1420'; });
+            row.addEventListener('mouseenter', () => { row.style.background = 'var(--ow-chrome2)'; });
+            row.addEventListener('mouseleave', () => { row.style.background = 'var(--ow-chrome)'; });
             row.addEventListener('click', () => {
               this.onSceneSettingsChange?.({ scene_id: sum.id } as SceneSettings, true);
             });
@@ -1615,9 +1609,9 @@ export class EditPanel {
 
           const name = document.createElement('span');
           name.style.cssText = [
-            'display:block', 'font-size:11.5px',
+            'display:block', 'font-size:13.5px',
             `font-weight:${isActive ? 650 : 500}`,
-            `color:${isActive ? '#7dd3fc' : '#e2e8f0'}`,
+            `color:${isActive ? 'var(--ow-acc)' : 'var(--ow-text)'}`,
             'white-space:nowrap', 'overflow:hidden', 'text-overflow:ellipsis',
           ].join(';');
           name.textContent = sum.id;
@@ -1625,7 +1619,7 @@ export class EditPanel {
 
           const sub = document.createElement('span');
           sub.style.cssText = [
-            'display:block', 'margin-top:2px', 'font-size:9.5px',
+            'display:block', 'margin-top:2px', 'font-size:12px',
             `color:${sum.error ? '#fbbf24' : '#64748b'}`,
             'white-space:nowrap', 'overflow:hidden', 'text-overflow:ellipsis',
           ].join(';');
@@ -1694,7 +1688,9 @@ export class EditPanel {
       newRow.appendChild(newInput);
       const create = document.createElement('button');
       create.textContent = t('cfgSceneCreate');
-      create.style.cssText = 'flex-shrink:0;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.14);border-radius:7px;color:#cbd5e1;padding:6px 10px;font-size:11px;font-family:inherit;cursor:pointer;white-space:nowrap;';
+      create.type = 'button';
+      create.className = 'ow-btn';
+      create.style.flexShrink = '0';
       create.addEventListener('click', () => {
         const id = newInput.value.trim();
         if (!id) return;
@@ -1707,7 +1703,7 @@ export class EditPanel {
       const newLblRow = document.createElement('div');
       newLblRow.style.cssText = 'display:flex;align-items:center;margin-bottom:3px;';
       const newLbl = document.createElement('span');
-      newLbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;';
+      newLbl.style.cssText = 'font-size:12px;color:var(--ow-muted);font-weight:600;';
       newLbl.textContent = t('cfgSceneId');
       newLblRow.appendChild(newLbl);
       newLblRow.appendChild(helpBadge(t('helpSceneId')));
@@ -1747,12 +1743,12 @@ export class EditPanel {
           : `${t('cfgQualityDetected')} : ${detectionLabel()}`;
 
       const detail = document.createElement('div');
-      detail.style.cssText = 'font-size:9px;color:#475569;margin:-4px 0 8px;line-height:1.5;';
+      detail.style.cssText = 'font-size:11.5px;color:var(--ow-muted);margin:-4px 0 8px;line-height:1.5;';
       detail.textContent = describe(current as QualityLevel);
       root.appendChild(detail);
 
       const reloadNote = document.createElement('div');
-      reloadNote.style.cssText = 'font-size:9px;color:#475569;margin:0 0 8px;line-height:1.5;';
+      reloadNote.style.cssText = 'font-size:11.5px;color:var(--ow-muted);margin:0 0 8px;line-height:1.5;';
       reloadNote.textContent = t('cfgQualityReload');
       root.appendChild(reloadNote);
     }
@@ -1773,11 +1769,11 @@ export class EditPanel {
     {
       const currentOrientation = rendering.house_orientation ?? 0;
       const wrap = document.createElement('div');
-      wrap.style.cssText = 'margin-bottom:8px;';
+      wrap.style.cssText = 'margin-bottom:12px;';
       const hdr = document.createElement('div');
-      hdr.style.cssText = 'display:flex;align-items:center;margin-bottom:3px;';
+      hdr.style.cssText = 'display:flex;align-items:center;margin-bottom:6px;';
       const lbl = document.createElement('span');
-      lbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;';
+      lbl.style.cssText = 'font-size:12px;color:var(--ow-muted);font-weight:600;';
       lbl.textContent = t('cfgHouseOrientation');
       hdr.appendChild(lbl);
       hdr.appendChild(helpBadge(t('helpHouseOrientation')));
@@ -1785,7 +1781,7 @@ export class EditPanel {
       spacer.style.cssText = 'flex:1;';
       hdr.appendChild(spacer);
       const val = document.createElement('span');
-      val.style.cssText = 'font-size:10px;color:#e2e8f0;font-weight:600;';
+      val.style.cssText = 'font-size:12px;color:var(--ow-text);font-weight:600;font-variant-numeric:tabular-nums;';
       const cardinals = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
       const toCardinal = (deg: number) => {
         const idx = Math.round(((deg % 360) + 360) % 360 / 45) % 8;
@@ -1795,7 +1791,7 @@ export class EditPanel {
       hdr.appendChild(val);
       const sl = document.createElement('input');
       sl.type = 'range'; sl.min = '0'; sl.max = '359'; sl.step = '5'; sl.value = String(currentOrientation);
-      sl.style.cssText = 'width:100%;cursor:pointer;margin:0;accent-color:#7dd3fc;';
+      sl.style.cssText = 'width:100%;cursor:pointer;margin:0;accent-color:var(--ow-acc);';
       sl.addEventListener('input', () => {
         const v = parseFloat(sl.value);
         val.textContent = toCardinal(v);
@@ -1832,7 +1828,7 @@ export class EditPanel {
       const colorWrap = document.createElement('div');
       colorWrap.style.cssText = 'margin-bottom:8px;display:flex;align-items:center;gap:8px;';
       const colorLbl = document.createElement('div');
-      colorLbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;flex:1;';
+      colorLbl.style.cssText = 'font-size:12px;color:var(--ow-muted);font-weight:600;flex:1;';
       colorLbl.textContent = t('cfgGroundColor');
       colorLbl.appendChild(helpBadge(t('helpGroundColor')));
       const colorInput = document.createElement('input');
@@ -1936,7 +1932,7 @@ export class EditPanel {
     const clusterWrap = document.createElement('div');
     clusterWrap.style.cssText = 'margin-bottom:8px;';
     const clusterLbl = document.createElement('div');
-    clusterLbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;';
+    clusterLbl.style.cssText = 'font-size:12px;color:var(--ow-muted);font-weight:600;margin-bottom:3px;';
     clusterLbl.textContent = t('cfgClusterThreshold');
     clusterLbl.appendChild(helpBadge(t('helpCluster')));
     const clusterInput = document.createElement('input');
@@ -1956,7 +1952,7 @@ export class EditPanel {
       const langLblRow = document.createElement('div');
       langLblRow.style.cssText = 'display:flex;align-items:center;margin-bottom:3px;';
       const langLbl = document.createElement('span');
-      langLbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;';
+      langLbl.style.cssText = 'font-size:12px;color:var(--ow-muted);font-weight:600;';
       langLbl.textContent = t('cfgLang');
       langLblRow.appendChild(langLbl);
       langLblRow.appendChild(helpBadge(t('helpLanguage')));
@@ -1987,30 +1983,30 @@ export class EditPanel {
     const settings = this.getSceneSettings?.() ?? {};
     const inputStyle = [
       'width:100%', 'box-sizing:border-box',
-      'background:rgba(255,255,255,0.04)', 'border:1px solid rgba(255,255,255,0.1)',
-      'border-radius:7px', 'color:#e2e8f0', 'padding:6px 9px',
-      'font-size:11px', 'outline:none', 'font-family:inherit',
+      'background:var(--ow-chrome2)', 'border:1px solid var(--ow-line)',
+      'border-radius:9px', 'color:var(--ow-text)', 'padding:8px 10px',
+      'font-size:13px', 'outline:none', 'font-family:inherit',
       'transition:border-color .15s',
     ].join(';');
 
     const root = document.createElement('div');
-    root.style.cssText = 'padding:10px 12px 14px;display:flex;flex-direction:column;gap:0;';
+    root.style.cssText = 'padding:4px 14px 14px;display:flex;flex-direction:column;gap:0;';
     container.appendChild(root);
 
     const sec = (label: string) => {
       const d = document.createElement('div');
-      d.style.cssText = 'font-size:9px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.07em;margin:14px 0 7px;padding-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.06);';
+      d.style.cssText = 'font-size:13.5px;font-weight:700;color:var(--ow-text);margin:14px 0 10px;';
       d.textContent = label;
       root.appendChild(d);
     };
 
     const field = (labelText: string, el: HTMLElement, helpText?: string) => {
       const wrap = document.createElement('div');
-      wrap.style.cssText = 'margin-bottom:8px;';
+      wrap.style.cssText = 'margin-bottom:12px;';
       const lblRow = document.createElement('div');
       lblRow.style.cssText = 'display:flex;align-items:center;margin-bottom:3px;';
       const lbl = document.createElement('span');
-      lbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;';
+      lbl.style.cssText = 'font-size:12px;color:var(--ow-muted);font-weight:600;';
       lbl.textContent = labelText;
       lblRow.appendChild(lbl);
       if (helpText) lblRow.appendChild(createHelpBadge(helpText));
@@ -2032,7 +2028,7 @@ export class EditPanel {
       inp.value = value; inp.placeholder = placeholder;
       inp.style.cssText = inputStyle;
       inp.addEventListener('focus', () => { inp.style.borderColor = 'rgba(125,209,252,0.5)'; });
-      inp.addEventListener('blur',  () => { inp.style.borderColor = 'rgba(255,255,255,0.1)'; });
+      inp.addEventListener('blur',  () => { inp.style.borderColor = ''; });
       inp.addEventListener('change', () => onChange(inp.value.trim()));
       const dl = document.createElement('datalist');
       dl.id = dlId;
@@ -2067,7 +2063,7 @@ export class EditPanel {
     sec(t('cfgSim'));
 
     const simContainer = document.createElement('div');
-    simContainer.style.cssText = 'margin-bottom:4px;';
+    simContainer.style.cssText = 'margin-bottom:4px;zoom:1.15;';
     root.appendChild(simContainer);
     const sim = this.getSim?.();
     if (sim) {
