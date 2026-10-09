@@ -42,9 +42,9 @@ const ENTRIES = [
   'src/import/lighten.ts',
   'src/import/sh3d-parts.ts',
   'src/card/lovelace-config.ts',
-  'src/plan/walls.ts',
-  'src/plan/edit.ts',
   'src/plan/build.ts',
+  'src/plan/graph.ts',
+  'src/plan/migrate.ts',
 ];
 
 /**

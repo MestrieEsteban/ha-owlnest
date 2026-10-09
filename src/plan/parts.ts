@@ -9,7 +9,7 @@
 
 import * as THREE from 'three';
 import type { OwlnestPart } from '../types';
-import type { PlanDoc } from './types';
+import type { PlanDoc, PlanOpening } from './types';
 import { PLAN_LEAF } from './build';
 import { rankOf, meshRankOf, stampOrder } from '../model-outline';
 
@@ -19,7 +19,7 @@ export function syncPlanParts(
   root: THREE.Object3D,
   plan: PlanDoc,
   existing: readonly OwlnestPart[],
-  label: (kind: 'door' | 'window' | 'slider', n: number, leaf: number, leaves: number) => string,
+  label: (kind: PlanOpening['kind'], n: number, leaf: number, leaves: number) => string,
   now: number = Date.now(),
 ): OwlnestPart[] {
   stampOrder(root);
@@ -27,7 +27,7 @@ export function syncPlanParts(
   const kept = existing.filter((p) => !p.node?.startsWith(PLAN_LEAF));
 
   // Numérotation par nature, dans l'ordre du plan : « Porte 1 », « Fenêtre 2 ».
-  const count = { door: 0, window: 0, slider: 0 };
+  const count = { door: 0, window: 0, slider: 0, passage: 0 };
   const numberOf = new Map<string, number>();
   for (const o of plan.openings) numberOf.set(o.id, ++count[o.kind]);
 

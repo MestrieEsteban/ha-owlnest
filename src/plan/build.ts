@@ -9,8 +9,10 @@
  */
 
 import * as THREE from 'three';
-import type { PlanDoc, PlanOpening } from './types';
-import { wallsOf, wallFor, wallPieces, type Attached, type Wall } from './walls';
+import type { PlanDoc, PlanOpening, PlanWall } from './types';
+import { type Pt, sub, norm, dist, clipAlong, area } from './geometry';
+import { wallEnds, wallLength, heightOf, thicknessOf, openingFits, faces, roomPolygon } from './graph';
+import { wallFootprints } from './footprint';
 
 /** Préfixe des vantaux construits depuis le plan : `plan_leaf_<ouverture>_<n>`. */
 export const PLAN_LEAF = 'plan_leaf_';
@@ -49,73 +51,110 @@ function materials(): Materials {
   };
 }
 
-/** Un pavé, posé par ses bornes. */
+/**
+ * Un prisme droit : un contour vu de dessus (x, y du plan → x, z de la scène),
+ * de la hauteur `y0` à `y1`. Le contour peut être concave (pièce en L).
+ */
+export function prism(poly: readonly Pt[], y0: number, y1: number): THREE.BufferGeometry {
+  const pts = area(poly) < 0 ? [...poly].reverse() : [...poly];
+  const v2 = pts.map((p) => new THREE.Vector2(p.x, p.y));
+  const tris = THREE.ShapeUtils.triangulateShape(v2, []);
+  const pos: number[] = [];
+  const push = (p: Pt, y: number) => pos.push(p.x, y, p.y);
+  for (const [a, b, c] of tris) {
+    // Dessus vers le haut, dessous vers le bas.
+    push(pts[a], y1); push(pts[c], y1); push(pts[b], y1);
+    push(pts[a], y0); push(pts[b], y0); push(pts[c], y0);
+  }
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i], q = pts[(i + 1) % pts.length];
+    push(p, y0); push(p, y1); push(q, y1);
+    push(p, y0); push(q, y1); push(q, y0);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function mesh(name: string, geo: THREE.BufferGeometry, mat: THREE.Material, shadow = true): THREE.Mesh {
+  const m = new THREE.Mesh(geo, mat);
+  m.name = name;
+  m.castShadow = shadow;
+  m.receiveShadow = true;
+  return m;
+}
+
+/** Un pavé dans le repère d'une ouverture : x le long du mur, y vers le haut, z à travers. */
 function box(name: string, mat: THREE.Material, x0: number, x1: number, y0: number, y1: number, z0: number, z1: number): THREE.Mesh {
   const geo = new THREE.BoxGeometry(Math.max(x1 - x0, 1e-4), Math.max(y1 - y0, 1e-4), Math.max(z1 - z0, 1e-4));
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.name = name;
-  mesh.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  return mesh;
+  const m = mesh(name, geo, mat);
+  m.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+  return m;
 }
 
 /**
- * Les blocs d'un mur, en coordonnées de la maison.
- *
- * Aux deux bouts, le mur déborde d'une demi-épaisseur pour fermer les angles.
- * Deux murs qui se croisent ont alors un carré en commun : les murs le long
- * de y sont abaissés d'un millimètre pour que leurs dessus ne se battent pas
- * à l'écran avec ceux le long de x. Invisible, et sans calcul d'intersection.
+ * Les blocs d'un mur : la semelle découpée le long du mur autour des
+ * ouvertures (pleine hauteur entre elles, allège dessous, linteau dessus).
  */
-function buildWall(wall: Wall, holes: Attached[], index: number, mat: THREE.Material, group: THREE.Group) {
-  const half = wall.thickness / 2;
-  const drop = wall.axis === 'y' ? 0.001 : 0;
-  const pieces = wallPieces(wall, holes.map((h) => ({
-    center: h.center, width: h.opening.width, sill: h.opening.sill, height: h.opening.height,
-  })));
+function buildWall(plan: PlanDoc, w: PlanWall, foot: Pt[], index: number, mat: THREE.Material, group: THREE.Group) {
+  const [a, b] = wallEnds(plan, w);
+  const dir = norm(sub(b, a));
+  const L = dist(a, b);
+  const H = heightOf(plan, w);
+  const holes = plan.openings
+    .filter((o) => o.wall === w.id && openingFits(plan, o))
+    .map((o) => ({ u0: o.offset - o.width / 2, u1: o.offset + o.width / 2, sill: o.sill, top: Math.min(o.sill + o.height, H) }))
+    .sort((p, q) => p.u0 - q.u0);
+
+  const pieces: { u0: number; u1: number; y0: number; y1: number }[] = [];
+  // Au-delà des extrémités, la semelle déborde en onglet : on la garde entière.
+  let cursor = -1e3;
+  for (const h of holes) {
+    if (h.u0 > cursor) pieces.push({ u0: cursor, u1: h.u0, y0: 0, y1: H });
+    if (h.sill > 1e-3) pieces.push({ u0: h.u0, u1: h.u1, y0: 0, y1: h.sill });
+    if (h.top < H - 1e-3) pieces.push({ u0: h.u0, u1: h.u1, y0: h.top, y1: H });
+    cursor = Math.max(cursor, h.u1);
+  }
+  pieces.push({ u0: cursor, u1: 1e3, y0: 0, y1: H });
+
   pieces.forEach((p, k) => {
-    const a = p.a <= wall.from + 1e-3 ? p.a - half : p.a;
-    const b = p.b >= wall.to - 1e-3 ? p.b + half : p.b;
-    const top = p.top >= wall.height - 1e-3 ? p.top - drop : p.top;
-    const name = `wall_${index}_${k}`;
-    const mesh = wall.axis === 'x'
-      ? box(name, mat, a, b, p.bottom, top, wall.at - half, wall.at + half)
-      : box(name, mat, wall.at - half, wall.at + half, p.bottom, top, a, b);
-    group.add(mesh);
+    const poly = clipAlong(foot, a, dir, p.u0, p.u1);
+    if (poly.length < 3 || Math.abs(area(poly)) < 1e-6) return;
+    group.add(mesh(`wall_${index}_${k}`, prism(poly, p.y0, p.y1), mat));
   });
+  void L;
 }
 
 /**
- * Une ouverture : un cadre, et un ou deux vantaux.
+ * Une ouverture : un cadre, et un ou deux vantaux (aucun pour un passage).
  *
  * Tout est construit dans un repère où le mur file le long de x local, puis le
  * support est tourné pour suivre le mur. Les vantaux restent ainsi dans les
  * axes de leur support : le moteur d'ouvrants y lit largeur, épaisseur et
  * gonds sans calcul.
  */
-function buildOpening(at: Attached, m: Materials, group: THREE.Group) {
-  const o = at.opening;
-  const t = at.wall.thickness;
+function buildOpening(plan: PlanDoc, o: PlanOpening, m: Materials, group: THREE.Group) {
+  const w = plan.walls.find((q) => q.id === o.wall)!;
+  const [a, b] = wallEnds(plan, w);
+  const dir = norm(sub(b, a));
+  const t = thicknessOf(plan, w);
   const frame = new THREE.Group();
   frame.name = `plan_opening_${o.id}`;
-  if (at.wall.axis === 'x') frame.position.set(at.center, 0, at.wall.at);
-  else {
-    frame.position.set(at.wall.at, 0, at.center);
-    // x local → z de la maison : l'ordre « début → fin » du mur est gardé.
-    frame.rotation.y = -Math.PI / 2;
-  }
+  frame.position.set(a.x + dir.x * o.offset, 0, a.y + dir.y * o.offset);
+  // x local suit le mur, de a vers b : « début » et « fin » gardent leur sens.
+  frame.rotation.y = -Math.atan2(dir.y, dir.x);
   group.add(frame);
 
-  const w = o.width, h = o.height, s = o.sill;
+  const width = o.width, h = o.height, s = o.sill;
   const depth = t + 0.02;
-  // Montants et traverse ; une fenêtre a aussi un appui.
-  frame.add(box(`plan_frame_${o.id}_l`, m.frame, -w / 2, -w / 2 + FRAME, s, s + h, -depth / 2, depth / 2));
-  frame.add(box(`plan_frame_${o.id}_r`, m.frame, w / 2 - FRAME, w / 2, s, s + h, -depth / 2, depth / 2));
-  frame.add(box(`plan_frame_${o.id}_t`, m.frame, -w / 2, w / 2, s + h - FRAME, s + h, -depth / 2, depth / 2));
-  if (s > 0) frame.add(box(`plan_frame_${o.id}_b`, m.frame, -w / 2, w / 2, s, s + FRAME, -depth / 2, depth / 2));
+  frame.add(box(`plan_frame_${o.id}_l`, m.frame, -width / 2, -width / 2 + FRAME, s, s + h, -depth / 2, depth / 2));
+  frame.add(box(`plan_frame_${o.id}_r`, m.frame, width / 2 - FRAME, width / 2, s, s + h, -depth / 2, depth / 2));
+  frame.add(box(`plan_frame_${o.id}_t`, m.frame, -width / 2, width / 2, s + h - FRAME, s + h, -depth / 2, depth / 2));
+  if (s > 0) frame.add(box(`plan_frame_${o.id}_b`, m.frame, -width / 2, width / 2, s, s + FRAME, -depth / 2, depth / 2));
+  if (o.kind === 'passage') return;
 
-  const innerW = w - 2 * FRAME;
+  const innerW = width - 2 * FRAME;
   const bottom = s > 0 ? s + FRAME : s + 0.01;
   const innerH = s + h - FRAME - bottom;
   const leaves = o.kind === 'slider' || o.double ? 2 : 1;
@@ -148,19 +187,18 @@ function buildOpening(at: Attached, m: Materials, group: THREE.Group) {
     const hy = o.kind === 'door' ? 1.0 : bottom + innerH / 2;
     leaf.add(box(`${leaf.name}_handle`, m.handle, hx, hx + 0.03, hy - 0.06, hy + 0.06, z - LEAF / 2 - 0.04, z + LEAF / 2 + 0.04));
 
-    const motion = o.kind === 'slider' ? 'rail' : 'hinge';
     // Les deux vantaux d'une fenêtre ouvrent vers le milieu : gonds dehors.
-    // Un coulissant glisse vers l'autre panneau.
+    // Un coulissant glisse vers l'autre panneau ; le premier reste fixe.
     const side: 'start' | 'end' = o.kind === 'slider'
       ? (n === 0 ? 'end' : 'start')
       : leaves === 2 ? (n === 0 ? 'start' : 'end') : o.hinge;
-    leaf.userData.owlnestLeaf = {
-      motion, hinge: side, pane: glazed,
-      size: [innerH, leafW, LEAF].sort((a, b) => b - a),
-    };
+    if (!(o.kind === 'slider' && n === 0)) {
+      leaf.userData.owlnestLeaf = {
+        motion: o.kind === 'slider' ? 'rail' : 'hinge', hinge: side, pane: glazed,
+        size: [innerH, leafW, LEAF].sort((p, q) => q - p),
+      };
+    }
     leaf.userData.owlnestPlanOpening = o.id;
-    // Un coulissant n'a qu'un panneau mobile : le second reste fixe.
-    if (o.kind === 'slider' && n === 0) leaf.userData.owlnestLeaf = undefined;
     frame.add(leaf);
   }
 }
@@ -170,25 +208,19 @@ export function buildPlan(plan: PlanDoc): THREE.Group {
   const root = new THREE.Group();
   root.name = 'owlnest_plan';
   const m = materials();
-  const walls = wallsOf(plan);
 
+  const all = faces(plan);
   for (const r of plan.rooms) {
-    if (!(r.w > 0 && r.d > 0)) continue;
-    const floor = box(`room_${r.id}`, m.floor(r.floor ?? '#c9b08a'), r.x, r.x + r.w, -0.02, 0, r.y, r.y + r.d);
-    floor.castShadow = false;
-    root.add(floor);
+    const poly = roomPolygon(plan, r.id, all);
+    if (!poly) continue;
+    root.add(mesh(`room_${r.id}`, prism(poly, -0.02, 0), m.floor(r.floor ?? '#c9b08a'), false));
   }
 
-  const attached = plan.openings
-    .map((o) => wallFor(o, walls))
-    .filter((a): a is Attached => !!a);
-  walls.forEach((wall, i) => buildWall(wall, attached.filter((a) => a.wall.id === wall.id), i, m.wall, root));
-  for (const a of attached) buildOpening(a, m, root);
+  const feet = wallFootprints(plan);
+  plan.walls.forEach((w, i) => {
+    const foot = feet.get(w.id);
+    if (foot && wallLength(plan, w) > 1e-3) buildWall(plan, w, foot, i, m.wall, root);
+  });
+  for (const o of plan.openings) if (openingFits(plan, o)) buildOpening(plan, o, m, root);
   return root;
-}
-
-/** Ouvertures du plan qui ne tiennent sur aucun mur (pièce réduite, mur supprimé). */
-export function orphanOpenings(plan: PlanDoc): PlanOpening[] {
-  const walls = wallsOf(plan);
-  return plan.openings.filter((o) => !wallFor(o, walls));
 }

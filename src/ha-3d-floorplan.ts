@@ -47,8 +47,9 @@ import { separateCoplanarSlabs } from './coplanar';
 import { StaticBatch } from './batching';
 import { buildPlan } from './plan/build';
 import { syncPlanParts } from './plan/parts';
-import { emptyPlan, type PlanDoc } from './plan/types';
+import { emptyPlan, type PlanDoc, type OpeningKind } from './plan/types';
 import { PlanEditor } from './plan/editor-ui';
+import { migratePlan } from './plan/migrate';
 import { createUniforms, instrumentMaterials, updateXray, createGhost } from './cutaway';
 import type { CutawayUniforms } from './cutaway';
 import { evalCondition, RuleEngine } from './rules/engine';
@@ -125,7 +126,7 @@ export class Ha3dFloorplan extends HTMLElement {
 
   private rafId = 0;
   private ro: ResizeObserver | null = null;
-  private readonly _onWindowResize = () => { if (this._config?.height === 'fill') this._onResize(); };
+  private readonly _onWindowResize = () => { if (this._config?.height === 'fill' || this._fullscreenHost) this._onResize(); };
   private modelLoaded = false;
   private _locked = false;
   private _editMode = false;
@@ -411,20 +412,28 @@ export class Ha3dFloorplan extends HTMLElement {
 
   /** Le logement dessiné dans la carte, s'il a au moins une pièce : il fait alors la maison. */
   private get _plan(): PlanDoc | null {
+    const p = this._planDoc();
+    return p && p.walls.length ? p : null;
+  }
+
+  /** Le plan de la scène, converti s'il vient d'une version plus ancienne de l'éditeur. */
+  private _planDoc(): PlanDoc | null {
     const p = this._scene?.plan;
-    return p && p.rooms.length ? p : null;
+    if (!p || !this._scene) return null;
+    if (p.version !== 2) this._scene = { ...this._scene, plan: migratePlan(p) ?? undefined };
+    return this._scene.plan ?? null;
   }
 
   /**
    * Point du plan au centre de la scène : fixé une fois pour toutes (voir
-   * PlanDoc.origin), au centre des pièces du premier dessin.
+   * PlanDoc.origin), au centre des murs du premier dessin.
    */
   private _planOrigin(plan: PlanDoc): { x: number; y: number } {
     if (!plan.origin) {
       let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-      for (const r of plan.rooms) {
-        x0 = Math.min(x0, r.x); x1 = Math.max(x1, r.x + r.w);
-        y0 = Math.min(y0, r.y); y1 = Math.max(y1, r.y + r.d);
+      for (const n of plan.nodes) {
+        x0 = Math.min(x0, n.x); x1 = Math.max(x1, n.x);
+        y0 = Math.min(y0, n.y); y1 = Math.max(y1, n.y);
       }
       plan.origin = { x: Math.round(((x0 + x1) / 2) * 10) / 10, y: Math.round(((y0 + y1) / 2) * 10) / 10 };
     }
@@ -432,7 +441,7 @@ export class Ha3dFloorplan extends HTMLElement {
   }
 
   /** Libellé d'un ouvrant créé depuis le plan : « Porte 1 », « Fenêtre 2 · vantail 1 ». */
-  private _planPartLabel = (kind: 'door' | 'window' | 'slider', n: number, leaf: number, leaves: number) =>
+  private _planPartLabel = (kind: OpeningKind, n: number, leaf: number, leaves: number) =>
     `${t(kind === 'door' ? 'sh3dDoor' : kind === 'window' ? 'sh3dWindow' : 'planSlider')} ${n}${leaves > 1 && kind === 'window' ? ` · ${t('sh3dLeaf')} ${leaf}` : ''}`;
 
   /**
@@ -447,7 +456,7 @@ export class Ha3dFloorplan extends HTMLElement {
     this._scene = { ...this._scene, plan };
     const root = this._modelRoot;
     // Premier dessin, ou passage de la démo (ou d'un import) au plan : on charge.
-    if (!root || root.name !== 'owlnest_plan' || !plan.rooms.length) {
+    if (!root || root.name !== 'owlnest_plan' || !plan.walls.length) {
       this._syncPlanPartsAfterLoad = true;
       void this._loadModel();
       return;
@@ -492,8 +501,8 @@ export class Ha3dFloorplan extends HTMLElement {
   }
 
   /**
-   * Ouvre l'éditeur de plan, à gauche de la carte ; la 3D reste visible à
-   * droite et suit chaque retouche.
+   * Ouvre l'éditeur de plan, en plein écran : le plan à gauche, la 3D à
+   * droite qui suit chaque retouche (ou l'un des deux en grand).
    *
    * Dessiner par-dessus la maison de démo repart d'une scène vierge, comme un
    * import. Par-dessus un modèle importé, le modèle est gardé dans la scène :
@@ -506,12 +515,13 @@ export class Ha3dFloorplan extends HTMLElement {
     if (!this._scene) this._scene = emptyScene(sceneId);
     this.overlayContainer.querySelector('#owlnest-demo-banner')?.remove();
     let fromDemo = this._isDemo;
+    this._enterFullscreen();
     this._planEditor = new PlanEditor({
       container: this.overlayContainer,
-      plan: this._scene.plan ?? emptyPlan(),
+      plan: this._planDoc() ?? emptyPlan(),
       onChange: (plan) => {
         if (!this._scene) return;
-        if (fromDemo && plan.rooms.length) {
+        if (fromDemo && plan.walls.length) {
           fromDemo = false;
           this._scene = { ...this._scene, anchors: [], camera_views: [], parts: [] };
           try { localStorage.removeItem(this._storageKey); } catch { /* stockage bloqué */ }
@@ -519,17 +529,63 @@ export class Ha3dFloorplan extends HTMLElement {
         this.applyPlan(plan);
         this._schedulePlanSave(800);
       },
+      onLayout: (covered) => {
+        this._viewShift = covered;
+        this._applyViewShift();
+        if (this._plan) this._frameModel();
+      },
       onClose: () => {
         this._planEditor = null;
         this._viewShift = 0;
+        this._exitFullscreen();
         this._applyViewShift();
+        if (this._plan) this._frameModel();
         this._schedulePlanSave(0);
         if (this._isDemo) this._showDemoBanner();
       },
     });
-    this._viewShift = this._planEditor.width;
-    this._applyViewShift();
-    if (this._plan) this._frameModel();
+  }
+
+  /**
+   * La carte passe en plein écran le temps de dessiner : elle est sortie du
+   * tableau de bord et posée par-dessus la page, une place vide gardant sa
+   * hauteur. Le rendu 3D (le même canevas) la suit sans rien recréer.
+   */
+  private _fullscreenHost: HTMLDivElement | null = null;
+  private _fullscreenSpot: HTMLDivElement | null = null;
+
+  private get _haCard(): HTMLElement | null {
+    return (this._fullscreenHost?.querySelector('ha-card') ?? this.querySelector('ha-card')) as HTMLElement | null;
+  }
+
+  private _enterFullscreen() {
+    const card = this._haCard;
+    if (!card || this._fullscreenHost) return;
+    const spot = document.createElement('div');
+    spot.style.height = `${card.offsetHeight}px`;
+    card.replaceWith(spot);
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;inset:0;z-index:9000;background:#050a14;';
+    host.append(card);
+    document.body.append(host);
+    card.style.setProperty('--ha-card-border-radius', '0');
+    card.style.borderRadius = '0';
+    this._fullscreenHost = host;
+    this._fullscreenSpot = spot;
+    this._onResize();
+  }
+
+  private _exitFullscreen() {
+    const card = this._haCard;
+    const host = this._fullscreenHost, spot = this._fullscreenSpot;
+    this._fullscreenHost = null;
+    this._fullscreenSpot = null;
+    if (!card || !host || !spot) return;
+    card.style.setProperty('--ha-card-border-radius', '12px');
+    card.style.borderRadius = '';
+    spot.replaceWith(card);
+    host.remove();
+    this._onResize();
   }
 
   private _schedulePlanSave(delay: number) {
@@ -2317,6 +2373,7 @@ export class Ha3dFloorplan extends HTMLElement {
    * quand elle est placée tout en bas d'une longue page.
    */
   private _cardHeight(container: HTMLElement, w: number): number {
+    if (this._fullscreenHost) return window.innerHeight;
     const h = this._config?.height;
     if (h === 'fill') {
       const top = container.getBoundingClientRect().top;
@@ -3821,7 +3878,7 @@ export class Ha3dFloorplan extends HTMLElement {
   // ── Resize ────────────────────────────────────────────────────────────
 
   private _onResize() {
-    const container = this.querySelector('ha-card') as HTMLElement | null;
+    const container = this._haCard;
     if (!container || !this.renderer || !this.camera) return;
     const w = container.offsetWidth;
     const h = this._cardHeight(container, w);
@@ -3850,6 +3907,8 @@ export class Ha3dFloorplan extends HTMLElement {
   // ── Cleanup ───────────────────────────────────────────────────────────
 
   private _teardown() {
+    // L'éditeur ouvert se ferme proprement : la carte quitte le plein écran.
+    this._planEditor?.close();
     cancelAnimationFrame(this.rafId);
     this._detachDrop?.();
     this._detachDrop = null;

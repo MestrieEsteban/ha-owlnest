@@ -3,34 +3,52 @@
  *
  * Le plan est la source : la 3D se reconstruit à partir de lui à chaque
  * chargement et en direct pendant qu'on dessine. On garde des intentions
- * (« une pièce de 4 × 3 m », « une porte de 90 cm sur ce mur »), jamais des
+ * (« un mur d'ici à là », « une porte de 90 cm sur ce mur »), jamais des
  * triangles : un plan reste éditable, et pèse quelques kilo-octets.
  *
+ * Comme sur un vrai plan d'architecte, le dessin est un réseau de murs : des
+ * coins (`nodes`) reliés par des murs (`walls`). Les pièces ne sont pas
+ * dessinées, elles sont déduites : tout espace fermé par des murs en est une.
+ * Une pièce ne garde que ce qu'on ne peut pas deviner (nom, sol), et un point
+ * qui dit laquelle elle est (`seed`).
+ *
  * Unités : mètres. Repère de dessin vu de dessus : `x` vers la droite, `y`
- * vers le bas de l'écran ; en 3D, `y` devient la profondeur et la hauteur
- * part vers le haut.
+ * vers le bas de l'écran ; en 3D, `y` devient la profondeur.
  */
+
+export interface PlanNode {
+  id: string;
+  x: number;
+  y: number;
+}
+
+export interface PlanWall {
+  id: string;
+  /** Coins de départ et d'arrivée. */
+  a: string;
+  b: string;
+  /** Réglages propres à ce mur ; absents, ceux du plan. */
+  thickness?: number;
+  height?: number;
+}
 
 export interface PlanRoom {
   id: string;
   name: string;
-  /** Coin haut-gauche et taille, sur les lignes médianes des murs. */
-  x: number;
-  y: number;
-  w: number;
-  d: number;
   /** Couleur du sol, `#rrggbb`. */
   floor?: string;
+  /** Un point à l'intérieur : la pièce est l'espace fermé qui le contient. */
+  seed: { x: number; y: number };
 }
 
-export type OpeningKind = 'door' | 'window' | 'slider';
+export type OpeningKind = 'door' | 'window' | 'slider' | 'passage';
 
 export interface PlanOpening {
   id: string;
   kind: OpeningKind;
-  /** Milieu de l'ouverture, posé sur la ligne d'un mur. */
-  x: number;
-  y: number;
+  wall: string;
+  /** Milieu de l'ouverture, en mètres depuis le coin de départ du mur. */
+  offset: number;
   width: number;
   height: number;
   /** Hauteur du bas de l'ouverture : 0 pour une porte, l'allège pour une fenêtre. */
@@ -41,12 +59,6 @@ export interface PlanOpening {
   swing: 'front' | 'back';
   /** Deux vantaux, pour une fenêtre ou une porte-fenêtre. */
   double?: boolean;
-}
-
-/** Réglages propres à un mur, retrouvé par son identifiant (voir walls.ts). */
-export interface WallOverride {
-  height?: number;
-  thickness?: number;
 }
 
 /** Image de plan posée sous le dessin, pour le calquer. */
@@ -63,12 +75,13 @@ export interface PlanBackground {
 }
 
 export interface PlanDoc {
-  version: 1;
+  version: 2;
   wallHeight: number;
   wallThickness: number;
+  nodes: PlanNode[];
+  walls: PlanWall[];
   rooms: PlanRoom[];
   openings: PlanOpening[];
-  walls?: Record<string, WallOverride>;
   background?: PlanBackground;
   /**
    * Point du plan placé au centre de la scène 3D. Fixé au premier dessin et
@@ -79,7 +92,7 @@ export interface PlanDoc {
 }
 
 export function emptyPlan(): PlanDoc {
-  return { version: 1, wallHeight: 2.5, wallThickness: 0.15, rooms: [], openings: [] };
+  return { version: 2, wallHeight: 2.5, wallThickness: 0.15, nodes: [], walls: [], rooms: [], openings: [] };
 }
 
 /** Dimensions par défaut d'une nouvelle ouverture, en mètres. */
@@ -87,4 +100,5 @@ export const OPENING_DEFAULTS: Record<OpeningKind, Pick<PlanOpening, 'width' | '
   door: { width: 0.83, height: 2.04, sill: 0 },
   window: { width: 1.2, height: 1.25, sill: 0.9 },
   slider: { width: 2.2, height: 2.15, sill: 0 },
+  passage: { width: 0.9, height: 2.1, sill: 0 },
 };

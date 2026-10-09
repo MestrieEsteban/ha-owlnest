@@ -1,36 +1,82 @@
 /**
- * plan/editor-ui.ts — l'éditeur de plan, en vue de dessus.
+ * plan/editor-ui.ts — l'éditeur de plan, en plein écran.
  *
- * Un panneau à gauche de la carte : le plan en 2D, une barre d'outils, et les
- * réglages de ce qui est sélectionné. La 3D reste visible à droite et suit
- * chaque retouche. Les décisions de position viennent de edit.ts et walls.ts ;
- * ici, on ne fait que traduire la souris et le clavier.
+ * Pensé pour qu'on s'en serve sans mode d'emploi : de gros outils à gauche, le
+ * plan au milieu, et les réglages de ce qu'on touche dans une bulle à droite.
+ * Tout se manipule directement : on tire un mur et les deux pièces suivent, on
+ * tire un coin, on fait glisser une porte le long de son mur. Chaque mur porte
+ * sa cote, et les traits s'alignent tout seuls sur ce qui est déjà dessiné.
+ *
+ * La 3D est à côté (« Plan + 3D ») ou en grand (« 3D »), et suit chaque
+ * retouche. Les règles du dessin (couper, fusionner, trouver les pièces)
+ * vivent dans graph.ts ; ici, on ne fait que traduire la souris et le doigt.
  */
 
-import { t } from '../i18n';
-import type { PlanDoc, PlanRoom, PlanOpening, OpeningKind } from './types';
+import { t, getLang, type StringKey } from '../i18n';
+import type { PlanDoc, PlanOpening, OpeningKind, PlanWall } from './types';
 import { OPENING_DEFAULTS } from './types';
-import { wallsOf, wallFor, snapToWall, netArea, type Wall } from './walls';
 import {
-  roomFromDrag, moveRoom, resizeRoom, roomAt, calibrate, nextRoomName, clonePlan, newId,
-  MIN_ROOM, type Handle,
-} from './edit';
+  type Pt, sub, add, mul, dot, dist, norm, perp, project, insidePoint, pointInPolygon, clipAlong, round3,
+} from './geometry';
+import {
+  type Face, newId, wallEnds, wallLength, thicknessOf, heightOf, openingFits, wallAt, nodeAt, nodeOf,
+  addWall, addRect, removeWall, cleanup, moveNode, splitWall, faces, reconcileRooms, roomAtPoint,
+  polygonArea, settle, roomShapes, reseedRooms,
+} from './graph';
+import { wallFootprints } from './footprint';
+import { TEMPLATES, templatePlan, type TemplateId } from './templates';
+import { ROOM_TYPES, FLOOR_COLORS, type RoomType } from './rooms';
 
-type Tool = 'select' | 'room' | 'door' | 'window' | 'slider' | 'calibrate' | 'image';
-type Selection = { type: 'room' | 'opening' | 'wall'; id: string } | null;
+type Tool = 'select' | 'room' | 'wall' | OpeningKind | 'erase' | 'calibrate' | 'image';
+type ViewMode = 'plan' | 'split' | '3d';
+type Hit =
+  | { type: 'node'; id: string }
+  | { type: 'wall'; id: string }
+  | { type: 'opening'; id: string }
+  | { type: 'room'; id: string };
+type Guide = { x?: number; y?: number };
 
 const SVG = 'http://www.w3.org/2000/svg';
-const FONT = 'var(--primary-font-family, Inter, sans-serif)';
-const ACCENT = '#38bdf8';
-const FLOORS = ['#c9b08a', '#b98b5e', '#d9d2c5', '#b7c4cf', '#9fb8a0', '#8e9aaf'];
+const FONT = 'var(--primary-font-family, Inter, system-ui, sans-serif)';
+
+// Le plan se lit comme un plan sur papier ; l'habillage autour reste sombre,
+// comme le reste de la carte.
+const C = {
+  chrome: '#0b1220',
+  chrome2: '#111a2e',
+  line: 'rgba(255,255,255,0.08)',
+  text: '#e2e8f0',
+  muted: '#94a3b8',
+  accent: '#38bdf8',
+  paper: '#f6f4ef',
+  grid: '#e4e0d6',
+  gridStrong: '#d4cfc2',
+  wall: '#2f343b',
+  dim: '#2563eb',
+  select: '#0ea5e9',
+  hover: '#f59e0b',
+  danger: '#ef4444',
+  opening: '#2f343b',
+};
+
+/** Distances de prise, en pixels à l'écran. */
+const GRAB = 12;
+/** Pas de la grille d'accroche, en mètres. */
+const STEP = 0.05;
+/** Plus petite pièce qu'on accepte de tracer. */
+const MIN_SIDE = 0.4;
 
 export interface PlanEditorOptions {
   container: HTMLElement;
   plan: PlanDoc;
   /** Le plan a changé (fin d'un geste, saisie validée). */
   onChange: (plan: PlanDoc) => void;
+  /** Largeur couverte à gauche, en pixels : la 3D occupe le reste. */
+  onLayout: (covered: number) => void;
   onClose: () => void;
 }
+
+// ── Petits outils DOM ─────────────────────────────────────────────────────
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, css = '', text = ''): HTMLElementTagNameMap[K] => {
   const e = document.createElement(tag);
@@ -39,748 +85,1039 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, css = '', text = ''):
   return e;
 };
 
-const svgEl = (tag: string, attrs: Record<string, string | number>): SVGElement => {
+const svgEl = (tag: string, attrs: Record<string, string | number> = {}): SVGElement => {
   const e = document.createElementNS(SVG, tag);
   for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
   return e;
 };
 
-const m = (v: number) => `${v.toFixed(2).replace(/\.?0+$/, '')} m`;
+const poly = (pts: readonly Pt[]) => pts.map((p) => `${p.x},${p.y}`).join(' ');
+
+const clone = (p: PlanDoc): PlanDoc => JSON.parse(JSON.stringify(p));
+
+/** Une longueur à la française ou à l'anglaise : « 3,45 m ». */
+function meters(v: number): string {
+  const s = (Math.round(v * 100) / 100).toLocaleString(getLang() === 'fr' ? 'fr-FR' : 'en-GB', { maximumFractionDigits: 2 });
+  return `${s} m`;
+}
+
+const parseNum = (s: string) => parseFloat(s.replace(',', '.').replace(/[^\d.\-]/g, ''));
+
+/** Icônes au trait, dessinées sur 24 × 24. */
+const ICONS: Record<string, string> = {
+  select: '<path d="M5 3l14 8-6 1.5L10 19z" fill="currentColor" stroke="none"/>',
+  room: '<rect x="4" y="5" width="16" height="14" rx="1.5"/><path d="M4 12h7v7"/>',
+  wall: '<path d="M4 18L10 6l10 4"/><circle cx="4" cy="18" r="1.8" fill="currentColor"/><circle cx="10" cy="6" r="1.8" fill="currentColor"/><circle cx="20" cy="10" r="1.8" fill="currentColor"/>',
+  door: '<path d="M4 20h16"/><path d="M6 20V6"/><path d="M6 6a14 14 0 0 1 14 14" stroke-dasharray="2 2"/>',
+  window: '<rect x="3" y="9" width="18" height="6"/><path d="M3 12h18"/>',
+  slider: '<path d="M3 10h12M3 14h18"/><path d="M12 7l3 3-3 3"/>',
+  passage: '<path d="M5 20V10a7 7 0 0 1 14 0v10"/>',
+  erase: '<path d="M15 4l5 5-9 9H6l-3-3z"/><path d="M9 10l5 5"/><path d="M11 20h9"/>',
+  undo: '<path d="M9 7L4 12l5 5"/><path d="M4 12h10a6 6 0 0 1 0 12"/>',
+  redo: '<path d="M15 7l5 5-5 5"/><path d="M20 12H10a6 6 0 0 0 0 12"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  minus: '<path d="M5 12h14"/>',
+  fit: '<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>',
+  image: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-8 8"/>',
+  ruler: '<path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/>',
+  move: '<path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/>',
+  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+  flip: '<path d="M12 3v18"/><path d="M8 7L4 12l4 5M16 7l4 5-4 5"/>',
+  swap: '<path d="M7 4v16M7 20l-3-3M7 20l3-3M17 20V4M17 4l-3 3M17 4l3 3"/>',
+  corner: '<path d="M4 20V4h16"/><circle cx="4" cy="4" r="2.2" fill="currentColor"/>',
+  pencil: '<path d="M4 20l1-5L16 4l4 4L9 19z"/><path d="M14 6l4 4"/>',
+  check: '<path d="M4 12l5 5L20 6"/>',
+  close: '<path d="M6 6l12 12M18 6L6 18"/>',
+  cube: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/>',
+  split: '<rect x="3" y="5" width="18" height="14" rx="1.5"/><path d="M12 5v14"/>',
+  plan: '<rect x="3" y="5" width="18" height="14" rx="1.5"/><path d="M3 12h9v7M12 5v4"/>',
+  sparkle: '<path d="M12 3l2 6 6 2-6 2-2 6-2-6-6-2 6-2z"/>',
+};
+
+function icon(name: string, size = 22): SVGSVGElement {
+  const s = document.createElementNS(SVG, 'svg') as SVGSVGElement;
+  s.setAttribute('viewBox', '0 0 24 24');
+  s.setAttribute('width', String(size));
+  s.setAttribute('height', String(size));
+  s.setAttribute('fill', 'none');
+  s.setAttribute('stroke', 'currentColor');
+  s.setAttribute('stroke-width', '1.8');
+  s.setAttribute('stroke-linecap', 'round');
+  s.setAttribute('stroke-linejoin', 'round');
+  s.innerHTML = ICONS[name] ?? '';
+  s.style.flexShrink = '0';
+  return s;
+}
+
+const TOOLS: { tool: Tool; icon: string; label: StringKey; key: string }[] = [
+  { tool: 'select', icon: 'select', label: 'planToolSelect', key: 'v' },
+  { tool: 'room', icon: 'room', label: 'planToolRoom', key: 'r' },
+  { tool: 'wall', icon: 'wall', label: 'planToolWall', key: 'm' },
+  { tool: 'door', icon: 'door', label: 'planToolDoor', key: 'p' },
+  { tool: 'window', icon: 'window', label: 'planToolWindow', key: 'f' },
+  { tool: 'slider', icon: 'slider', label: 'planToolSlider', key: 'b' },
+  { tool: 'passage', icon: 'passage', label: 'planToolPassage', key: 'o' },
+  { tool: 'erase', icon: 'erase', label: 'planToolErase', key: 'e' },
+];
+
+const KIND_LABEL: Record<OpeningKind, StringKey> = {
+  door: 'planToolDoor', window: 'planToolWindow', slider: 'planToolSlider', passage: 'planToolPassage',
+};
+
+// ── L'éditeur ─────────────────────────────────────────────────────────────
 
 export class PlanEditor {
   private plan: PlanDoc;
   private history: PlanDoc[] = [];
   private future: PlanDoc[] = [];
   private tool: Tool = 'select';
-  private sel: Selection = null;
+  private mode: ViewMode = 'split';
+  private sel: Hit | null = null;
+  private hover: Hit | null = null;
   /** Vue : centre en mètres, et pixels par mètre. */
-  private view = { cx: 0, cy: 0, scale: 60 };
+  private view = { cx: 0, cy: 0, scale: 50 };
+  /** Les pièces du dessin courant, recalculées à chaque rendu. */
+  private all: Face[] = [];
 
   private root: HTMLDivElement;
+  private panel: HTMLDivElement;
+  private rail: HTMLDivElement;
+  private stage: HTMLDivElement;
   private svg: SVGSVGElement;
-  private side: HTMLDivElement;
-  private toolbar: HTMLDivElement;
-  private status: HTMLDivElement;
+  private bubble: HTMLDivElement;
+  private hintEl: HTMLDivElement;
+  private modeBar: HTMLDivElement;
+  private floating: HTMLDivElement;
+  private emptyState: HTMLDivElement | null = null;
+  private popup: HTMLElement | null = null;
+  private undoBtn!: HTMLButtonElement;
+  private redoBtn!: HTMLButtonElement;
+  private resize: ResizeObserver;
 
   /** Geste en cours. */
   private drag:
     | { kind: 'pan'; sx: number; sy: number; cx: number; cy: number }
-    | { kind: 'draw'; ax: number; ay: number; bx: number; by: number }
-    | { kind: 'move'; id: string; ax: number; ay: number; ox: number; oy: number }
-    | { kind: 'resize'; id: string; handle: Handle }
-    | { kind: 'opening'; id: string }
-    | { kind: 'image'; ax: number; ay: number; ox: number; oy: number }
+    | { kind: 'node'; id: string; shapes: Map<string, string[]> }
+    | { kind: 'wall'; id: string; from: Pt; normal: Pt; orig: Map<string, Pt>; shapes: Map<string, string[]>; detached: boolean }
+    | { kind: 'room'; id: string; from: Pt; orig: Map<string, Pt>; shapes: Map<string, string[]> }
+    | { kind: 'opening'; id: string; grab: number }
+    | { kind: 'rect'; a: Pt; b: Pt }
+    | { kind: 'image'; from: Pt; ox: number; oy: number }
     | null = null;
   private moved = false;
-  private ghost: { x: number; y: number; wall: Wall } | null = null;
-  private calib: { ax: number; ay: number } | null = null;
+  private downAt: { x: number; y: number } = { x: 0, y: 0 };
+  /** Mur en cours de tracé : les points posés, et le curseur. */
+  private chain: { pts: Pt[]; cursor: Pt; typed: string } | null = null;
+  private cursor: Pt | null = null;
+  private guides: Guide[] = [];
+  private calib: Pt | null = null;
+  /** Doigts posés, pour le pincement. */
+  private touches = new Map<number, { x: number; y: number }>();
+  private pinch: { d: number; scale: number; mid: Pt } | null = null;
+  private longPress: ReturnType<typeof setTimeout> | null = null;
+  private roomCounter = 0;
+  /** Les réglages généraux restent repliés tant qu'on ne les demande pas. */
+  private showSettings = false;
 
   constructor(private opts: PlanEditorOptions) {
-    this.plan = clonePlan(opts.plan);
-    this.root = el('div', [
-      'position:absolute', 'left:0', 'top:0', 'bottom:0', 'width:min(64%,860px)', 'min-width:320px',
-      'display:flex', 'flex-direction:column', 'background:#0a0f1c', 'border-right:1px solid rgba(255,255,255,0.08)',
-      'box-shadow:8px 0 30px rgba(0,0,0,0.45)', 'z-index:120', 'pointer-events:auto', `font-family:${FONT}`, 'color:#e2e8f0',
+    this.plan = clone(opts.plan);
+    this.roomCounter = this.plan.rooms.length;
+
+    this.root = el('div', `position:absolute;inset:0;z-index:120;pointer-events:none;font-family:${FONT};color:${C.text};`);
+
+    // Panneau du plan : barre du haut, outils, dessin.
+    this.panel = el('div', [
+      'position:absolute', 'left:0', 'top:0', 'bottom:0', 'display:flex', 'flex-direction:column',
+      `background:${C.chrome}`, 'pointer-events:auto', 'box-shadow:6px 0 28px rgba(0,0,0,0.35)',
+      'transition:width .25s ease',
     ].join(';'));
 
-    // En-tête
-    const head = el('div', 'display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.08);');
-    head.append(el('div', 'font-weight:700;font-size:13px;color:#7dd3fc;flex:1;', t('planTitle')));
-    const undo = this.button('↶', () => this.undo(), t('planUndo'));
-    const redo = this.button('↷', () => this.redo(), t('planRedo'));
-    const done = this.button(t('planDone'), () => this.close(), '', true);
-    head.append(undo, redo, done);
-
-    this.toolbar = el('div', 'display:flex;flex-wrap:wrap;gap:6px;padding:8px 14px;border-bottom:1px solid rgba(255,255,255,0.06);');
+    const top = el('div', `display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid ${C.line};min-height:44px;box-sizing:border-box;`);
+    const title = el('div', 'font-weight:700;font-size:14px;color:#7dd3fc;display:flex;align-items:center;gap:8px;white-space:nowrap;');
+    title.append(icon('pencil', 18), document.createTextNode(t('planTitle')));
+    this.modeBar = el('div', `display:flex;background:${C.chrome2};border:1px solid ${C.line};border-radius:10px;padding:3px;gap:2px;`);
+    this.undoBtn = this.iconButton('undo', t('planUndo'), () => this.undo());
+    this.redoBtn = this.iconButton('redo', t('planRedo'), () => this.redo());
+    const done = this.pill(t('planDone'), () => this.close(), true, 'check');
+    top.append(title, el('div', 'flex:1;'), this.modeBar, el('div', 'flex:1;'), this.undoBtn, this.redoBtn, done);
 
     const body = el('div', 'flex:1;display:flex;min-height:0;');
-    const canvasWrap = el('div', 'flex:1;position:relative;min-width:0;background:#0f172a;');
+    this.rail = el('div', `width:78px;flex-shrink:0;display:flex;flex-direction:column;gap:4px;padding:8px 6px;border-right:1px solid ${C.line};overflow-y:auto;`);
+    this.stage = el('div', `flex:1;position:relative;min-width:0;background:${C.paper};overflow:hidden;`);
     this.svg = document.createElementNS(SVG, 'svg') as SVGSVGElement;
-    this.svg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:crosshair;';
-    canvasWrap.append(this.svg);
-    this.status = el('div', 'position:absolute;left:10px;bottom:8px;font-size:11px;color:#94a3b8;pointer-events:none;');
-    canvasWrap.append(this.status);
-    this.side = el('div', 'width:230px;flex-shrink:0;overflow-y:auto;padding:12px;border-left:1px solid rgba(255,255,255,0.06);font-size:12px;');
-    body.append(canvasWrap, this.side);
+    this.svg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;touch-action:none;user-select:none;-webkit-user-select:none;';
+    this.stage.append(this.svg);
 
-    this.root.append(head, this.toolbar, body);
+    this.hintEl = el('div', [
+      'position:absolute', 'left:50%', 'bottom:14px', 'transform:translateX(-50%)', 'max-width:calc(100% - 140px)',
+      'background:rgba(15,23,42,0.86)', 'color:#e2e8f0', 'font-size:12.5px', 'line-height:1.4', 'padding:7px 14px',
+      'border-radius:999px', 'pointer-events:none', 'text-align:center', 'box-shadow:0 4px 14px rgba(0,0,0,0.18)',
+    ].join(';'));
+    const zoom = el('div', 'position:absolute;right:12px;bottom:12px;display:flex;flex-direction:column;gap:6px;');
+    zoom.append(
+      this.stageButton('plus', () => this.zoomBy(1.25)),
+      this.stageButton('minus', () => this.zoomBy(0.8)),
+      this.stageButton('fit', () => { this.fit(); this.render(); }),
+    );
+    this.bubble = el('div', [
+      'position:absolute', 'top:12px', 'right:12px', 'width:250px', 'max-height:calc(100% - 24px)', 'overflow-y:auto',
+      `background:${C.chrome}`, 'border-radius:14px', 'box-shadow:0 10px 30px rgba(0,0,0,0.28)', 'padding:14px',
+      'font-size:12.5px', 'box-sizing:border-box',
+    ].join(';'));
+    this.stage.append(this.hintEl, zoom, this.bubble);
+    body.append(this.rail, this.stage);
+    this.panel.append(top, body);
+
+    // En mode 3D, le plan s'efface : une petite barre permet d'y revenir.
+    this.floating = el('div', [
+      'position:absolute', 'left:12px', 'top:12px', 'display:none', 'gap:8px', 'align-items:center', 'pointer-events:auto',
+      `background:${C.chrome}`, 'padding:6px', 'border-radius:12px', 'box-shadow:0 8px 24px rgba(0,0,0,0.4)',
+    ].join(';'));
+
+    this.root.append(this.panel, this.floating);
     opts.container.append(this.root);
 
-    this.buildToolbar();
+    this.buildModeBar();
+    this.buildRail();
     this.bindPointer();
-    document.addEventListener('keydown', this.onKey);
-    // La taille du dessin n'est connue qu'une fois le panneau affiché, et
-    // change avec la carte : on recadre au premier vrai affichage, puis on
-    // redessine à chaque changement.
+    // En capture sur la fenêtre : les raccourcis de Home Assistant (« e »,
+    // « m »…) ne doivent pas se déclencher pendant qu'on dessine.
+    window.addEventListener('keydown', this.onKey, true);
     let fitted = false;
     this.resize = new ResizeObserver(() => {
       const r = this.svg.getBoundingClientRect();
       if (!r.width || !r.height) return;
       if (!fitted) { fitted = true; this.fit(); }
       this.render();
+      this.layout();
     });
-    this.resize.observe(this.svg);
-    this.renderSide();
-    this.hint();
+    this.resize.observe(this.root);
+    this.setMode(this.plan.walls.length ? 'split' : 'plan');
+    this.refresh();
   }
-
-  private resize: ResizeObserver;
 
   // ── Cycle de vie ─────────────────────────────────────────────────────────
 
-  /** Largeur du panneau, en pixels : la carte décale la 3D d'autant. */
-  get width(): number {
-    return this.root.getBoundingClientRect().width;
-  }
-
   close() {
-    document.removeEventListener('keydown', this.onKey);
+    window.removeEventListener('keydown', this.onKey, true);
     this.resize.disconnect();
+    this.closePopup();
     this.root.remove();
     this.opts.onClose();
   }
 
+  private layout() {
+    const total = this.root.getBoundingClientRect().width;
+    // Sur un téléphone, plan et 3D côte à côte seraient trop étroits.
+    if (this.mode === 'split' && total < 700) { this.mode = 'plan'; this.buildModeBar(); }
+    const w = this.mode === 'plan' ? total : this.mode === 'split' ? Math.round(total * (total < 900 ? 0.6 : 0.55)) : 0;
+    this.panel.style.width = `${w}px`;
+    this.panel.style.display = this.mode === '3d' ? 'none' : 'flex';
+    this.floating.style.display = this.mode === '3d' ? 'flex' : 'none';
+    this.opts.onLayout(this.mode === 'plan' ? total : w);
+  }
+
+  private setMode(mode: ViewMode) {
+    this.mode = mode;
+    this.buildModeBar();
+    this.layout();
+    // Le panneau change de largeur : le plan se recadre une fois installé.
+    setTimeout(() => { this.fit(); this.render(); }, 260);
+  }
+
   /** Avant chaque modification : l'état courant part dans l'historique. */
   private commit() {
-    this.history.push(clonePlan(this.plan));
-    if (this.history.length > 80) this.history.shift();
+    this.history.push(clone(this.plan));
+    if (this.history.length > 100) this.history.shift();
     this.future = [];
   }
 
+  /** Le plan a changé : pièces remises d'accord, rendu, et la 3D suit. */
   private changed() {
+    reconcileRooms(this.plan, () => `${t('planRoom')} ${++this.roomCounter}`, () => FLOOR_COLORS[this.roomCounter % FLOOR_COLORS.length]);
+    if (this.sel && !this.exists(this.sel)) this.sel = null;
+    this.refresh();
+    this.opts.onChange(clone(this.plan));
+  }
+
+  private refresh() {
     this.render();
-    this.renderSide();
-    this.opts.onChange(clonePlan(this.plan));
+    this.renderBubble();
+    this.renderEmpty();
+    this.hint();
+    this.undoBtn.style.opacity = this.history.length ? '1' : '0.35';
+    this.redoBtn.style.opacity = this.future.length ? '1' : '0.35';
   }
 
   private undo() {
     const prev = this.history.pop();
     if (!prev) return;
-    this.future.push(clonePlan(this.plan));
+    this.future.push(clone(this.plan));
     this.plan = prev;
     this.sel = null;
+    this.chain = null;
     this.changed();
   }
 
   private redo() {
     const next = this.future.pop();
     if (!next) return;
-    this.history.push(clonePlan(this.plan));
+    this.history.push(clone(this.plan));
     this.plan = next;
     this.sel = null;
     this.changed();
   }
 
+  private exists(h: Hit): boolean {
+    if (h.type === 'node') return !!nodeOf(this.plan, h.id);
+    if (h.type === 'wall') return this.plan.walls.some((w) => w.id === h.id);
+    if (h.type === 'opening') return this.plan.openings.some((o) => o.id === h.id);
+    return this.plan.rooms.some((r) => r.id === h.id);
+  }
+
   private onKey = (e: KeyboardEvent) => {
-    const target = e.target as HTMLElement | null;
+    const target = (e.composedPath?.()[0] ?? e.target) as HTMLElement | null;
     if (target && /INPUT|TEXTAREA|SELECT/.test(target.tagName)) return;
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? this.redo() : this.undo(); }
-    else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); this.redo(); }
-    else if (e.key === 'Delete' || e.key === 'Backspace') { if (this.sel) { e.preventDefault(); this.removeSelection(); } }
-    else if (e.key === 'Escape') { this.setTool('select'); this.sel = null; this.render(); this.renderSide(); }
+    if (this.mode === '3d') return;
+    e.stopPropagation();
+    const k = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); e.shiftKey ? this.redo() : this.undo(); return; }
+    if ((e.ctrlKey || e.metaKey) && k === 'y') { e.preventDefault(); this.redo(); return; }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+    // Pendant le tracé d'un mur, les chiffres donnent sa longueur.
+    if (this.chain && this.chain.pts.length) {
+      if (/^[0-9.,]$/.test(e.key)) { e.preventDefault(); this.chain.typed += e.key; this.render(); return; }
+      if (e.key === 'Backspace' && this.chain.typed) { e.preventDefault(); this.chain.typed = this.chain.typed.slice(0, -1); this.render(); return; }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (this.chain.typed) this.typedLength();
+        else this.endChain();
+        return;
+      }
+      if (e.key === 'Backspace') { e.preventDefault(); this.chain.pts.pop(); if (!this.chain.pts.length) this.chain = null; this.render(); return; }
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      if (this.popup) this.closePopup();
+      else if (this.chain) { this.endChain(); }
+      else if (this.tool !== 'select') this.setTool('select');
+      else { this.sel = null; this.refresh(); }
+      return;
+    }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && this.sel) { e.preventDefault(); this.remove(this.sel); return; }
+    const tool = TOOLS.find((x) => x.key === k);
+    if (tool) { e.preventDefault(); this.setTool(tool.tool); }
   };
 
-  // ── Barre d'outils ───────────────────────────────────────────────────────
+  // ── Habillage ────────────────────────────────────────────────────────────
 
-  private button(label: string, onClick: () => void, title = '', primary = false): HTMLButtonElement {
-    const b = el('button', [
-      'border-radius:8px', 'padding:6px 11px', 'font-size:12px', `font-family:${FONT}`, 'cursor:pointer',
-      primary
-        ? 'background:rgba(56,189,248,0.2);border:1px solid rgba(56,189,248,0.55);color:#7dd3fc;font-weight:700'
-        : 'background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);color:#cbd5e1',
-    ].join(';'), label);
-    if (title) b.title = title;
+  private iconButton(name: string, title: string, onClick: () => void): HTMLButtonElement {
+    const b = el('button', `display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:9px;border:1px solid ${C.line};background:${C.chrome2};color:${C.text};cursor:pointer;`);
+    b.title = title;
+    b.append(icon(name, 18));
     b.addEventListener('click', onClick);
     return b;
   }
 
-  private buildToolbar() {
-    this.toolbar.innerHTML = '';
-    const tools: [Tool, string, string][] = [
-      ['select', '⬚', t('planToolSelect')],
-      ['room', '▭', t('planToolRoom')],
-      ['door', '🚪', t('planToolDoor')],
-      ['window', '🪟', t('planToolWindow')],
-      ['slider', '⇆', t('planToolSlider')],
-    ];
-    for (const [tool, icon, label] of tools) {
-      const b = this.button(`${icon} ${label}`, () => this.setTool(tool));
-      if (this.tool === tool) {
-        b.style.background = 'rgba(56,189,248,0.22)';
-        b.style.borderColor = 'rgba(56,189,248,0.7)';
-        b.style.color = '#e0f2fe';
-      }
-      this.toolbar.append(b);
+  private pill(label: string, onClick: () => void, primary = false, iconName?: string, danger = false): HTMLButtonElement {
+    const b = el('button', [
+      'display:inline-flex', 'align-items:center', 'gap:6px', 'border-radius:10px', 'padding:7px 13px', 'font-size:12.5px',
+      `font-family:${FONT}`, 'cursor:pointer', 'font-weight:600', 'white-space:nowrap',
+      primary ? 'background:#0ea5e9;border:1px solid #38bdf8;color:#fff'
+        : danger ? 'background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.45);color:#fca5a5'
+          : `background:${C.chrome2};border:1px solid rgba(255,255,255,0.12);color:#cbd5e1`,
+    ].join(';'));
+    if (iconName) b.append(icon(iconName, 16));
+    b.append(document.createTextNode(label));
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  private stageButton(name: string, onClick: () => void): HTMLButtonElement {
+    const b = el('button', 'width:38px;height:38px;border-radius:11px;border:none;background:#fff;color:#334155;box-shadow:0 2px 10px rgba(0,0,0,0.15);cursor:pointer;display:flex;align-items:center;justify-content:center;');
+    b.append(icon(name, 18));
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  private buildModeBar() {
+    this.modeBar.innerHTML = '';
+    const modes: [ViewMode, string, StringKey][] = [['plan', 'plan', 'planViewPlan'], ['split', 'split', 'planViewSplit'], ['3d', 'cube', 'planView3d']];
+    for (const [mode, ic, label] of modes) {
+      const on = this.mode === mode;
+      const b = el('button', [
+        'display:flex', 'align-items:center', 'gap:6px', 'padding:5px 10px', 'border-radius:8px', 'border:none', 'cursor:pointer',
+        `font-family:${FONT}`, 'font-size:12px', 'font-weight:600',
+        on ? 'background:#0ea5e9;color:#fff' : `background:transparent;color:${C.muted}`,
+      ].join(';'));
+      b.append(icon(ic, 16), document.createTextNode(t(label)));
+      b.addEventListener('click', () => this.setMode(mode));
+      this.modeBar.append(b);
+    }
+    // Barre flottante du mode 3D.
+    this.floating.innerHTML = '';
+    this.floating.append(
+      this.pill(t('planBackToPlan'), () => this.setMode('split'), false, 'pencil'),
+      this.pill(t('planDone'), () => this.close(), true, 'check'),
+    );
+  }
+
+  private buildRail() {
+    this.rail.innerHTML = '';
+    for (const { tool, icon: ic, label, key } of TOOLS) {
+      const on = this.tool === tool;
+      const b = el('button', [
+        'display:flex', 'flex-direction:column', 'align-items:center', 'gap:4px', 'padding:9px 2px 7px', 'border-radius:12px',
+        'cursor:pointer', `font-family:${FONT}`, 'font-size:10.5px', 'font-weight:600', 'line-height:1.15', 'text-align:center',
+        on ? 'background:#0ea5e9;color:#fff;border:1px solid #38bdf8'
+          : `background:transparent;color:${tool === 'erase' ? '#fca5a5' : '#cbd5e1'};border:1px solid transparent`,
+      ].join(';'));
+      b.title = `${t(label)} (${key.toUpperCase()})`;
+      b.append(icon(ic, 24), el('span', '', t(label)));
+      b.addEventListener('click', () => this.setTool(tool));
+      if (tool === 'door' || tool === 'erase') this.rail.append(el('div', `height:1px;background:${C.line};margin:4px 6px;`));
+      this.rail.append(b);
     }
   }
 
   private setTool(tool: Tool) {
+    if (this.chain) this.endChain();
     this.tool = tool;
-    this.ghost = null;
     this.calib = null;
-    this.svg.style.cursor = tool === 'select' ? 'default' : tool === 'image' ? 'move' : 'crosshair';
-    this.buildToolbar();
-    this.render();
-    this.hint();
+    this.hover = null;
+    this.guides = [];
+    this.svg.style.cursor = tool === 'select' ? 'default' : tool === 'image' ? 'move' : tool === 'erase' ? 'pointer' : 'crosshair';
+    this.buildRail();
+    this.refresh();
   }
 
   private hint() {
-    const hints: Record<Tool, string> = {
-      select: t('planHintSelect'),
-      room: t('planHintRoom'),
-      door: t('planHintOpening'),
-      window: t('planHintOpening'),
-      slider: t('planHintOpening'),
-      calibrate: this.calib ? t('planHintCalib2') : t('planHintCalib1'),
-      image: t('planHintImage'),
-    };
-    this.status.textContent = hints[this.tool];
+    let key: StringKey;
+    switch (this.tool) {
+      case 'select': key = this.sel ? 'planHintSelected' : 'planHintSelect'; break;
+      case 'room': key = 'planHintRoom'; break;
+      case 'wall': key = this.chain?.pts.length ? 'planHintWall2' : 'planHintWall'; break;
+      case 'erase': key = 'planHintErase'; break;
+      case 'calibrate': key = this.calib ? 'planHintCalib2' : 'planHintCalib1'; break;
+      case 'image': key = 'planHintImage'; break;
+      default: key = this.plan.walls.length ? 'planHintOpening' : 'planHintNoWalls';
+    }
+    this.hintEl.textContent = t(key);
   }
 
   // ── Vue ──────────────────────────────────────────────────────────────────
 
-  /** Cadre le dessin (ou une zone de 10 m s'il est vide). */
-  private fit() {
+  private box() {
     const r = this.svg.getBoundingClientRect();
-    const w = r.width || 500, h = r.height || 400;
-    let x0 = -5, x1 = 5, y0 = -4, y1 = 4;
-    if (this.plan.rooms.length) {
-      x0 = Math.min(...this.plan.rooms.map((q) => q.x)); x1 = Math.max(...this.plan.rooms.map((q) => q.x + q.w));
-      y0 = Math.min(...this.plan.rooms.map((q) => q.y)); y1 = Math.max(...this.plan.rooms.map((q) => q.y + q.d));
-    }
-    this.view.cx = (x0 + x1) / 2;
-    this.view.cy = (y0 + y1) / 2;
-    this.view.scale = Math.max(15, Math.min(160, Math.min(w / (x1 - x0 + 3), h / (y1 - y0 + 3))));
+    return { left: r.left, top: r.top, w: r.width || 600, h: r.height || 400 };
   }
 
-  /** Point de la souris, en mètres. */
-  private toPlan(e: { clientX: number; clientY: number }): { x: number; y: number } {
-    const r = this.svg.getBoundingClientRect();
+  /** Cadre le dessin (ou une zone de 12 m s'il est vide). */
+  private fit() {
+    const { w, h } = this.box();
+    let x0 = -6, x1 = 6, y0 = -4, y1 = 4;
+    if (this.plan.nodes.length) {
+      x0 = Math.min(...this.plan.nodes.map((n) => n.x)); x1 = Math.max(...this.plan.nodes.map((n) => n.x));
+      y0 = Math.min(...this.plan.nodes.map((n) => n.y)); y1 = Math.max(...this.plan.nodes.map((n) => n.y));
+    }
+    // La bulle de réglages couvre la droite : on laisse de la place.
+    const usable = Math.max(w - 280, w * 0.55);
+    this.view.scale = Math.max(12, Math.min(140, Math.min(usable / (x1 - x0 + 2.5), (h - 80) / (y1 - y0 + 2.5))));
+    this.view.cx = (x0 + x1) / 2 + (w - usable) / 2 / this.view.scale;
+    this.view.cy = (y0 + y1) / 2;
+  }
+
+  private zoomBy(k: number, at?: { clientX: number; clientY: number }) {
+    const b = this.box();
+    const anchor = at ?? { clientX: b.left + b.w / 2, clientY: b.top + b.h / 2 };
+    const before = this.toPlan(anchor);
+    this.view.scale = Math.max(8, Math.min(400, this.view.scale * k));
+    const after = this.toPlan(anchor);
+    this.view.cx += before.x - after.x;
+    this.view.cy += before.y - after.y;
+    this.render();
+  }
+
+  /** Point de l'écran, en mètres. */
+  private toPlan(e: { clientX: number; clientY: number }): Pt {
+    const b = this.box();
     return {
-      x: this.view.cx + (e.clientX - r.left - r.width / 2) / this.view.scale,
-      y: this.view.cy + (e.clientY - r.top - r.height / 2) / this.view.scale,
+      x: this.view.cx + (e.clientX - b.left - b.w / 2) / this.view.scale,
+      y: this.view.cy + (e.clientY - b.top - b.h / 2) / this.view.scale,
     };
   }
 
-  // ── Souris ───────────────────────────────────────────────────────────────
+  /** Point du plan, en pixels dans la scène. */
+  private toStage(p: Pt): { x: number; y: number } {
+    const b = this.box();
+    return { x: (p.x - this.view.cx) * this.view.scale + b.w / 2, y: (p.y - this.view.cy) * this.view.scale + b.h / 2 };
+  }
+
+  private px(n: number) { return n / this.view.scale; }
+
+  // ── Accroche ─────────────────────────────────────────────────────────────
+
+  /**
+   * Où tombe un point qu'on pose : sur un coin proche, sur un mur proche, ou
+   * sur la grille ; et aligné sur les coins existants quand il passe à leur
+   * hauteur (les guides en pointillés le montrent).
+   */
+  private snap(p: Pt, skip: ReadonlySet<string> = new Set(), from?: Pt): { p: Pt; guides: Guide[]; on: 'node' | 'wall' | 'free' } {
+    const tol = this.px(GRAB);
+    const nodes = this.plan.nodes.filter((n) => !skip.has(n.id));
+    let best: Pt | null = null, bd = tol;
+    for (const n of nodes) { const d = dist(n, p); if (d < bd) { bd = d; best = n; } }
+    if (best) return { p: { x: best.x, y: best.y }, guides: [], on: 'node' };
+
+    let q = { ...p };
+    // Depuis le point précédent, les directions franches attirent.
+    if (from) {
+      const v = sub(q, from), l = Math.hypot(v.x, v.y);
+      if (l > 1e-6) {
+        const ang = Math.atan2(v.y, v.x), step = Math.PI / 4;
+        const k = Math.round(ang / step) * step;
+        if (Math.abs(ang - k) < 0.07) {
+          const len = Math.round(l / STEP) * STEP;
+          q = add(from, { x: Math.cos(k) * len, y: Math.sin(k) * len });
+          q = { x: round3(q.x), y: round3(q.y) };
+        }
+      }
+    }
+    for (const w of this.plan.walls) {
+      if (skip.has(w.a) || skip.has(w.b)) continue;
+      const [a, b] = wallEnds(this.plan, w);
+      const pr = project(q, a, b);
+      if (pr.d < tol * 0.8 && pr.t > 0 && pr.t < 1) {
+        // Sur le mur, au pas de la grille le long de lui.
+        const L = dist(a, b), u = Math.round((pr.t * L) / STEP) * STEP;
+        return { p: add(a, mul(norm(sub(b, a)), Math.min(Math.max(u, 0), L))), guides: [], on: 'wall' };
+      }
+    }
+    const guides: Guide[] = [];
+    let gx: number | null = null, gy: number | null = null, dx = tol * 0.7, dy = tol * 0.7;
+    for (const n of nodes) {
+      if (Math.abs(n.x - q.x) < dx) { dx = Math.abs(n.x - q.x); gx = n.x; }
+      if (Math.abs(n.y - q.y) < dy) { dy = Math.abs(n.y - q.y); gy = n.y; }
+    }
+    const out = {
+      x: gx ?? (from && Math.abs(q.x - from.x) < 1e-6 ? q.x : Math.round(q.x / STEP) * STEP),
+      y: gy ?? (from && Math.abs(q.y - from.y) < 1e-6 ? q.y : Math.round(q.y / STEP) * STEP),
+    };
+    if (gx !== null) guides.push({ x: gx });
+    if (gy !== null) guides.push({ y: gy });
+    return { p: { x: round3(out.x), y: round3(out.y) }, guides, on: 'free' };
+  }
+
+  // ── Ce qu'il y a sous le doigt ───────────────────────────────────────────
+
+  private hitAt(p: Pt, opts: { nodes?: boolean } = {}): Hit | null {
+    const tol = this.px(GRAB);
+    // Ouvertures d'abord : elles sont posées sur les murs.
+    for (const o of this.plan.openings) {
+      const w = this.plan.walls.find((q) => q.id === o.wall);
+      if (!w) continue;
+      const [a, b] = wallEnds(this.plan, w);
+      const d = norm(sub(b, a)), v = sub(p, a);
+      const u = dot(v, d) - o.offset, across = Math.abs(dot(v, perp(d)));
+      if (Math.abs(u) <= o.width / 2 + tol * 0.3 && across <= thicknessOf(this.plan, w) / 2 + tol * 0.6) return { type: 'opening', id: o.id };
+    }
+    if (opts.nodes !== false) {
+      const n = nodeAt(this.plan, p, tol);
+      if (n) return { type: 'node', id: n.id };
+    }
+    const w = wallAt(this.plan, p, tol * 0.8);
+    if (w) return { type: 'wall', id: w.wall.id };
+    const r = roomAtPoint(this.plan, p, this.all);
+    if (r) return { type: 'room', id: r.roomId };
+    return null;
+  }
+
+  private same(a: Hit | null, b: Hit | null) { return !!a && !!b && a.type === b.type && a.id === b.id; }
+
+  // ── Souris et doigts ─────────────────────────────────────────────────────
 
   private bindPointer() {
     const svg = this.svg;
     svg.addEventListener('wheel', (e) => {
       e.preventDefault();
-      const before = this.toPlan(e);
-      this.view.scale = Math.max(10, Math.min(300, this.view.scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
-      const after = this.toPlan(e);
-      this.view.cx += before.x - after.x;
-      this.view.cy += before.y - after.y;
-      this.render();
+      // Pavé tactile : deux doigts déplacent, pincer (ctrl) zoome.
+      if (!e.ctrlKey && Math.abs(e.deltaX) > 0 && e.deltaMode === 0 && Math.abs(e.deltaY) < 40) {
+        this.view.cx += e.deltaX / this.view.scale;
+        this.view.cy += e.deltaY / this.view.scale;
+        this.render();
+        return;
+      }
+      this.zoomBy(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)), e);
     }, { passive: false });
 
-    svg.addEventListener('pointerdown', (e) => {
-      svg.setPointerCapture(e.pointerId);
-      this.moved = false;
-      const p = this.toPlan(e);
-      // Bouton du milieu ou droit : on déplace la vue, quel que soit l'outil.
-      if (e.button === 1 || e.button === 2) {
-        this.drag = { kind: 'pan', sx: e.clientX, sy: e.clientY, cx: this.view.cx, cy: this.view.cy };
-        return;
-      }
-      if (this.tool === 'room') {
-        this.drag = { kind: 'draw', ax: p.x, ay: p.y, bx: p.x, by: p.y };
-      } else if (this.tool === 'door' || this.tool === 'window' || this.tool === 'slider') {
-        this.placeOpening(this.tool, p.x, p.y);
-      } else if (this.tool === 'calibrate') {
-        this.calibrateClick(p.x, p.y);
-      } else if (this.tool === 'image' && this.plan.background) {
-        const bg = this.plan.background;
-        this.commit();
-        this.drag = { kind: 'image', ax: p.x, ay: p.y, ox: bg.x, oy: bg.y };
-      } else {
-        this.selectAt(e, p.x, p.y);
-      }
+    svg.addEventListener('pointerdown', (e) => this.onDown(e));
+    svg.addEventListener('pointermove', (e) => this.onMove(e));
+    const up = (e: PointerEvent) => this.onUp(e);
+    svg.addEventListener('pointerup', up);
+    svg.addEventListener('pointercancel', up);
+    svg.addEventListener('pointerleave', () => { if (!this.drag) { this.hover = null; this.cursor = null; this.render(); } });
+    svg.addEventListener('dblclick', (e) => this.onDouble(e));
+    svg.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      this.contextMenu(e.clientX, e.clientY);
     });
+  }
 
-    svg.addEventListener('pointermove', (e) => {
-      const p = this.toPlan(e);
-      const d = this.drag;
-      if (!d) {
-        if (this.tool === 'door' || this.tool === 'window' || this.tool === 'slider') {
-          const s = snapToWall(p.x, p.y, OPENING_DEFAULTS[this.tool].width, wallsOf(this.plan));
-          this.ghost = s ? { x: s.x, y: s.y, wall: s.wall } : null;
-          this.render();
-        } else if (this.tool === 'calibrate' && this.calib) {
-          this.render(p);
-        }
+  private onDown(e: PointerEvent) {
+    this.closePopup();
+    this.svg.setPointerCapture(e.pointerId);
+    if (e.pointerType === 'touch') {
+      this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (this.touches.size === 2) {
+        // Deux doigts : on oublie le geste commencé, c'est un pincement.
+        this.cancelGesture();
+        const [a, b] = [...this.touches.values()];
+        this.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), scale: this.view.scale, mid: this.toPlan({ clientX: (a.x + b.x) / 2, clientY: (a.y + b.y) / 2 }) };
         return;
       }
-      this.moved = true;
-      if (d.kind === 'pan') {
-        this.view.cx = d.cx - (e.clientX - d.sx) / this.view.scale;
-        this.view.cy = d.cy - (e.clientY - d.sy) / this.view.scale;
-      } else if (d.kind === 'draw') {
-        d.bx = p.x; d.by = p.y;
-      } else if (d.kind === 'move') {
-        const room = this.room(d.id);
-        if (room) Object.assign(room, moveRoom({ ...room, x: d.ox, y: d.oy }, p.x - d.ax, p.y - d.ay, this.plan.rooms));
-      } else if (d.kind === 'resize') {
-        const room = this.room(d.id);
-        if (room) Object.assign(room, resizeRoom(room, d.handle, p.x, p.y, this.plan.rooms));
-      } else if (d.kind === 'opening') {
-        const o = this.opening(d.id);
-        if (o) {
-          const s = snapToWall(p.x, p.y, o.width, wallsOf(this.plan));
-          if (s) { o.x = s.x; o.y = s.y; }
+      this.longPress = setTimeout(() => { this.longPress = null; this.cancelGesture(); this.contextMenu(e.clientX, e.clientY); }, 550);
+    }
+    if (e.button === 2) return;
+    this.moved = false;
+    this.downAt = { x: e.clientX, y: e.clientY };
+    const p = this.toPlan(e);
+    const pan = () => { this.drag = { kind: 'pan', sx: e.clientX, sy: e.clientY, cx: this.view.cx, cy: this.view.cy }; };
+    if (e.button === 1) { pan(); return; }
+
+    switch (this.tool) {
+      case 'room': {
+        const s = this.snap(p);
+        this.drag = { kind: 'rect', a: s.p, b: s.p };
+        return;
+      }
+      case 'wall': this.chainClick(p); return;
+      case 'door': case 'window': case 'slider': case 'passage': this.placeOpening(this.tool, p); return;
+      case 'erase': {
+        const h = this.hitAt(p);
+        if (h) this.remove(h); else pan();
+        return;
+      }
+      case 'calibrate': this.calibrateClick(p); return;
+      case 'image':
+        if (this.plan.background) {
+          this.commit();
+          this.drag = { kind: 'image', from: p, ox: this.plan.background.x, oy: this.plan.background.y };
         }
-      } else if (d.kind === 'image' && this.plan.background) {
-        this.plan.background.x = d.ox + p.x - d.ax;
-        this.plan.background.y = d.oy + p.y - d.ay;
+        return;
+    }
+
+    // Sélection : on prend ce qui est sous le doigt, et on peut le tirer.
+    const h = this.hitAt(p);
+    this.sel = h;
+    if (!h) { pan(); this.refresh(); return; }
+    this.commit();
+    if (h.type === 'node') {
+      this.drag = { kind: 'node', id: h.id, shapes: roomShapes(this.plan, this.all) };
+    } else if (h.type === 'wall') {
+      const w = this.plan.walls.find((q) => q.id === h.id)!;
+      const [a, b] = wallEnds(this.plan, w);
+      const orig = new Map([[w.a, { ...a }], [w.b, { ...b }]]);
+      this.drag = { kind: 'wall', id: h.id, from: p, normal: perp(norm(sub(b, a))), orig, shapes: roomShapes(this.plan, this.all), detached: false };
+    } else if (h.type === 'opening') {
+      const o = this.plan.openings.find((q) => q.id === h.id)!;
+      const w = this.plan.walls.find((q) => q.id === o.wall)!;
+      const [a, b] = wallEnds(this.plan, w);
+      this.drag = { kind: 'opening', id: h.id, grab: dot(sub(p, a), norm(sub(b, a))) - o.offset };
+    } else {
+      const face = this.all.find((f) => f.nodes.length && pointInPolygon(this.plan.rooms.find((r) => r.id === h.id)!.seed, f.poly));
+      // Une pièce seule (aucun mur partagé) se déplace d'un bloc ; une pièce
+      // collée aux autres ne bouge pas : on tire plutôt ses murs.
+      if (face && this.isLoose(face)) {
+        const orig = new Map(face.nodes.map((id) => [id, { ...nodeOf(this.plan, id)! }]));
+        this.drag = { kind: 'room', id: h.id, from: p, orig, shapes: roomShapes(this.plan, this.all) };
+      } else {
+        this.history.pop();
+        pan();
+      }
+    }
+    this.refresh();
+  }
+
+  /** Une pièce dont les coins ne servent à aucun autre mur. */
+  private isLoose(face: Face): boolean {
+    const set = new Set(face.nodes);
+    return this.plan.walls.every((w) => set.has(w.a) === set.has(w.b));
+  }
+
+  private onMove(e: PointerEvent) {
+    if (e.pointerType === 'touch' && this.touches.has(e.pointerId)) {
+      this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (this.pinch && this.touches.size === 2) {
+        const [a, b] = [...this.touches.values()];
+        const d = Math.hypot(a.x - b.x, a.y - b.y);
+        this.view.scale = Math.max(8, Math.min(400, this.pinch.scale * (d / this.pinch.d)));
+        const now = this.toPlan({ clientX: (a.x + b.x) / 2, clientY: (a.y + b.y) / 2 });
+        this.view.cx += this.pinch.mid.x - now.x;
+        this.view.cy += this.pinch.mid.y - now.y;
+        this.render();
+        return;
+      }
+    }
+    if (Math.hypot(e.clientX - this.downAt.x, e.clientY - this.downAt.y) > 4 && this.longPress) {
+      clearTimeout(this.longPress); this.longPress = null;
+    }
+    const p = this.toPlan(e);
+    this.cursor = p;
+    const d = this.drag;
+
+    if (!d) {
+      this.guides = [];
+      if (this.tool === 'select' || this.tool === 'erase') {
+        const h = this.hitAt(p);
+        if (!this.same(h, this.hover)) { this.hover = h; this.render(); }
+        this.svg.style.cursor = this.tool === 'erase' ? (h ? 'pointer' : 'default')
+          : h?.type === 'node' || h?.type === 'opening' ? 'grab'
+            : h?.type === 'wall' ? this.wallCursor(h.id) : 'default';
+        return;
+      }
+      if (this.tool === 'wall' || this.tool === 'room') {
+        const last = this.chain?.pts[this.chain.pts.length - 1];
+        const s = this.snap(p, new Set(), last);
+        this.guides = s.guides;
+        if (this.chain) this.chain.cursor = s.p;
+        this.cursor = s.p;
       }
       this.render();
-      if (d.kind !== 'pan') this.renderSide();
-    });
+      return;
+    }
 
-    const end = () => {
-      const d = this.drag;
-      this.drag = null;
-      if (!d) return;
-      if (d.kind === 'draw') {
-        const r = roomFromDrag(d.ax, d.ay, d.bx, d.by, this.plan.rooms);
-        if (r.w >= MIN_ROOM && r.d >= MIN_ROOM) {
-          this.commit();
-          const room: PlanRoom = {
-            id: newId('r'), name: nextRoomName(this.plan.rooms, t('planRoom')), ...r,
-            floor: FLOORS[this.plan.rooms.length % FLOORS.length],
-          };
-          this.plan.rooms.push(room);
-          this.sel = { type: 'room', id: room.id };
-          this.changed();
-        } else {
-          this.render();
+    if (Math.hypot(e.clientX - this.downAt.x, e.clientY - this.downAt.y) > 3) this.moved = true;
+    if (!this.moved) return;
+    switch (d.kind) {
+      case 'pan':
+        this.view.cx = d.cx - (e.clientX - d.sx) / this.view.scale;
+        this.view.cy = d.cy - (e.clientY - d.sy) / this.view.scale;
+        break;
+      case 'rect': {
+        const s = this.snap(p);
+        d.b = s.p; this.guides = s.guides;
+        break;
+      }
+      case 'node': {
+        const s = this.snap(p, new Set([d.id]));
+        moveNode(this.plan, d.id, s.p);
+        this.guides = s.guides;
+        this.live(d.shapes);
+        break;
+      }
+      case 'wall': {
+        // Le mur glisse parallèlement à lui-même, au centimètre près, et
+        // s'aligne sur les coins qu'il croise.
+        let k = dot(sub(p, d.from), d.normal);
+        k = Math.round(k / 0.01) * 0.01;
+        const [a0] = [...d.orig.values()];
+        const tol = this.px(GRAB) * 0.7;
+        let guide: Guide | null = null;
+        for (const n of this.plan.nodes) {
+          if (d.orig.has(n.id)) continue;
+          const off = dot(sub(n, a0), d.normal);
+          if (Math.abs(off - k) < tol) {
+            k = off;
+            guide = Math.abs(d.normal.x) > 0.99 ? { x: n.x } : Math.abs(d.normal.y) > 0.99 ? { y: n.y } : null;
+            break;
+          }
         }
+        if (!d.detached && Math.abs(k) > 1e-6) { d.detached = true; this.detachWall(d.id, d.orig); }
+        for (const [id, o] of d.orig) moveNode(this.plan, id, add(o, mul(d.normal, k)));
+        this.guides = guide ? [guide] : [];
+        this.live(d.shapes);
+        break;
+      }
+      case 'room': {
+        let delta = sub(p, d.from);
+        delta = { x: Math.round(delta.x / STEP) * STEP, y: Math.round(delta.y / STEP) * STEP };
+        // Un coin de la pièce qui passe près d'un autre coin s'y colle.
+        const tol = this.px(GRAB);
+        outer: for (const o of d.orig.values()) {
+          for (const n of this.plan.nodes) {
+            if (d.orig.has(n.id)) continue;
+            const q = add(o, delta);
+            if (dist(q, n) < tol) { delta = sub(n, o); break outer; }
+          }
+        }
+        for (const [id, o] of d.orig) moveNode(this.plan, id, add(o, delta));
+        this.live(d.shapes);
+        break;
+      }
+      case 'opening': {
+        const o = this.plan.openings.find((q) => q.id === d.id);
+        if (!o) break;
+        // Elle glisse sur son mur, ou saute sur un autre si on l'y emmène.
+        const hit = wallAt(this.plan, p, this.px(GRAB * 2));
+        if (hit && hit.wall.id !== o.wall && wallLength(this.plan, hit.wall) >= o.width + 0.05) {
+          o.wall = hit.wall.id;
+          d.grab = 0;
+        }
+        const w = this.plan.walls.find((q) => q.id === o.wall)!;
+        const [a, b] = wallEnds(this.plan, w);
+        const L = dist(a, b);
+        const u = Math.round((dot(sub(p, a), norm(sub(b, a))) - d.grab) / 0.01) * 0.01;
+        o.offset = round3(Math.min(Math.max(u, o.width / 2), L - o.width / 2));
+        break;
+      }
+      case 'image':
+        if (this.plan.background) {
+          this.plan.background.x = d.ox + p.x - d.from.x;
+          this.plan.background.y = d.oy + p.y - d.from.y;
+        }
+        break;
+    }
+    this.render();
+  }
+
+  /**
+   * Avant de pousser un mur : là où il se prolonge par un autre mur aligné
+   * (le mur du salon qui continue le long de la chambre), il s'en détache et
+   * un petit mur de raccord les relie. Seule la pièce qu'on pousse change ;
+   * la voisine garde sa forme.
+   */
+  private detachWall(id: string, orig: Map<string, Pt>) {
+    const w = this.plan.walls.find((q) => q.id === id);
+    if (!w) return;
+    const [a, b] = wallEnds(this.plan, w);
+    const dir = norm(sub(b, a));
+    for (const end of ['a', 'b'] as const) {
+      const nodeId = w[end];
+      const n = nodeOf(this.plan, nodeId)!;
+      const continued = this.plan.walls.some((q) => {
+        if (q === w || (q.a !== nodeId && q.b !== nodeId)) return false;
+        const [p, r] = wallEnds(this.plan, q);
+        return Math.abs(dir.x * (r.y - p.y) - dir.y * (r.x - p.x)) / dist(p, r) < 1e-3;
+      });
+      if (!continued) continue;
+      const m = { id: newId('n'), x: n.x, y: n.y };
+      this.plan.nodes.push(m);
+      w[end] = m.id;
+      this.plan.walls.push({ id: newId('w'), a: nodeId, b: m.id, ...(w.thickness !== undefined ? { thickness: w.thickness } : {}), ...(w.height !== undefined ? { height: w.height } : {}) });
+      const o = orig.get(nodeId)!;
+      orig.delete(nodeId);
+      orig.set(m.id, o);
+    }
+  }
+
+  private wallCursor(id: string): string {
+    const w = this.plan.walls.find((q) => q.id === id);
+    if (!w) return 'default';
+    const [a, b] = wallEnds(this.plan, w);
+    const ang = Math.abs(Math.atan2(b.y - a.y, b.x - a.x)) % Math.PI;
+    return ang < Math.PI / 8 || ang > (7 * Math.PI) / 8 ? 'ns-resize' : Math.abs(ang - Math.PI / 2) < Math.PI / 8 ? 'ew-resize' : 'move';
+  }
+
+  /** Pendant un geste : les pièces gardent leur nom, la vue suit. */
+  private live(shapes: Map<string, string[]>) {
+    this.all = faces(this.plan);
+    reseedRooms(this.plan, shapes, this.all);
+  }
+
+  private onUp(e: PointerEvent) {
+    if (this.longPress) { clearTimeout(this.longPress); this.longPress = null; }
+    if (e.pointerType === 'touch') {
+      this.touches.delete(e.pointerId);
+      if (this.pinch) { if (this.touches.size < 2) this.pinch = null; return; }
+    }
+    const d = this.drag;
+    this.drag = null;
+    this.guides = [];
+    if (!d) return;
+    switch (d.kind) {
+      case 'pan': this.render(); return;
+      case 'rect': {
+        const x0 = Math.min(d.a.x, d.b.x), x1 = Math.max(d.a.x, d.b.x);
+        const y0 = Math.min(d.a.y, d.b.y), y1 = Math.max(d.a.y, d.b.y);
+        if (x1 - x0 < MIN_SIDE || y1 - y0 < MIN_SIDE) { this.render(); return; }
+        this.commit();
+        addRect(this.plan, x0, y0, x1, y1);
+        this.changed();
+        // La pièce tracée est sélectionnée : on peut tout de suite la nommer.
+        const r = roomAtPoint(this.plan, { x: (x0 + x1) / 2, y: (y0 + y1) / 2 }, this.all);
+        if (r) { this.sel = { type: 'room', id: r.roomId }; this.refresh(); }
         return;
       }
-      if (d.kind === 'pan') return;
-      // Un simple clic sur une pièce : l'historique n'a pas à garder ce non-geste.
-      if (!this.moved && (d.kind === 'move' || d.kind === 'opening' || d.kind === 'resize' || d.kind === 'image')) {
-        this.history.pop();
+      case 'node': case 'wall': case 'room': case 'opening': case 'image':
+        if (!this.moved) { this.history.pop(); this.refresh(); return; }
+        if (d.kind !== 'opening' && d.kind !== 'image') {
+          settle(this.plan);
+          this.all = faces(this.plan);
+          reseedRooms(this.plan, d.shapes, this.all);
+          if (d.kind === 'node' && !nodeOf(this.plan, d.id)) this.sel = null;
+        }
+        this.changed();
         return;
-      }
-      this.changed();
-    };
-    svg.addEventListener('pointerup', end);
-    svg.addEventListener('pointercancel', end);
-    svg.addEventListener('contextmenu', (e) => e.preventDefault());
+    }
   }
 
-  private room(id: string) { return this.plan.rooms.find((r) => r.id === id); }
-  private opening(id: string) { return this.plan.openings.find((o) => o.id === id); }
-
-  /** Sélection au clic : poignée, ouverture, pièce, sinon déplacement de la vue. */
-  private selectAt(e: PointerEvent, x: number, y: number) {
-    const tol = 10 / this.view.scale;
-    // Poignées de la pièce sélectionnée.
-    if (this.sel?.type === 'room') {
-      const r = this.room(this.sel.id);
-      if (r) {
-        const h = this.handleAt(r, x, y, tol);
-        if (h) { this.commit(); this.drag = { kind: 'resize', id: r.id, handle: h }; return; }
-      }
+  private cancelGesture() {
+    if (this.drag && this.drag.kind !== 'pan' && this.drag.kind !== 'rect' && this.moved) {
+      const prev = this.history.pop();
+      if (prev) this.plan = prev;
     }
-    // Ouvertures, au-dessus des pièces.
-    const o = this.plan.openings.find((q) => {
-      const along = Math.abs((Math.abs(q.y - y) < tol ? q.x - x : q.y - y));
-      const across = Math.abs(Math.abs(q.y - y) < tol ? q.y - y : q.x - x);
-      return across < tol * 1.5 && along < q.width / 2 + tol;
-    });
-    if (o) {
-      this.sel = { type: 'opening', id: o.id };
-      this.commit();
-      this.drag = { kind: 'opening', id: o.id };
-      this.render(); this.renderSide();
-      return;
-    }
-    // Un mur, sur sa ligne : on le règle à part (hauteur, épaisseur).
-    const wall = wallsOf(this.plan).find((w) => {
-      const along = w.axis === 'x' ? x : y, across = w.axis === 'x' ? y : x;
-      return Math.abs(across - w.at) < w.thickness / 2 + tol * 0.6 && along > w.from && along < w.to;
-    });
-    if (wall) {
-      this.sel = { type: 'wall', id: wall.id };
-      this.drag = { kind: 'pan', sx: e.clientX, sy: e.clientY, cx: this.view.cx, cy: this.view.cy };
-      this.render(); this.renderSide();
-      return;
-    }
-    const r = roomAt(this.plan.rooms, x, y);
-    if (r) {
-      this.sel = { type: 'room', id: r.id };
-      this.commit();
-      this.drag = { kind: 'move', id: r.id, ax: x, ay: y, ox: r.x, oy: r.y };
-      this.render(); this.renderSide();
-      return;
-    }
-    this.sel = null;
-    this.drag = { kind: 'pan', sx: e.clientX, sy: e.clientY, cx: this.view.cx, cy: this.view.cy };
-    this.render(); this.renderSide();
+    this.drag = null;
+    this.render();
   }
 
-  private handleAt(r: PlanRoom, x: number, y: number, tol: number): Handle | null {
-    const nearX0 = Math.abs(x - r.x) < tol, nearX1 = Math.abs(x - (r.x + r.w)) < tol;
-    const nearY0 = Math.abs(y - r.y) < tol, nearY1 = Math.abs(y - (r.y + r.d)) < tol;
-    const inX = x > r.x - tol && x < r.x + r.w + tol, inY = y > r.y - tol && y < r.y + r.d + tol;
-    if (nearY0 && nearX0) return 'nw';
-    if (nearY0 && nearX1) return 'ne';
-    if (nearY1 && nearX0) return 'sw';
-    if (nearY1 && nearX1) return 'se';
-    if (nearY0 && inX) return 'n';
-    if (nearY1 && inX) return 's';
-    if (nearX0 && inY) return 'w';
-    if (nearX1 && inY) return 'e';
-    return null;
+  private onDouble(e: MouseEvent) {
+    if (this.tool === 'wall') { this.endChain(); return; }
+    if (this.tool !== 'select') return;
+    const p = this.toPlan(e);
+    const h = this.hitAt(p);
+    if (h?.type === 'room') this.rename(h.id);
+    else if (h?.type === 'wall') this.addCorner(h.id, p);
+    else if (h?.type === 'opening') this.flipOpening(h.id, 'swing');
   }
 
-  private placeOpening(kind: OpeningKind, x: number, y: number) {
+  // ── Actions ──────────────────────────────────────────────────────────────
+
+  /** Un clic de l'outil Mur : pose un point, et ferme le tracé sur un coin existant. */
+  private chainClick(p: Pt) {
+    const last = this.chain?.pts[this.chain.pts.length - 1];
+    const s = this.snap(p, new Set(), last);
+    if (!this.chain || !this.chain.pts.length) {
+      this.chain = { pts: [s.p], cursor: s.p, typed: '' };
+      this.refresh();
+      return;
+    }
+    this.pushChainPoint(s.p, s.on !== 'free');
+  }
+
+  private pushChainPoint(q: Pt, landed: boolean) {
+    const chain = this.chain!;
+    const last = chain.pts[chain.pts.length - 1];
+    if (dist(last, q) < MIN_SIDE / 4) { this.endChain(); return; }
+    this.commit();
+    addWall(this.plan, last, q);
+    chain.pts.push(q);
+    chain.typed = '';
+    this.changed();
+    // Retour sur le point de départ, ou sur un mur déjà là : le tracé est fini.
+    if (landed || dist(q, chain.pts[0]) < 1e-3) this.chain = null;
+    this.hint();
+    this.render();
+  }
+
+  /** Longueur tapée au clavier : le mur part dans la direction du curseur. */
+  private typedLength() {
+    const chain = this.chain!;
+    const L = parseNum(chain.typed);
+    if (!(L > 0.05)) { chain.typed = ''; this.render(); return; }
+    const last = chain.pts[chain.pts.length - 1];
+    let dir = sub(chain.cursor, last);
+    if (Math.hypot(dir.x, dir.y) < 1e-6) dir = { x: 1, y: 0 };
+    const q = add(last, mul(norm(dir), L));
+    this.pushChainPoint({ x: round3(q.x), y: round3(q.y) }, false);
+  }
+
+  private endChain() {
+    this.chain = null;
+    this.refresh();
+  }
+
+  private placeOpening(kind: OpeningKind, p: Pt) {
+    const hit = wallAt(this.plan, p, this.px(GRAB * 2));
+    if (!hit) { this.flash(t('planNoWall')); return; }
     const def = OPENING_DEFAULTS[kind];
-    const s = snapToWall(x, y, def.width, wallsOf(this.plan));
-    if (!s) { this.status.textContent = t('planNoWall'); return; }
+    const L = wallLength(this.plan, hit.wall);
+    const width = Math.min(def.width, L - 0.1);
+    if (width < 0.4) { this.flash(t('planNoWall')); return; }
     this.commit();
     const o: PlanOpening = {
-      id: newId('o'), kind, x: s.x, y: s.y, ...def, hinge: 'start', swing: 'front',
-      ...(kind === 'window' ? { double: def.width >= 1 } : {}),
+      id: newId('o'), kind, wall: hit.wall.id,
+      offset: round3(Math.min(Math.max(hit.offset, width / 2), L - width / 2)),
+      ...def, width, hinge: 'start', swing: 'front',
+      ...(kind === 'window' && width >= 1 ? { double: true } : {}),
     };
     this.plan.openings.push(o);
     this.sel = { type: 'opening', id: o.id };
     this.changed();
   }
 
-  private calibrateClick(x: number, y: number) {
-    if (!this.calib) { this.calib = { ax: x, ay: y }; this.hint(); this.render(); return; }
-    const { ax, ay } = this.calib;
-    this.calib = null;
-    const measured = Math.hypot(x - ax, y - ay);
-    const answer = window.prompt(t('planCalibAsk'), measured.toFixed(2));
-    const real = answer ? parseFloat(answer.replace(',', '.')) : NaN;
-    if (this.plan.background && real > 0) {
-      this.commit();
-      Object.assign(this.plan.background, calibrate(this.plan.background, ax, ay, measured, real));
-      this.changed();
-    }
-    this.setTool('select');
-  }
-
-  private removeSelection() {
-    if (!this.sel || this.sel.type === 'wall') return;
+  private addCorner(wallId: string, p: Pt) {
     this.commit();
-    if (this.sel.type === 'room') this.plan.rooms = this.plan.rooms.filter((r) => r.id !== this.sel!.id);
-    else this.plan.openings = this.plan.openings.filter((o) => o.id !== this.sel!.id);
-    this.sel = null;
+    const n = splitWall(this.plan, wallId, p);
+    this.sel = { type: 'node', id: n.id };
     this.changed();
   }
 
-  // ── Dessin ───────────────────────────────────────────────────────────────
-
-  private render(cursor?: { x: number; y: number }) {
-    const svg = this.svg;
-    const r = svg.getBoundingClientRect();
-    const w = r.width || 500, h = r.height || 400;
-    const s = this.view.scale;
-    const vw = w / s, vh = h / s;
-    const vx = this.view.cx - vw / 2, vy = this.view.cy - vh / 2;
-    svg.setAttribute('viewBox', `${vx} ${vy} ${vw} ${vh}`);
-    svg.innerHTML = '';
-    const px = (n: number) => n / s;   // pixels → mètres
-
-    // Image de calque
-    const bg = this.plan.background;
-    if (bg) {
-      svg.append(svgEl('image', {
-        href: bg.src, x: bg.x, y: bg.y, width: bg.width, height: bg.width * bg.aspect,
-        opacity: bg.opacity, preserveAspectRatio: 'none',
-      }));
-    }
-
-    // Grille : 50 cm, et le mètre plus marqué.
-    const grid = svgEl('g', { stroke: 'rgba(148,163,184,0.12)', 'stroke-width': px(1) });
-    const step = s < 30 ? 1 : 0.5;
-    for (let x = Math.floor(vx / step) * step; x < vx + vw; x += step) {
-      grid.append(svgEl('line', { x1: x, y1: vy, x2: x, y2: vy + vh, 'stroke-opacity': Math.abs(x % 1) < 1e-6 ? 1.8 : 1 }));
-    }
-    for (let y = Math.floor(vy / step) * step; y < vy + vh; y += step) {
-      grid.append(svgEl('line', { x1: vx, y1: y, x2: vx + vw, y2: y, 'stroke-opacity': Math.abs(y % 1) < 1e-6 ? 1.8 : 1 }));
-    }
-    svg.append(grid);
-
-    // Sols
-    for (const room of this.plan.rooms) {
-      const selected = this.sel?.type === 'room' && this.sel.id === room.id;
-      svg.append(svgEl('rect', {
-        x: room.x, y: room.y, width: room.w, height: room.d,
-        fill: room.floor ?? '#c9b08a', 'fill-opacity': bg ? 0.35 : 0.55,
-        stroke: selected ? ACCENT : 'none', 'stroke-width': px(2),
-      }));
-    }
-
-    // Murs
-    const walls = wallsOf(this.plan);
-    for (const wall of walls) {
-      const x1 = wall.axis === 'x' ? wall.from : wall.at, x2 = wall.axis === 'x' ? wall.to : wall.at;
-      const y1 = wall.axis === 'x' ? wall.at : wall.from, y2 = wall.axis === 'x' ? wall.at : wall.to;
-      const picked = this.sel?.type === 'wall' && this.sel.id === wall.id;
-      svg.append(svgEl('line', {
-        x1, y1, x2, y2, stroke: picked ? ACCENT : '#e2e8f0', 'stroke-width': wall.thickness, 'stroke-linecap': 'square',
-      }));
-    }
-
-    // Ouvertures
-    for (const o of this.plan.openings) this.drawOpening(svg, o, walls, px);
-    if (this.ghost) {
-      const kind = this.tool as OpeningKind;
-      const g: PlanOpening = { id: 'ghost', kind, x: this.ghost.x, y: this.ghost.y, ...OPENING_DEFAULTS[kind], hinge: 'start', swing: 'front' };
-      const ghost = svgEl('g', { opacity: 0.55 });
-      this.drawOpening(ghost, g, walls, px);
-      svg.append(ghost);
-    }
-
-    // Noms, surfaces, et cotes de la pièce sélectionnée
-    for (const room of this.plan.rooms) {
-      const fs = Math.min(px(13), room.w / 6);
-      const label = svgEl('text', {
-        x: room.x + room.w / 2, y: room.y + room.d / 2, 'text-anchor': 'middle', 'font-size': fs,
-        fill: '#f8fafc', 'font-family': 'Inter, sans-serif', 'font-weight': 700,
-      });
-      label.textContent = room.name;
-      const area = svgEl('text', {
-        x: room.x + room.w / 2, y: room.y + room.d / 2 + fs * 1.3, 'text-anchor': 'middle', 'font-size': fs * 0.8,
-        fill: '#cbd5e1', 'font-family': 'Inter, sans-serif',
-      });
-      area.textContent = `${netArea(room, this.plan.wallThickness).toFixed(1)} m²`;
-      svg.append(label, area);
-    }
-
-    const sel = this.sel?.type === 'room' ? this.room(this.sel.id) : null;
-    if (sel) {
-      this.dims(svg, sel.x, sel.y, sel.w, sel.d, px);
-      for (const [hx, hy] of [[0, 0], [0.5, 0], [1, 0], [0, 0.5], [1, 0.5], [0, 1], [0.5, 1], [1, 1]]) {
-        svg.append(svgEl('rect', {
-          x: sel.x + sel.w * hx - px(5), y: sel.y + sel.d * hy - px(5), width: px(10), height: px(10),
-          fill: '#0f172a', stroke: ACCENT, 'stroke-width': px(2), rx: px(2),
-        }));
-      }
-    }
-
-    // Pièce en cours de tracé, avec ses cotes en direct.
-    if (this.drag?.kind === 'draw') {
-      const d = this.drag;
-      const q = roomFromDrag(d.ax, d.ay, d.bx, d.by, this.plan.rooms);
-      svg.append(svgEl('rect', {
-        x: q.x, y: q.y, width: q.w, height: q.d, fill: 'rgba(56,189,248,0.15)',
-        stroke: ACCENT, 'stroke-width': px(2), 'stroke-dasharray': `${px(6)} ${px(4)}`,
-      }));
-      this.dims(svg, q.x, q.y, q.w, q.d, px);
-    }
-
-    // Règle de mise à l'échelle
-    if (this.calib) {
-      const c = cursor ?? { x: this.calib.ax, y: this.calib.ay };
-      svg.append(svgEl('line', { x1: this.calib.ax, y1: this.calib.ay, x2: c.x, y2: c.y, stroke: '#fbbf24', 'stroke-width': px(2) }));
-      svg.append(svgEl('circle', { cx: this.calib.ax, cy: this.calib.ay, r: px(4), fill: '#fbbf24' }));
-    }
+  private flipOpening(id: string, what: 'hinge' | 'swing') {
+    const o = this.plan.openings.find((q) => q.id === id);
+    if (!o) return;
+    this.commit();
+    if (what === 'hinge') o.hinge = o.hinge === 'start' ? 'end' : 'start';
+    else o.swing = o.swing === 'front' ? 'back' : 'front';
+    this.changed();
   }
 
-  /** Cotes d'un rectangle : largeur au-dessus, profondeur à droite. */
-  private dims(svg: SVGElement, x: number, y: number, w: number, d: number, px: (n: number) => number) {
-    const off = px(16), fs = px(12);
-    const style = { fill: ACCENT, 'font-size': fs, 'font-family': 'Inter, sans-serif', 'font-weight': 700 };
-    svg.append(svgEl('line', { x1: x, y1: y - off, x2: x + w, y2: y - off, stroke: ACCENT, 'stroke-width': px(1.5) }));
-    const tw = svgEl('text', { x: x + w / 2, y: y - off - px(4), 'text-anchor': 'middle', ...style });
-    tw.textContent = m(w);
-    svg.append(svgEl('line', { x1: x + w + off, y1: y, x2: x + w + off, y2: y + d, stroke: ACCENT, 'stroke-width': px(1.5) }));
-    const td = svgEl('text', { x: x + w + off + px(4), y: y + d / 2, 'dominant-baseline': 'middle', ...style });
-    td.textContent = m(d);
-    svg.append(tw, td);
-  }
-
-  /** Symbole d'une ouverture, comme sur un plan d'architecte. */
-  private drawOpening(svg: SVGElement, o: PlanOpening, walls: Wall[], px: (n: number) => number) {
-    const at = wallFor(o, walls);
-    const wall = at?.wall;
-    const horizontal = wall ? wall.axis === 'x' : true;
-    const t = wall?.thickness ?? this.plan.wallThickness;
-    const half = o.width / 2;
-    const selected = this.sel?.type === 'opening' && this.sel.id === o.id;
-    const color = !at ? '#f87171' : selected ? ACCENT : '#fbbf24';
-    const g = svgEl('g', {});
-    // On « ouvre » le mur : un rectangle couleur de fond.
-    g.append(svgEl('rect', horizontal
-      ? { x: o.x - half, y: o.y - t / 2 - px(1), width: o.width, height: t + px(2), fill: '#0f172a' }
-      : { x: o.x - t / 2 - px(1), y: o.y - half, width: t + px(2), height: o.width, fill: '#0f172a' }));
-    if (o.kind === 'window' || o.kind === 'slider') {
-      for (const k of o.kind === 'slider' ? [-0.25, 0.25] : [-0.18, 0.18]) {
-        g.append(svgEl('line', horizontal
-          ? { x1: o.x - half, y1: o.y + k * t, x2: o.x + half, y2: o.y + k * t, stroke: color, 'stroke-width': px(2) }
-          : { x1: o.x + k * t, y1: o.y - half, x2: o.x + k * t, y2: o.y + half, stroke: color, 'stroke-width': px(2) }));
-      }
+  /** Supprime ce qu'on montre : une pièce emporte les murs qu'elle ne partage pas. */
+  private remove(h: Hit) {
+    this.commit();
+    if (h.type === 'opening') {
+      this.plan.openings = this.plan.openings.filter((o) => o.id !== h.id);
+    } else if (h.type === 'wall') {
+      removeWall(this.plan, h.id);
+    } else if (h.type === 'node') {
+      for (const w of this.plan.walls.filter((q) => q.a === h.id || q.b === h.id)) removeWall(this.plan, w.id);
     } else {
-      // Battant et arc d'ouverture, côté gonds et sens choisis.
-      const dir = o.swing === 'front' ? 1 : -1;
-      const hx = horizontal ? (o.hinge === 'start' ? o.x - half : o.x + half) : o.x;
-      const hy = horizontal ? o.y : (o.hinge === 'start' ? o.y - half : o.y + half);
-      const ex = horizontal ? hx : hx + dir * o.width;
-      const ey = horizontal ? hy + dir * o.width : hy;
-      const fx = horizontal ? (o.hinge === 'start' ? o.x + half : o.x - half) : o.x;
-      const fy = horizontal ? o.y : (o.hinge === 'start' ? o.y + half : o.y - half);
-      g.append(svgEl('line', { x1: hx, y1: hy, x2: ex, y2: ey, stroke: color, 'stroke-width': px(2.5) }));
-      g.append(svgEl('path', {
-        d: `M ${ex} ${ey} A ${o.width} ${o.width} 0 0 ${this.sweep(o, horizontal)} ${fx} ${fy}`,
-        fill: 'none', stroke: color, 'stroke-width': px(1.2), 'stroke-dasharray': `${px(4)} ${px(3)}`,
-      }));
+      const room = this.plan.rooms.find((r) => r.id === h.id);
+      const f = room && this.all.filter((g) => pointInPolygon(room.seed, g.poly)).sort((a, b) => a.area - b.area)[0];
+      if (f) {
+        const others = this.all.filter((g) => g !== f);
+        const edge = (u: string, v: string) => (g: Face) =>
+          g.nodes.some((n, i) => { const m = g.nodes[(i + 1) % g.nodes.length]; return (n === u && m === v) || (n === v && m === u); });
+        for (let i = 0; i < f.nodes.length; i++) {
+          const u = f.nodes[i], v = f.nodes[(i + 1) % f.nodes.length];
+          if (others.some(edge(u, v))) continue;
+          const w = this.plan.walls.find((q) => (q.a === u && q.b === v) || (q.a === v && q.b === u));
+          if (w) this.plan.walls = this.plan.walls.filter((q) => q !== w);
+        }
+        this.plan.openings = this.plan.openings.filter((o) => this.plan.walls.some((w) => w.id === o.wall));
+        this.plan.rooms = this.plan.rooms.filter((r) => r.id !== h.id);
+        cleanup(this.plan);
+      }
     }
-    svg.append(g);
+    if (this.same(this.sel, h)) this.sel = null;
+    this.hover = null;
+    this.changed();
   }
 
-  private sweep(o: PlanOpening, horizontal: boolean): 0 | 1 {
-    const a = o.hinge === 'start', b = o.swing === 'front';
-    return (horizontal ? a === b : a !== b) ? 0 : 1;
-  }
-
-  // ── Réglages de la sélection ─────────────────────────────────────────────
-
-  private section(title: string): HTMLDivElement {
-    const box = el('div', 'margin-bottom:14px;');
-    box.append(el('div', 'font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px;', title));
-    this.side.append(box);
-    return box;
-  }
-
-  private field(parent: HTMLElement, label: string, input: HTMLElement) {
-    const row = el('label', 'display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px;color:#cbd5e1;');
-    row.append(el('span', '', label), input);
-    parent.append(row);
-  }
-
-  private num(value: number, onCommit: (v: number) => void, step = 0.05, min = 0): HTMLInputElement {
-    const i = el('input', 'width:78px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.14);border-radius:6px;color:#e2e8f0;padding:4px 6px;font-size:12px;font-family:inherit;');
-    i.type = 'number'; i.step = String(step); i.min = String(min);
-    i.value = String(Math.round(value * 100) / 100);
-    i.addEventListener('change', () => {
-      const v = parseFloat(i.value);
-      if (!(v >= min)) return;
+  private rename(roomId: string) {
+    const room = this.plan.rooms.find((r) => r.id === roomId);
+    if (!room) return;
+    const at = this.toStage(room.seed);
+    this.ask(at, room.name, 'text', (v) => {
+      if (!v.trim() || v.trim() === room.name) return;
       this.commit();
-      onCommit(v);
+      room.name = v.trim();
       this.changed();
     });
-    return i;
   }
 
-  private toggle(options: [string, string][], value: string, onPick: (v: string) => void): HTMLDivElement {
-    const wrap = el('div', 'display:flex;gap:4px;');
-    for (const [v, label] of options) {
-      const b = el('button', [
-        'padding:4px 8px', 'border-radius:6px', 'font-size:11px', 'cursor:pointer', `font-family:${FONT}`,
-        v === value ? `background:rgba(56,189,248,0.22);border:1px solid ${ACCENT};color:#e0f2fe` : 'background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);color:#94a3b8',
-      ].join(';'), label);
-      b.addEventListener('click', () => { if (v === value) return; this.commit(); onPick(v); this.changed(); });
-      wrap.append(b);
-    }
-    return wrap;
-  }
-
-  private renderSide() {
-    this.side.innerHTML = '';
-    const room = this.sel?.type === 'room' ? this.room(this.sel.id) : null;
-    const opening = this.sel?.type === 'opening' ? this.opening(this.sel.id) : null;
-
-    if (room) {
-      const box = this.section(t('planRoomTitle'));
-      const name = el('input', 'width:100%;box-sizing:border-box;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.14);border-radius:6px;color:#e2e8f0;padding:6px 8px;font-size:12px;font-family:inherit;margin-bottom:8px;');
-      name.value = room.name;
-      name.addEventListener('change', () => { this.commit(); room.name = name.value.trim() || room.name; this.changed(); });
-      box.append(name);
-      this.field(box, t('planWidth'), this.num(room.w, (v) => { room.w = Math.max(MIN_ROOM, v); }));
-      this.field(box, t('planDepth'), this.num(room.d, (v) => { room.d = Math.max(MIN_ROOM, v); }));
-      box.append(el('div', 'color:#94a3b8;margin:4px 0 10px;', `${t('planArea')} : ${netArea(room, this.plan.wallThickness).toFixed(1)} m²`));
-      const swatches = el('div', 'display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;');
-      for (const c of FLOORS) {
-        const sw = el('button', `width:24px;height:24px;border-radius:6px;cursor:pointer;background:${c};border:2px solid ${room.floor === c ? '#fff' : 'transparent'};`);
-        sw.title = t('planFloor');
-        sw.addEventListener('click', () => { this.commit(); room.floor = c; this.changed(); });
-        swatches.append(sw);
+  private calibrateClick(p: Pt) {
+    if (!this.calib) { this.calib = p; this.hint(); this.render(); return; }
+    const a = this.calib;
+    this.calib = null;
+    const measured = dist(a, p);
+    const at = this.toStage({ x: (a.x + p.x) / 2, y: (a.y + p.y) / 2 });
+    this.render(p, a);
+    this.ask(at, measured.toFixed(2), 'number', (v) => {
+      const real = parseNum(v);
+      const bg = this.plan.background;
+      if (bg && real > 0 && measured > 1e-3) {
+        this.commit();
+        // L'image grandit autour du premier point mesuré.
+        const k = real / measured;
+        bg.x = a.x + (bg.x - a.x) * k;
+        bg.y = a.y + (bg.y - a.y) * k;
+        bg.width *= k;
+        this.changed();
+        this.fit();
       }
-      box.append(el('div', 'color:#94a3b8;margin-bottom:6px;', t('planFloor')), swatches);
-      box.append(this.button(`✕ ${t('planDelete')}`, () => this.removeSelection()));
-      return;
-    }
-
-    const wall = this.sel?.type === 'wall' ? wallsOf(this.plan).find((w) => w.id === this.sel!.id) : null;
-    if (wall) {
-      const box = this.section(t('planWallTitle'));
-      box.append(el('div', 'color:#94a3b8;margin-bottom:8px;', `${t('planLength')} : ${m(wall.to - wall.from)}`));
-      const set = (patch: { height?: number; thickness?: number }) => {
-        this.plan.walls = { ...this.plan.walls, [wall.id]: { ...this.plan.walls?.[wall.id], ...patch } };
-      };
-      this.field(box, t('planWallHeight'), this.num(wall.height, (v) => set({ height: Math.max(0.3, v) })));
-      this.field(box, t('planWallThickness'), this.num(wall.thickness, (v) => set({ thickness: Math.max(0.05, v) }), 0.01, 0.05));
-      box.append(el('div', 'color:#64748b;font-size:11px;line-height:1.45;margin:6px 0 10px;', t('planWallHelp')));
-      if (this.plan.walls?.[wall.id]) {
-        box.append(this.button(t('planWallReset'), () => {
-          this.commit();
-          const { [wall.id]: _, ...rest } = this.plan.walls ?? {};
-          this.plan.walls = rest;
-          this.changed();
-        }));
-      }
-      return;
-    }
-
-    if (opening) {
-      const kinds: Record<OpeningKind, string> = { door: t('planToolDoor'), window: t('planToolWindow'), slider: t('planToolSlider') };
-      const box = this.section(kinds[opening.kind]);
-      if (!wallFor(opening, wallsOf(this.plan))) box.append(el('div', 'color:#f87171;margin-bottom:8px;', t('planOrphan')));
-      this.field(box, t('planWidth'), this.num(opening.width, (v) => { opening.width = v; }));
-      this.field(box, t('planHeight'), this.num(opening.height, (v) => { opening.height = v; }));
-      if (opening.kind === 'window') this.field(box, t('planSill'), this.num(opening.sill, (v) => { opening.sill = v; }));
-      this.field(box, opening.kind === 'slider' ? t('planOpensTo') : t('planHinges'),
-        this.toggle([['start', t('planStart')], ['end', t('planEnd')]], opening.hinge, (v) => { opening.hinge = v as 'start' | 'end'; }));
-      if (opening.kind !== 'slider') {
-        this.field(box, t('planSwing'),
-          this.toggle([['front', t('planSideA')], ['back', t('planSideB')]], opening.swing, (v) => { opening.swing = v as 'front' | 'back'; }));
-      }
-      if (opening.kind === 'window') {
-        this.field(box, t('planDouble'),
-          this.toggle([['1', t('planYes')], ['0', t('planNo')]], opening.double ? '1' : '0', (v) => { opening.double = v === '1'; }));
-      }
-      box.append(el('div', 'color:#64748b;font-size:11px;line-height:1.45;margin:6px 0 10px;', t('planOpeningHelp')));
-      box.append(this.button(`✕ ${t('planDelete')}`, () => this.removeSelection()));
-      return;
-    }
-
-    // Rien de sélectionné : réglages du plan et calque.
-    const walls = this.section(t('planWalls'));
-    this.field(walls, t('planWallHeight'), this.num(this.plan.wallHeight, (v) => { this.plan.wallHeight = Math.max(0.5, v); }));
-    this.field(walls, t('planWallThickness'), this.num(this.plan.wallThickness, (v) => { this.plan.wallThickness = Math.max(0.05, v); }, 0.01, 0.05));
-
-    const img = this.section(t('planImage'));
-    img.append(el('div', 'color:#64748b;font-size:11px;line-height:1.45;margin-bottom:8px;', t('planImageHelp')));
-    const bg = this.plan.background;
-    if (!bg) {
-      img.append(this.button(`🖼 ${t('planImageLoad')}`, () => this.loadImage()));
-    } else {
-      const op = el('input');
-      op.type = 'range'; op.min = '0.1'; op.max = '1'; op.step = '0.05'; op.value = String(bg.opacity);
-      op.style.width = '110px';
-      op.addEventListener('input', () => { bg.opacity = parseFloat(op.value); this.render(); });
-      op.addEventListener('change', () => this.opts.onChange(clonePlan(this.plan)));
-      this.field(img, t('planImageOpacity'), op);
-      const row = el('div', 'display:flex;flex-wrap:wrap;gap:6px;');
-      row.append(
-        this.button(`📏 ${t('planImageScale')}`, () => this.setTool('calibrate')),
-        this.button(`✥ ${t('planImageMove')}`, () => this.setTool('image')),
-        this.button(`✕ ${t('planImageRemove')}`, () => { this.commit(); this.plan.background = undefined; this.changed(); }),
-      );
-      img.append(row);
-    }
-
-    const help = this.section(t('planHowTo'));
-    help.append(el('div', 'color:#94a3b8;font-size:11.5px;line-height:1.55;', t('planHowToText')));
+      this.setTool('select');
+    }, t('planCalibAsk'));
   }
 
   /** Charge une image de plan, réduite pour voyager avec la scène. */
@@ -811,5 +1148,698 @@ export class PlanEditor {
       this.setTool('calibrate');
     });
     input.click();
+  }
+
+  private useTemplate(id: TemplateId) {
+    this.commit();
+    const bg = this.plan.background;
+    this.plan = templatePlan(id, this.plan);
+    this.plan.background = bg;
+    this.roomCounter = this.plan.rooms.length;
+    this.sel = null;
+    this.fit();
+    this.changed();
+    if (this.mode === 'plan') this.setMode('split');
+  }
+
+  // ── Bulles ───────────────────────────────────────────────────────────────
+
+  private closePopup() {
+    this.popup?.remove();
+    this.popup = null;
+  }
+
+  private placePopup(box: HTMLElement, at: { x: number; y: number }) {
+    this.closePopup();
+    this.stage.append(box);
+    this.popup = box;
+    const r = box.getBoundingClientRect(), s = this.box();
+    box.style.left = `${Math.max(8, Math.min(at.x, s.w - r.width - 8))}px`;
+    box.style.top = `${Math.max(8, Math.min(at.y, s.h - r.height - 8))}px`;
+  }
+
+  /** Une petite question posée sur le plan (un nom, une longueur). */
+  private ask(at: { x: number; y: number }, value: string, type: 'text' | 'number', done: (v: string) => void, label?: string) {
+    const box = el('div', `position:absolute;background:${C.chrome};border-radius:12px;padding:10px;box-shadow:0 10px 30px rgba(0,0,0,0.3);display:flex;flex-direction:column;gap:8px;z-index:5;`);
+    if (label) box.append(el('div', 'font-size:12px;color:#cbd5e1;max-width:220px;', label));
+    const row = el('div', 'display:flex;gap:6px;align-items:center;');
+    const input = el('input', `width:${type === 'number' ? 90 : 180}px;background:${C.chrome2};border:1px solid #38bdf8;border-radius:8px;color:#fff;padding:7px 9px;font-size:14px;font-family:${FONT};outline:none;`);
+    input.value = value;
+    input.inputMode = type === 'number' ? 'decimal' : 'text';
+    const ok = this.iconButton('check', 'OK', () => { this.closePopup(); done(input.value); });
+    row.append(input);
+    if (type === 'number') row.append(el('span', 'color:#94a3b8;', 'm'));
+    row.append(ok);
+    box.append(row);
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') { this.closePopup(); done(input.value); }
+      if (e.key === 'Escape') this.closePopup();
+    });
+    this.placePopup(box, { x: at.x - 60, y: at.y - 20 });
+    setTimeout(() => { input.focus(); input.select(); }, 0);
+  }
+
+  private flash(text: string) {
+    this.hintEl.textContent = text;
+    this.hintEl.style.background = 'rgba(239,68,68,0.92)';
+    setTimeout(() => { this.hintEl.style.background = 'rgba(15,23,42,0.86)'; this.hint(); }, 1800);
+  }
+
+  /** Menu du clic droit (ou d'un appui long) : ce qu'on peut faire ici. */
+  private contextMenu(clientX: number, clientY: number) {
+    const p = this.toPlan({ clientX, clientY });
+    const h = this.hitAt(p);
+    const items: [string, string, () => void, boolean?][] = [];
+    if (h?.type === 'room') {
+      this.sel = h;
+      items.push(['pencil', t('planRename'), () => this.rename(h.id)]);
+      items.push(['trash', t('planDeleteRoom'), () => this.remove(h), true]);
+    } else if (h?.type === 'wall') {
+      this.sel = h;
+      items.push(['corner', t('planAddCorner'), () => this.addCorner(h.id, p)]);
+      items.push(['door', t('planAddDoorHere'), () => this.placeOpening('door', p)]);
+      items.push(['window', t('planAddWindowHere'), () => this.placeOpening('window', p)]);
+      items.push(['trash', t('planDeleteWall'), () => this.remove(h), true]);
+    } else if (h?.type === 'opening') {
+      this.sel = h;
+      items.push(['flip', t('planFlipHinge'), () => this.flipOpening(h.id, 'hinge')]);
+      items.push(['swap', t('planFlipSide'), () => this.flipOpening(h.id, 'swing')]);
+      items.push(['trash', t('planDelete'), () => this.remove(h), true]);
+    } else if (h?.type === 'node') {
+      this.sel = h;
+      items.push(['trash', t('planDeleteCorner'), () => this.remove(h), true]);
+    } else {
+      items.push(['room', t('planToolRoom'), () => this.setTool('room')]);
+      items.push(['wall', t('planToolWall'), () => this.setTool('wall')]);
+      items.push(['fit', t('planFit'), () => { this.fit(); this.render(); }]);
+    }
+    this.refresh();
+    const box = el('div', `position:absolute;background:${C.chrome};border-radius:12px;padding:6px;box-shadow:0 10px 30px rgba(0,0,0,0.3);min-width:190px;z-index:5;`);
+    for (const [ic, label, run, danger] of items) {
+      const b = el('button', `display:flex;width:100%;align-items:center;gap:10px;padding:9px 10px;border:none;border-radius:8px;background:transparent;color:${danger ? '#fca5a5' : C.text};font-size:13px;font-family:${FONT};cursor:pointer;text-align:left;`);
+      b.append(icon(ic, 18), document.createTextNode(label));
+      b.addEventListener('mouseenter', () => { b.style.background = 'rgba(255,255,255,0.07)'; });
+      b.addEventListener('mouseleave', () => { b.style.background = 'transparent'; });
+      b.addEventListener('click', () => { this.closePopup(); run(); });
+      box.append(b);
+    }
+    const s = this.box();
+    this.placePopup(box, { x: clientX - s.left, y: clientY - s.top });
+  }
+
+  // ── Dessin ───────────────────────────────────────────────────────────────
+
+  private render(cursor?: Pt, calibFrom?: Pt) {
+    const svg = this.svg;
+    const { w, h } = this.box();
+    const s = this.view.scale;
+    const vw = w / s, vh = h / s;
+    const vx = this.view.cx - vw / 2, vy = this.view.cy - vh / 2;
+    svg.setAttribute('viewBox', `${vx} ${vy} ${vw} ${vh}`);
+    svg.innerHTML = '';
+    const px = (n: number) => n / s;
+    if (!this.drag || this.drag.kind === 'pan' || this.drag.kind === 'rect' || this.drag.kind === 'image' || this.drag.kind === 'opening') {
+      this.all = faces(this.plan);
+    }
+    const plan = this.plan;
+
+    // Image de calque
+    const bg = plan.background;
+    if (bg) {
+      svg.append(svgEl('image', {
+        href: bg.src, x: bg.x, y: bg.y, width: bg.width, height: bg.width * bg.aspect,
+        opacity: bg.opacity, preserveAspectRatio: 'none',
+      }));
+    }
+
+    // Grille : 10 cm de près, 50 cm, et le mètre plus marqué.
+    const grid = svgEl('g', { 'stroke-width': px(1) });
+    const step = s > 120 ? 0.1 : s > 30 ? 0.5 : 1;
+    for (let x = Math.floor(vx / step) * step; x < vx + vw; x += step) {
+      const major = Math.abs(x - Math.round(x)) < 1e-6;
+      grid.append(svgEl('line', { x1: x, y1: vy, x2: x, y2: vy + vh, stroke: major ? C.gridStrong : C.grid }));
+    }
+    for (let y = Math.floor(vy / step) * step; y < vy + vh; y += step) {
+      const major = Math.abs(y - Math.round(y)) < 1e-6;
+      grid.append(svgEl('line', { x1: vx, y1: y, x2: vx + vw, y2: y, stroke: major ? C.gridStrong : C.grid }));
+    }
+    svg.append(grid);
+
+    // Sols
+    const erasing = this.tool === 'erase';
+    for (const room of plan.rooms) {
+      const f = this.faceOf(room.seed);
+      if (!f) continue;
+      const hov = this.same(this.hover, { type: 'room', id: room.id });
+      const sel = this.same(this.sel, { type: 'room', id: room.id });
+      svg.append(svgEl('polygon', {
+        points: poly(f.poly), fill: hov && erasing ? '#fecaca' : room.floor ?? '#d8c3a5',
+        'fill-opacity': bg ? 0.45 : hov && !erasing ? 0.75 : 0.6,
+        stroke: sel ? C.select : 'none', 'stroke-width': px(3),
+      }));
+    }
+
+    // Murs, découpés autour des ouvertures.
+    const feet = wallFootprints(plan);
+    for (const wall of plan.walls) {
+      const foot = feet.get(wall.id);
+      if (!foot) continue;
+      const hit = { type: 'wall' as const, id: wall.id };
+      const color = this.same(this.sel, hit) ? C.select
+        : this.same(this.hover, hit) ? (erasing ? C.danger : C.hover)
+          : (wall.height ?? plan.wallHeight) < plan.wallHeight - 0.5 ? '#7c838c' : C.wall;
+      const [a, b] = wallEnds(plan, wall);
+      const dir = norm(sub(b, a));
+      const holes = plan.openings.filter((o) => o.wall === wall.id && openingFits(plan, o))
+        .map((o) => [o.offset - o.width / 2, o.offset + o.width / 2]).sort((p, q) => p[0] - q[0]);
+      let from = -1e3;
+      for (const [u0, u1] of [...holes, [1e3, 1e3]]) {
+        const piece = clipAlong(foot, a, dir, from, u0);
+        if (piece.length >= 3) svg.append(svgEl('polygon', { points: poly(piece), fill: color }));
+        from = u1;
+      }
+    }
+
+    // Ouvertures
+    for (const o of plan.openings) this.drawOpening(svg, o, px);
+    if ((this.tool === 'door' || this.tool === 'window' || this.tool === 'slider' || this.tool === 'passage') && this.cursor) {
+      const hit = wallAt(plan, this.cursor, px(GRAB * 2));
+      if (hit) {
+        const def = OPENING_DEFAULTS[this.tool];
+        const L = wallLength(plan, hit.wall), width = Math.min(def.width, L - 0.1);
+        if (width >= 0.4) {
+          const ghost = svgEl('g', { opacity: 0.6 });
+          this.drawOpening(ghost, {
+            id: 'ghost', kind: this.tool, wall: hit.wall.id, ...def, width,
+            offset: Math.min(Math.max(hit.offset, width / 2), L - width / 2), hinge: 'start', swing: 'front',
+          }, px, true);
+          svg.append(ghost);
+        }
+      }
+    }
+
+    // Cotes de chaque mur, côté extérieur.
+    const showDims = plan.walls.length < 400;
+    if (showDims) for (const wall of plan.walls) this.drawDim(svg, wall, px);
+
+    // Noms et surfaces
+    for (const room of plan.rooms) {
+      const f = this.faceOf(room.seed);
+      if (!f) continue;
+      const c = insidePoint(f.poly);
+      const xs = f.poly.map((q) => q.x), span = Math.max(...xs) - Math.min(...xs);
+      const fs = Math.min(px(14), span / Math.max(room.name.length * 0.62, 4));
+      if (fs * s < 7) continue;
+      const name = svgEl('text', {
+        x: c.x, y: c.y, 'text-anchor': 'middle', 'font-size': fs, fill: '#1f2937',
+        'font-family': 'Inter, system-ui, sans-serif', 'font-weight': 700,
+      });
+      name.textContent = room.name;
+      const area = svgEl('text', {
+        x: c.x, y: c.y + fs * 1.25, 'text-anchor': 'middle', 'font-size': fs * 0.82, fill: '#4b5563',
+        'font-family': 'Inter, system-ui, sans-serif',
+      });
+      area.textContent = `${(Math.round(polygonArea(f.poly) * 10) / 10).toLocaleString(getLang() === 'fr' ? 'fr-FR' : 'en-GB')} m²`;
+      svg.append(name, area);
+    }
+
+    // Coins : visibles en sélection, pour qu'on sache qu'on peut les tirer.
+    if (this.tool === 'select' || this.tool === 'wall' || this.tool === 'erase') {
+      for (const n of plan.nodes) {
+        const hit = { type: 'node' as const, id: n.id };
+        const on = this.same(this.sel, hit), hov = this.same(this.hover, hit);
+        if (this.tool === 'wall' && !hov) continue;
+        svg.append(svgEl('circle', {
+          cx: n.x, cy: n.y, r: px(on || hov ? 7 : 4.5),
+          fill: on ? C.select : hov ? (erasing ? C.danger : C.hover) : '#fff',
+          stroke: on ? '#fff' : C.wall, 'stroke-width': px(1.5),
+        }));
+      }
+    }
+
+    // Guides d'alignement
+    for (const g of this.guides) {
+      svg.append(svgEl('line', g.x !== undefined
+        ? { x1: g.x, y1: vy, x2: g.x, y2: vy + vh }
+        : { x1: vx, y1: g.y!, x2: vx + vw, y2: g.y! }));
+      (svg.lastChild as SVGElement).setAttribute('stroke', '#ec4899');
+      (svg.lastChild as SVGElement).setAttribute('stroke-width', String(px(1)));
+      (svg.lastChild as SVGElement).setAttribute('stroke-dasharray', `${px(5)} ${px(4)}`);
+    }
+
+    // Pièce en cours de tracé, avec ses cotes en direct.
+    if (this.drag?.kind === 'rect') {
+      const { a, b } = this.drag;
+      const x0 = Math.min(a.x, b.x), y0 = Math.min(a.y, b.y), rw = Math.abs(b.x - a.x), rd = Math.abs(b.y - a.y);
+      const t2 = plan.wallThickness;
+      svg.append(svgEl('rect', { x: x0 - t2 / 2, y: y0 - t2 / 2, width: rw + t2, height: rd + t2, fill: 'none', stroke: C.wall, 'stroke-width': t2, opacity: 0.55 }));
+      svg.append(svgEl('rect', { x: x0, y: y0, width: rw, height: rd, fill: 'rgba(14,165,233,0.12)' }));
+      this.label(svg, { x: x0 + rw / 2, y: y0 - t2 / 2 - px(14) }, meters(rw), 0, px, C.dim, true);
+      this.label(svg, { x: x0 + rw + t2 / 2 + px(14), y: y0 + rd / 2 }, meters(rd), 90, px, C.dim, true);
+      if (rw > 0.5 && rd > 0.5) this.label(svg, { x: x0 + rw / 2, y: y0 + rd / 2 }, `${(Math.round(rw * rd * 10) / 10).toLocaleString(getLang() === 'fr' ? 'fr-FR' : 'en-GB')} m²`, 0, px, '#0369a1', false);
+    }
+
+    // Mur en cours de tracé
+    if (this.tool === 'wall') {
+      const c = this.chain;
+      const at = c?.cursor ?? this.cursor;
+      if (c && c.pts.length && at) {
+        const last = c.pts[c.pts.length - 1];
+        let end = at;
+        const typed = parseNum(c.typed);
+        if (c.typed && typed > 0) {
+          let dir = sub(at, last);
+          if (Math.hypot(dir.x, dir.y) < 1e-6) dir = { x: 1, y: 0 };
+          end = add(last, mul(norm(dir), typed));
+        }
+        svg.append(svgEl('line', {
+          x1: last.x, y1: last.y, x2: end.x, y2: end.y, stroke: C.wall, 'stroke-width': plan.wallThickness,
+          'stroke-linecap': 'square', opacity: 0.55,
+        }));
+        const mid = { x: (last.x + end.x) / 2, y: (last.y + end.y) / 2 };
+        const ang = (Math.atan2(end.y - last.y, end.x - last.x) * 180) / Math.PI;
+        const n = perp(norm(sub(end, last)));
+        const off = plan.wallThickness / 2 + px(14);
+        const text = c.typed ? `${c.typed.replace('.', ',')}▏ m` : meters(dist(last, end));
+        this.label(svg, add(mid, mul(n, -off)), text, ang, px, c.typed ? '#db2777' : C.dim, true);
+        for (const q of c.pts) svg.append(svgEl('circle', { cx: q.x, cy: q.y, r: px(4), fill: C.select }));
+      }
+      if (at) {
+        svg.append(svgEl('circle', { cx: at.x, cy: at.y, r: px(5), fill: 'none', stroke: C.select, 'stroke-width': px(2) }));
+      }
+    }
+    if (this.tool === 'room' && !this.drag && this.cursor) {
+      svg.append(svgEl('circle', { cx: this.cursor.x, cy: this.cursor.y, r: px(5), fill: 'none', stroke: C.select, 'stroke-width': px(2) }));
+    }
+
+    // Règle de mise à l'échelle
+    const ca = calibFrom ?? this.calib;
+    if (ca) {
+      const c = cursor ?? this.cursor ?? ca;
+      svg.append(svgEl('line', { x1: ca.x, y1: ca.y, x2: c.x, y2: c.y, stroke: '#f59e0b', 'stroke-width': px(3) }));
+      svg.append(svgEl('circle', { cx: ca.x, cy: ca.y, r: px(5), fill: '#f59e0b' }));
+      svg.append(svgEl('circle', { cx: c.x, cy: c.y, r: px(5), fill: '#f59e0b' }));
+    }
+  }
+
+  private faceOf(seed: Pt): Face | undefined {
+    return this.all.filter((f) => pointInPolygon(seed, f.poly)).sort((a, b) => a.area - b.area)[0];
+  }
+
+  /** Un texte lisible sur le plan, tourné le long d'un mur mais jamais à l'envers. */
+  private label(svg: SVGElement, at: Pt, text: string, angle: number, px: (n: number) => number, color: string, halo: boolean) {
+    let a = angle;
+    if (a > 90) a -= 180;
+    if (a <= -90) a += 180;
+    const tx = svgEl('text', {
+      x: at.x, y: at.y, 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-size': px(11.5),
+      'font-family': 'Inter, system-ui, sans-serif', 'font-weight': 600, fill: color,
+      transform: `rotate(${a} ${at.x} ${at.y})`,
+      ...(halo ? { stroke: C.paper, 'stroke-width': px(4), 'paint-order': 'stroke', 'stroke-linejoin': 'round' } : {}),
+    });
+    tx.textContent = text;
+    svg.append(tx);
+  }
+
+  /** La cote d'un mur, posée du côté où il n'y a pas de pièce. */
+  private drawDim(svg: SVGElement, wall: PlanWall, px: (n: number) => number) {
+    const [a, b] = wallEnds(this.plan, wall);
+    const L = dist(a, b);
+    if (L * this.view.scale < 38) return;
+    const d = norm(sub(b, a)), n = perp(d);
+    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const probe = 0.25;
+    const left = this.all.some((f) => pointInPolygon(add(mid, mul(n, probe)), f.poly));
+    const right = this.all.some((f) => pointInPolygon(add(mid, mul(n, -probe)), f.poly));
+    const side = left && !right ? -1 : 1;
+    const off = thicknessOf(this.plan, wall) / 2 + px(left && right ? 0 : 12);
+    const pos = add(mid, mul(n, side * off));
+    const sel = this.same(this.sel, { type: 'wall', id: wall.id }) || (this.drag?.kind === 'wall' && this.drag.id === wall.id);
+    // Une cloison entre deux pièces : la cote est écrite dans le mur, discrète.
+    if (left && right && !sel) {
+      if (L * this.view.scale < 70) return;
+      this.label(svg, add(mid, mul(n, thicknessOf(this.plan, wall) / 2 + px(9))), meters(L), (Math.atan2(d.y, d.x) * 180) / Math.PI, px, '#6b7280', true);
+      return;
+    }
+    this.label(svg, pos, meters(L), (Math.atan2(d.y, d.x) * 180) / Math.PI, px, sel ? C.select : C.dim, true);
+  }
+
+  /** Symbole d'une ouverture, comme sur un plan d'architecte, dans le repère du mur. */
+  private drawOpening(svg: SVGElement, o: PlanOpening, px: (n: number) => number, ghost = false) {
+    const w = this.plan.walls.find((q) => q.id === o.wall);
+    if (!w) return;
+    const [a, b] = wallEnds(this.plan, w);
+    const d = norm(sub(b, a));
+    const c = add(a, mul(d, o.offset));
+    const ang = (Math.atan2(d.y, d.x) * 180) / Math.PI;
+    const th = thicknessOf(this.plan, w);
+    const hit = { type: 'opening' as const, id: o.id };
+    const color = ghost ? C.select : this.same(this.sel, hit) ? C.select
+      : this.same(this.hover, hit) ? (this.tool === 'erase' ? C.danger : C.hover)
+        : !openingFits(this.plan, o) ? C.danger : C.opening;
+    const g = svgEl('g', { transform: `translate(${c.x} ${c.y}) rotate(${ang})` });
+    const half = o.width / 2;
+    const line = (x1: number, y1: number, x2: number, y2: number, wpx: number, dash?: string) => g.append(svgEl('line', {
+      x1, y1, x2, y2, stroke: color, 'stroke-width': px(wpx), 'stroke-linecap': 'round', ...(dash ? { 'stroke-dasharray': dash } : {}),
+    }));
+    // Tableaux de part et d'autre.
+    line(-half, -th / 2, -half, th / 2, 2);
+    line(half, -th / 2, half, th / 2, 2);
+    if (o.kind === 'window') {
+      g.append(svgEl('rect', { x: -half, y: -th / 2, width: o.width, height: th, fill: '#e0f2fe', stroke: color, 'stroke-width': px(1.5) }));
+      line(-half, 0, half, 0, 1.5);
+    } else if (o.kind === 'slider') {
+      g.append(svgEl('rect', { x: -half, y: -th / 2, width: o.width, height: th, fill: '#e0f2fe', 'fill-opacity': 0.6 }));
+      const k = th / 5;
+      const toward = o.hinge === 'end' ? 1 : -1;
+      line(-half, -k, toward > 0 ? half * 0.15 : half, -k, 3);
+      line(toward > 0 ? -half : -half * 0.15, k, half, k, 3);
+    } else if (o.kind === 'passage') {
+      line(-half, -th / 2, half, -th / 2, 1, `${px(4)} ${px(3)}`);
+      line(-half, th / 2, half, th / 2, 1, `${px(4)} ${px(3)}`);
+    } else {
+      // Battant et arc, côté gonds et sens choisis.
+      const sy = o.swing === 'front' ? 1 : -1;
+      const leaves = o.double ? 2 : 1;
+      const lw = o.width / leaves;
+      for (let i = 0; i < leaves; i++) {
+        const hingeAtStart = leaves === 2 ? i === 0 : o.hinge === 'start';
+        const hx = hingeAtStart ? -half : half;
+        const fx = hingeAtStart ? hx + lw : hx - lw;
+        const ey = sy * (th / 2 + lw);
+        const y0 = sy * th / 2;
+        line(hx, y0, hx, ey, 2.5);
+        const sweep = (hingeAtStart ? 1 : 0) ^ (sy > 0 ? 0 : 1);
+        g.append(svgEl('path', {
+          d: `M ${hx} ${ey} A ${lw} ${lw} 0 0 ${sweep} ${fx} ${y0}`,
+          fill: 'none', stroke: color, 'stroke-width': px(1.2), 'stroke-dasharray': `${px(4)} ${px(3)}`,
+        }));
+      }
+    }
+    svg.append(g);
+  }
+
+  // ── Écran d'accueil ──────────────────────────────────────────────────────
+
+  private renderEmpty() {
+    const empty = !this.plan.walls.length && this.tool === 'select';
+    if (!empty) { this.emptyState?.remove(); this.emptyState = null; this.bubble.style.display = ''; this.hintEl.style.display = ''; return; }
+    this.bubble.style.display = 'none';
+    this.hintEl.style.display = 'none';
+    if (this.emptyState) return;
+    const box = el('div', 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;overflow:auto;');
+    const card = el('div', 'max-width:720px;width:100%;text-align:center;');
+    card.append(
+      el('div', 'font-size:22px;font-weight:800;color:#1f2937;margin-bottom:6px;', t('planStartTitle')),
+      el('div', 'font-size:14px;color:#6b7280;margin-bottom:22px;', t('planStartText')),
+    );
+    const grid = el('div', 'display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;');
+    const tile = (title: string, sub: string, art: Element, run: () => void) => {
+      const b = el('button', `display:flex;flex-direction:column;align-items:center;gap:8px;padding:14px 10px;border-radius:16px;border:2px solid #e5e7eb;background:#fff;cursor:pointer;font-family:${FONT};transition:transform .12s,border-color .12s;`);
+      b.addEventListener('mouseenter', () => { b.style.borderColor = '#38bdf8'; b.style.transform = 'translateY(-2px)'; });
+      b.addEventListener('mouseleave', () => { b.style.borderColor = '#e5e7eb'; b.style.transform = ''; });
+      b.append(art, el('div', 'font-size:14px;font-weight:700;color:#111827;', title), el('div', 'font-size:11.5px;color:#6b7280;', sub));
+      b.addEventListener('click', run);
+      grid.append(b);
+    };
+    const blank = el('div', 'width:120px;height:80px;border-radius:10px;border:2px dashed #cbd5e1;display:flex;align-items:center;justify-content:center;color:#64748b;');
+    blank.append(icon('pencil', 30));
+    tile(t('planStartBlank'), t('planStartBlankSub'), blank, () => this.setTool('room'));
+    const names: Record<TemplateId, [StringKey, StringKey]> = {
+      studio: ['planTplStudio', 'planTplStudioSub'], t2: ['planTplT2', 'planTplT2Sub'],
+      t3: ['planTplT3', 'planTplT3Sub'], house: ['planTplHouse', 'planTplHouseSub'],
+    };
+    for (const id of TEMPLATES) tile(t(names[id][0]), t(names[id][1]), this.thumbnail(templatePlan(id)), () => this.useTemplate(id));
+    const img = el('div', 'width:120px;height:80px;border-radius:10px;background:#f1f5f9;display:flex;align-items:center;justify-content:center;color:#64748b;');
+    img.append(icon('image', 30));
+    tile(t('planStartImage'), t('planStartImageSub'), img, () => this.loadImage());
+    card.append(grid);
+    box.append(card);
+    this.stage.append(box);
+    this.emptyState = box;
+  }
+
+  /** La miniature d'un plan : ses pièces en couleur, ses murs en noir. */
+  private thumbnail(plan: PlanDoc): SVGSVGElement {
+    const s = document.createElementNS(SVG, 'svg') as SVGSVGElement;
+    const xs = plan.nodes.map((n) => n.x), ys = plan.nodes.map((n) => n.y);
+    const x0 = Math.min(...xs) - 0.3, y0 = Math.min(...ys) - 0.3;
+    const w = Math.max(...xs) - x0 + 0.3, h = Math.max(...ys) - y0 + 0.3;
+    s.setAttribute('viewBox', `${x0} ${y0} ${w} ${h}`);
+    s.setAttribute('width', '120');
+    s.setAttribute('height', '80');
+    const all = faces(plan);
+    for (const r of plan.rooms) {
+      const f = all.filter((g) => pointInPolygon(r.seed, g.poly)).sort((a, b) => a.area - b.area)[0];
+      if (f) s.append(svgEl('polygon', { points: poly(f.poly), fill: r.floor ?? '#d8c3a5' }));
+    }
+    for (const wall of plan.walls) {
+      const [a, b] = wallEnds(plan, wall);
+      s.append(svgEl('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, stroke: C.wall, 'stroke-width': 0.22, 'stroke-linecap': 'square' }));
+    }
+    return s;
+  }
+
+  // ── Réglages de ce qui est sélectionné ───────────────────────────────────
+
+  private heading(text: string, iconName?: string) {
+    const h = el('div', 'display:flex;align-items:center;gap:8px;font-size:14px;font-weight:700;color:#fff;margin-bottom:12px;');
+    if (iconName) h.append(icon(iconName, 20));
+    h.append(document.createTextNode(text));
+    this.bubble.append(h);
+  }
+
+  private small(text: string, parent: HTMLElement = this.bubble) {
+    parent.append(el('div', `color:${C.muted};font-size:11.5px;line-height:1.5;margin:4px 0 10px;`, text));
+  }
+
+  /** Une ligne « libellé ... valeur », avec − et + pour les doigts. */
+  private stepper(label: string, value: number, step: number, min: number, max: number, apply: (v: number) => void) {
+    const row = el('div', 'display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:9px;');
+    row.append(el('span', 'color:#cbd5e1;', label));
+    const ctl = el('div', `display:flex;align-items:center;background:${C.chrome2};border:1px solid rgba(255,255,255,0.1);border-radius:9px;overflow:hidden;`);
+    const btn = (txt: string, dv: number) => {
+      const b = el('button', `width:28px;height:30px;border:none;background:transparent;color:#e2e8f0;font-size:16px;cursor:pointer;font-family:${FONT};`, txt);
+      b.addEventListener('click', () => set(Math.round((value + dv) * 1000) / 1000));
+      return b;
+    };
+    const input = el('input', `width:56px;text-align:center;background:transparent;border:none;color:#fff;font-size:13px;font-family:${FONT};outline:none;`);
+    input.inputMode = 'decimal';
+    input.value = (Math.round(value * 100) / 100).toLocaleString(getLang() === 'fr' ? 'fr-FR' : 'en-GB');
+    const set = (v: number) => {
+      if (!(v >= min) || v > max) { input.value = String(value); return; }
+      this.commit();
+      apply(v);
+      this.changed();
+    };
+    input.addEventListener('change', () => set(parseNum(input.value)));
+    input.addEventListener('keydown', (e) => e.stopPropagation());
+    ctl.append(btn('−', -step), input, btn('+', step));
+    row.append(ctl);
+    this.bubble.append(row);
+  }
+
+  private choice<T extends string>(label: string, options: [T, string][], value: T, apply: (v: T) => void) {
+    const row = el('div', 'margin-bottom:10px;');
+    row.append(el('div', 'color:#cbd5e1;margin-bottom:6px;', label));
+    const wrap = el('div', `display:flex;background:${C.chrome2};border-radius:9px;padding:3px;gap:2px;`);
+    for (const [v, text] of options) {
+      const on = v === value;
+      const b = el('button', `flex:1;padding:6px 4px;border-radius:7px;border:none;cursor:pointer;font-size:12px;font-family:${FONT};font-weight:600;${on ? 'background:#0ea5e9;color:#fff' : `background:transparent;color:${C.muted}`}`, text);
+      b.addEventListener('click', () => { if (on) return; this.commit(); apply(v); this.changed(); });
+      wrap.append(b);
+    }
+    row.append(wrap);
+    this.bubble.append(row);
+  }
+
+  private actions(...buttons: HTMLButtonElement[]) {
+    const row = el('div', 'display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;');
+    row.append(...buttons);
+    this.bubble.append(row);
+  }
+
+  private renderBubble() {
+    this.bubble.innerHTML = '';
+    this.bubble.style.width = '250px';
+    this.bubble.style.padding = '14px';
+    const sel = this.sel;
+    if (sel?.type === 'room') return this.roomBubble(sel.id);
+    if (sel?.type === 'wall') return this.wallBubble(sel.id);
+    if (sel?.type === 'opening') return this.openingBubble(sel.id);
+    if (sel?.type === 'node') {
+      this.heading(t('planCorner'), 'corner');
+      this.small(t('planCornerHelp'));
+      this.actions(this.pill(t('planDeleteCorner'), () => this.remove(sel), false, 'trash', true));
+      return;
+    }
+    this.generalBubble();
+  }
+
+  private roomBubble(id: string) {
+    const room = this.plan.rooms.find((r) => r.id === id);
+    if (!room) return;
+    const f = this.faceOf(room.seed);
+    this.heading(t('planRoomTitle'), 'room');
+    const name = el('input', `width:100%;box-sizing:border-box;background:${C.chrome2};border:1px solid rgba(255,255,255,0.14);border-radius:9px;color:#fff;padding:8px 10px;font-size:14px;font-weight:600;font-family:${FONT};margin-bottom:8px;outline:none;`);
+    name.value = room.name;
+    name.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') name.blur(); });
+    name.addEventListener('change', () => { if (!name.value.trim()) return; this.commit(); room.name = name.value.trim(); this.changed(); });
+    this.bubble.append(name);
+
+    // Noms tout prêts : un clic nomme la pièce et lui donne un sol qui va.
+    const chips = el('div', 'display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px;');
+    for (const type of Object.keys(ROOM_TYPES) as RoomType[]) {
+      const label = t(ROOM_TYPES[type].label);
+      const b = el('button', `padding:4px 9px;border-radius:999px;border:1px solid rgba(255,255,255,0.12);background:${label === room.name ? '#0ea5e9' : 'transparent'};color:#cbd5e1;font-size:11.5px;cursor:pointer;font-family:${FONT};`, label);
+      b.addEventListener('click', () => { this.commit(); room.name = label; room.floor = ROOM_TYPES[type].floor; this.changed(); });
+      chips.append(b);
+    }
+    this.bubble.append(chips);
+
+    if (f) {
+      this.bubble.append(el('div', 'display:flex;justify-content:space-between;color:#cbd5e1;margin-bottom:10px;', ''));
+      const row = this.bubble.lastChild as HTMLElement;
+      row.append(el('span', '', t('planArea')), el('b', 'color:#fff;', `${(Math.round(polygonArea(f.poly) * 10) / 10).toLocaleString(getLang() === 'fr' ? 'fr-FR' : 'en-GB')} m²`));
+      // Une pièce rectangulaire se règle aussi au clavier.
+      const rect = this.rectOf(f);
+      if (rect) {
+        this.stepper(t('planWidth'), rect.x1 - rect.x0, 0.05, MIN_SIDE, 100, (v) => this.resizeRect(rect, 'x', v));
+        this.stepper(t('planDepth'), rect.y1 - rect.y0, 0.05, MIN_SIDE, 100, (v) => this.resizeRect(rect, 'y', v));
+      }
+    }
+
+    this.bubble.append(el('div', 'color:#cbd5e1;margin:6px 0;', t('planFloor')));
+    const sw = el('div', 'display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-bottom:12px;');
+    for (const c of FLOOR_COLORS) {
+      const b = el('button', `aspect-ratio:1;border-radius:8px;cursor:pointer;background:${c};border:2px solid ${room.floor === c ? '#fff' : 'transparent'};`);
+      b.addEventListener('click', () => { this.commit(); room.floor = c; this.changed(); });
+      sw.append(b);
+    }
+    this.bubble.append(sw);
+    this.actions(this.pill(t('planDeleteRoom'), () => this.remove({ type: 'room', id }), false, 'trash', true));
+  }
+
+  /** Les bornes d'une pièce si elle est un rectangle droit (4 coins alignés sur les axes). */
+  private rectOf(f: Face): { x0: number; x1: number; y0: number; y1: number; ids: string[] } | null {
+    if (f.poly.length !== 4) return null;
+    const xs = [...new Set(f.poly.map((p) => p.x))], ys = [...new Set(f.poly.map((p) => p.y))];
+    if (xs.length !== 2 || ys.length !== 2) return null;
+    return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys), ids: f.nodes };
+  }
+
+  /** Change la largeur (ou la profondeur) : le mur de droite (ou du bas) recule, avec tout ce qui est aligné dessus. */
+  private resizeRect(r: { x0: number; x1: number; y0: number; y1: number }, axis: 'x' | 'y', size: number) {
+    const shapes = roomShapes(this.plan, this.all);
+    const edge = axis === 'x' ? r.x1 : r.y1;
+    const delta = (axis === 'x' ? r.x0 : r.y0) + size - edge;
+    const lo = axis === 'x' ? r.y0 : r.x0, hi = axis === 'x' ? r.y1 : r.x1;
+    for (const n of this.plan.nodes) {
+      const along = axis === 'x' ? n.x : n.y, across = axis === 'x' ? n.y : n.x;
+      if (Math.abs(along - edge) > 1e-6 || across < lo - 1e-6 || across > hi + 1e-6) continue;
+      if (axis === 'x') n.x = round3(n.x + delta); else n.y = round3(n.y + delta);
+    }
+    settle(this.plan);
+    this.all = faces(this.plan);
+    reseedRooms(this.plan, shapes, this.all);
+  }
+
+  private wallBubble(id: string) {
+    const w = this.plan.walls.find((q) => q.id === id);
+    if (!w) return;
+    this.heading(t('planWallTitle'), 'wall');
+    this.stepper(t('planLength'), wallLength(this.plan, w), 0.05, 0.1, 100, (v) => {
+      // Le coin d'arrivée avance ou recule le long du mur.
+      const [a, b] = wallEnds(this.plan, w);
+      const shapes = roomShapes(this.plan, this.all);
+      moveNode(this.plan, w.b, add(a, mul(norm(sub(b, a)), v)));
+      settle(this.plan);
+      this.all = faces(this.plan);
+      reseedRooms(this.plan, shapes, this.all);
+    });
+    this.stepper(t('planWallHeight'), heightOf(this.plan, w), 0.1, 0.3, 10, (v) => { w.height = v; });
+    this.stepper(t('planWallThickness'), thicknessOf(this.plan, w), 0.01, 0.03, 1, (v) => { w.thickness = v; });
+    this.small(t('planWallHelp'));
+    const buttons = [this.pill(t('planDeleteWall'), () => this.remove({ type: 'wall', id }), false, 'trash', true)];
+    if (w.height !== undefined || w.thickness !== undefined) {
+      buttons.unshift(this.pill(t('planWallReset'), () => { this.commit(); delete w.height; delete w.thickness; cleanup(this.plan); this.changed(); }));
+    }
+    this.actions(...buttons);
+  }
+
+  private openingBubble(id: string) {
+    const o = this.plan.openings.find((q) => q.id === id);
+    if (!o) return;
+    this.heading(t(KIND_LABEL[o.kind]), o.kind);
+    if (!openingFits(this.plan, o)) this.small(t('planOrphan'));
+    // Une porte peut devenir une fenêtre sans être redessinée.
+    this.choice('', (['door', 'window', 'slider', 'passage'] as OpeningKind[]).map((k) => [k, t(KIND_LABEL[k])] as [OpeningKind, string]), o.kind, (k) => {
+      const def = OPENING_DEFAULTS[k];
+      o.kind = k; o.height = def.height; o.sill = def.sill;
+    });
+    this.stepper(t('planWidth'), o.width, 0.05, 0.3, 10, (v) => { o.width = v; });
+    this.stepper(t('planHeight'), o.height, 0.05, 0.3, 4, (v) => { o.height = v; });
+    if (o.kind === 'window') this.stepper(t('planSill'), o.sill, 0.05, 0, 3, (v) => { o.sill = v; });
+    if (o.kind === 'door' || o.kind === 'window') {
+      this.choice(t('planLeaves'), [['1', '1'], ['2', '2']], o.double ? '2' : '1', (v) => { o.double = v === '2'; });
+    }
+    if (o.kind !== 'passage') {
+      const buttons = [this.pill(o.kind === 'slider' ? t('planFlipSlide') : t('planFlipHinge'), () => this.flipOpening(id, 'hinge'), false, 'flip')];
+      if (o.kind !== 'slider') buttons.push(this.pill(t('planFlipSide'), () => this.flipOpening(id, 'swing'), false, 'swap'));
+      this.actions(...buttons);
+      this.small(t('planOpeningHelp'));
+    }
+    this.actions(this.pill(t('planDelete'), () => this.remove({ type: 'opening', id }), false, 'trash', true));
+  }
+
+  private generalBubble() {
+    if (!this.showSettings) {
+      // Replié : un simple bouton, pour laisser tout le plan visible.
+      this.bubble.style.width = 'auto';
+      this.bubble.style.padding = '4px';
+      const b = this.pill(t('planSettings'), () => { this.showSettings = true; this.renderBubble(); }, false, 'sparkle');
+      b.style.border = 'none';
+      this.bubble.append(b);
+      return;
+    }
+    this.heading(t('planSettings'), 'sparkle');
+    const close = this.iconButton('close', '', () => { this.showSettings = false; this.renderBubble(); });
+    close.style.cssText += ';position:absolute;top:10px;right:10px;width:28px;height:28px;';
+    this.bubble.append(close);
+    this.stepper(t('planWallHeight'), this.plan.wallHeight, 0.1, 1, 10, (v) => { this.plan.wallHeight = v; });
+    this.stepper(t('planWallThickness'), this.plan.wallThickness, 0.01, 0.03, 1, (v) => { this.plan.wallThickness = v; });
+
+    this.bubble.append(el('div', `height:1px;background:${C.line};margin:12px 0;`));
+    this.heading(t('planImage'), 'image');
+    const bg = this.plan.background;
+    if (!bg) {
+      this.small(t('planImageHelp'));
+      this.actions(this.pill(t('planImageLoad'), () => this.loadImage(), false, 'image'));
+    } else {
+      const row = el('div', 'display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:9px;color:#cbd5e1;');
+      const op = el('input');
+      op.type = 'range'; op.min = '0.1'; op.max = '1'; op.step = '0.05'; op.value = String(bg.opacity);
+      op.style.width = '120px';
+      op.addEventListener('input', () => { bg.opacity = parseFloat(op.value); this.render(); });
+      op.addEventListener('change', () => this.opts.onChange(clone(this.plan)));
+      row.append(el('span', '', t('planImageOpacity')), op);
+      this.bubble.append(row);
+      this.actions(
+        this.pill(t('planImageScale'), () => this.setTool('calibrate'), false, 'ruler'),
+        this.pill(t('planImageMove'), () => this.setTool('image'), false, 'move'),
+        this.pill(t('planImageRemove'), () => { this.commit(); this.plan.background = undefined; this.changed(); }, false, 'trash', true),
+      );
+    }
+    if (this.plan.walls.length) {
+      this.bubble.append(el('div', `height:1px;background:${C.line};margin:12px 0;`));
+      this.actions(this.pill(t('planClear'), () => {
+        if (!window.confirm(t('planClearConfirm'))) return;
+        this.commit();
+        this.plan = { ...this.plan, nodes: [], walls: [], rooms: [], openings: [] };
+        this.sel = null;
+        this.changed();
+      }, false, 'trash', true));
+    }
   }
 }
