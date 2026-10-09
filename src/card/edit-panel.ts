@@ -270,6 +270,8 @@ export class EditPanel {
   countAllDetectedOpenings?: () => number;
   /** Remplace les ouvrants par ceux reconnus, capteurs gardés. */
   onReplaceDetectedOpenings?: () => Promise<void>;
+  /** Ouvre l'éditeur de plan, pour dessiner son logement dans la carte. */
+  onDrawPlan?: () => void;
   /** Ouvre le sélecteur de fichiers pour importer un plan (admin seulement). */
   onImportModel?: () => void;
 
@@ -1253,6 +1255,13 @@ export class EditPanel {
 
     // Importer son plan : le même chemin que le glisser-déposer sur la carte,
     // pour qui ne pense pas à glisser ou n'a pas de souris (tablette).
+    if (this.onDrawPlan) {
+      const draw = document.createElement('button');
+      draw.textContent = `✏️ ${t('planDraw')}`;
+      draw.style.cssText = 'width:100%;background:rgba(125,209,252,0.15);border:1px solid rgba(125,209,252,0.35);border-radius:7px;color:#7dd3fc;padding:8px 10px;font-size:11.5px;font-weight:600;font-family:inherit;cursor:pointer;margin-bottom:6px;';
+      draw.addEventListener('click', () => this.onDrawPlan?.());
+      root.appendChild(draw);
+    }
     if (this.onImportModel) {
       const btn = document.createElement('button');
       btn.textContent = t('importButton');

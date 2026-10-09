@@ -30,7 +30,9 @@
       { id: 'd2', kind: 'door', x: 8.5, y: 3, width: 0.9, height: 2.04, sill: 0, hinge: 'end', swing: 'back' },
     ],
   };
-  let scene = { version: 1, scene_id: 'plan', model_url: '', anchors: [], camera_views: [], cards: [], rules: [], parts: [], plan };
+  //   ?editor : on part de la démo et on ouvre l'éditeur, pour dessiner soi-même.
+  const EDITOR = new URLSearchParams(location.search).has('editor');
+  let scene = { version: 1, scene_id: 'plan', model_url: '', anchors: [], camera_views: [], cards: [], rules: [], parts: [], plan: EDITOR ? undefined : plan };
 
   const hass = {
     states: {}, user: { is_admin: true }, callService() {},
@@ -54,7 +56,15 @@
   window.__card = card;
 
   for (let i = 0; i < 40 && !card.modelLoaded; i++) await new Promise((r) => setTimeout(r, 200));
+  if (EDITOR) {
+    card.style.width = '800px'; card.style.height = '450px'; document.body.style.overflow = 'hidden';
+    document.getElementById('out').style.display = 'none';
+    await new Promise((r) => setTimeout(r, 300));
+    card.openPlanEditor();
+    window.__done = true;
+  }
   await new Promise((r) => setTimeout(r, 300));
+  if (EDITOR) throw 'éditeur ouvert';
   let walls = 0, meshes = 0;
   card._modelRoot.traverse((o) => { if (o.isMesh) { meshes++; if (o.name.startsWith('wall_')) walls++; } });
   say(`modèle : ${card._modelRoot.name}, ${meshes} mailles dont ${walls} morceaux de mur, démo : ${card._isDemo}`);

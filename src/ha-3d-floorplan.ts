@@ -47,7 +47,8 @@ import { separateCoplanarSlabs } from './coplanar';
 import { StaticBatch } from './batching';
 import { buildPlan } from './plan/build';
 import { syncPlanParts } from './plan/parts';
-import type { PlanDoc } from './plan/types';
+import { emptyPlan, type PlanDoc } from './plan/types';
+import { PlanEditor } from './plan/editor-ui';
 import { createUniforms, instrumentMaterials, updateXray, createGhost } from './cutaway';
 import type { CutawayUniforms } from './cutaway';
 import { evalCondition, RuleEngine } from './rules/engine';
@@ -211,6 +212,9 @@ export class Ha3dFloorplan extends HTMLElement {
   private _backendRetryAt = 0;
   /** Objets immobiles fusionnés par matériau, hors édition : voir batching.ts. */
   private _batch: StaticBatch | null = null;
+  /** Éditeur de plan ouvert, et sauvegarde différée de ses retouches. */
+  private _planEditor: PlanEditor | null = null;
+  private _planSaveTimer: ReturnType<typeof setTimeout> | null = null;
   private _detachDrop: (() => void) | null = null;
   private _saveQueued = false;   // une modification est arrivee pendant l'envoi
 
@@ -481,8 +485,62 @@ export class Ha3dFloorplan extends HTMLElement {
       };
     }
     this._buildParts();
+    // Pendant le dessin, la 3D suit la maison qui grandit.
+    if (this._planEditor) this._frameModel();
     this._requestShadowUpdate();
     this._requestRender();
+  }
+
+  /**
+   * Ouvre l'éditeur de plan, à gauche de la carte ; la 3D reste visible à
+   * droite et suit chaque retouche.
+   *
+   * Dessiner par-dessus la maison de démo repart d'une scène vierge, comme un
+   * import. Par-dessus un modèle importé, le modèle est gardé dans la scène :
+   * effacer toutes les pièces le fait revenir.
+   */
+  openPlanEditor() {
+    const sceneId = this._getActiveSceneId();
+    if (this._planEditor || !this.overlayContainer || !sceneId) return;
+    if (this._editMode) this._exitEditMode();
+    if (!this._scene) this._scene = emptyScene(sceneId);
+    this.overlayContainer.querySelector('#owlnest-demo-banner')?.remove();
+    let fromDemo = this._isDemo;
+    this._planEditor = new PlanEditor({
+      container: this.overlayContainer,
+      plan: this._scene.plan ?? emptyPlan(),
+      onChange: (plan) => {
+        if (!this._scene) return;
+        if (fromDemo && plan.rooms.length) {
+          fromDemo = false;
+          this._scene = { ...this._scene, anchors: [], camera_views: [], parts: [] };
+          try { localStorage.removeItem(this._storageKey); } catch { /* stockage bloqué */ }
+        }
+        this.applyPlan(plan);
+        this._schedulePlanSave(800);
+      },
+      onClose: () => {
+        this._planEditor = null;
+        this._viewShift = 0;
+        this._applyViewShift();
+        this._schedulePlanSave(0);
+        if (this._isDemo) this._showDemoBanner();
+      },
+    });
+    this._viewShift = this._planEditor.width;
+    this._applyViewShift();
+    if (this._plan) this._frameModel();
+  }
+
+  private _schedulePlanSave(delay: number) {
+    if (this._planSaveTimer) clearTimeout(this._planSaveTimer);
+    this._planSaveTimer = setTimeout(() => {
+      this._planSaveTimer = null;
+      const sceneId = this._getActiveSceneId();
+      if (!sceneId || !this._hass || !this._scene) return;
+      saveScene(this._hass, sceneId, this._scene)
+        .catch(() => this._showToast(t('toastSceneSaveError'), true));
+    }, delay);
   }
 
   /** Après un chargement déclenché par l'éditeur : accorder les ouvrants au plan. */
@@ -1032,7 +1090,10 @@ export class Ha3dFloorplan extends HTMLElement {
       importBtn.textContent = t('importButton');
       importBtn.style.cssText = 'flex-shrink:0;background:rgba(125,209,252,0.18);border:1px solid rgba(125,209,252,0.4);border-radius:999px;color:#7dd3fc;cursor:pointer;font:600 11px var(--primary-font-family,sans-serif);padding:4px 10px;white-space:nowrap;';
       importBtn.addEventListener('click', () => pickFiles((files) => this._importModel(files)));
-      banner.append(importBtn);
+      const drawBtn = importBtn.cloneNode() as HTMLButtonElement;
+      drawBtn.textContent = t('planDraw');
+      drawBtn.addEventListener('click', () => this.openPlanEditor());
+      banner.append(drawBtn, importBtn);
     }
     banner.append(close);
     this.overlayContainer.appendChild(banner);
@@ -1651,6 +1712,7 @@ export class Ha3dFloorplan extends HTMLElement {
     console.debug('[Owlnest] import:', {
       admin: this._hass?.user?.is_admin, scene: this._getActiveSceneId(), backendDown: this._backendDown,
     });
+    this._editPanel.onDrawPlan = () => this.openPlanEditor();
     this._editPanel.countDetectedOpenings = () => this._detectedOpenings().length;
     this._editPanel.onAddDetectedOpenings = () => this._addDetectedOpenings();
     this._editPanel.countAllDetectedOpenings = () => this._detectedOpenings(true).length;
@@ -2808,7 +2870,9 @@ export class Ha3dFloorplan extends HTMLElement {
     const size = this._modelBox.getSize(new THREE.Vector3());
     const radius = Math.max(size.length() / 2, 1e-3);
     const vfov = (this.camera.fov * Math.PI) / 180;
-    const hfov = 2 * Math.atan(Math.tan(vfov / 2) * this.camera.aspect);
+    // Seule la partie de la carte que l'éditeur de plan ne couvre pas compte.
+    const visible = this.canvas?.clientWidth ? 1 - this._viewShift / this.canvas.clientWidth : 1;
+    const hfov = 2 * Math.atan(Math.tan(vfov / 2) * this.camera.aspect * Math.max(visible, 0.2));
     const dist = (radius / Math.sin(Math.min(vfov, hfov) / 2)) * 0.85;
 
     const elevation = (50 * Math.PI) / 180;
@@ -2823,9 +2887,13 @@ export class Ha3dFloorplan extends HTMLElement {
 
     // La borne d'orbite ne doit pas rogner la vue d'ensemble.
     if (this.controls.maxDistance < dist * 1.2) this.controls.maxDistance = dist * 1.2;
-    this.controls.target.set(0, 0, 0);
-    this.camera.position.copy(dir.multiplyScalar(dist));
-    this.camera.lookAt(0, 0, 0);
+    // Le centre de la maison : l'origine pour un modèle importé (recentré au
+    // chargement), pas forcément pour un plan qui a grandi depuis son origine.
+    const centre = this._modelBox.isEmpty() ? new THREE.Vector3() : this._modelBox.getCenter(new THREE.Vector3());
+    centre.y = 0;
+    this.controls.target.copy(centre);
+    this.camera.position.copy(centre).add(dir.multiplyScalar(dist));
+    this.camera.lookAt(centre);
     this.controls.update();
   }
 
@@ -3761,6 +3829,21 @@ export class Ha3dFloorplan extends HTMLElement {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    this._applyViewShift();
+    this._requestRender();
+  }
+
+  /**
+   * Largeur couverte à gauche par l'éditeur de plan, en pixels : la 3D se
+   * décale d'autant pour rester dans la partie visible de la carte.
+   */
+  private _viewShift = 0;
+
+  private _applyViewShift() {
+    if (!this.camera || !this.canvas) return;
+    const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
+    if (this._viewShift > 0 && w && h) this.camera.setViewOffset(w, h, -this._viewShift / 2, 0, w, h);
+    else this.camera.clearViewOffset();
     this._requestRender();
   }
 

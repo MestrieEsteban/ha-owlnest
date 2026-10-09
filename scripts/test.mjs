@@ -43,6 +43,7 @@ const ENTRIES = [
   'src/import/sh3d-parts.ts',
   'src/card/lovelace-config.ts',
   'src/plan/walls.ts',
+  'src/plan/edit.ts',
 ];
 
 /**

@@ -125,7 +125,7 @@ export function snapToWall(
     const dist = Math.abs(across - w.at);
     if (dist > bestDist) continue;
     bestDist = dist;
-    best = { wall: w, x: w.axis === 'x' ? along : w.at, y: w.axis === 'x' ? w.at : along };
+    best = { wall: w, x: round(w.axis === 'x' ? along : w.at), y: round(w.axis === 'x' ? w.at : along) };
   }
   return best;
 }

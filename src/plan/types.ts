@@ -57,6 +57,8 @@ export interface PlanBackground {
   y: number;
   /** Largeur de l'image, en mètres une fois mise à l'échelle. */
   width: number;
+  /** Hauteur sur largeur de l'image d'origine. */
+  aspect: number;
   opacity: number;
 }
 
