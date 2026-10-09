@@ -12,7 +12,7 @@ Une archive zip. Mesuré sur les six fichiers d'Esteban (octobre 2026) :
 
 - `Home.xml` (depuis Sweet Home 3D 5.3) : la maison décrite. Un fichier plus ancien n'a que `Home`, un objet Java sérialisé : on refuse avec un message qui dit de le réenregistrer.
 - Les modèles des meubles : soit une entrée seule (`3`, un OBJ sans MTL), soit un dossier (`17/ficus.obj` + `.mtl` + textures). Les PNG numérotés sont les icônes.
-- **Aucun des six fichiers n'a de `<room>` ni de `<level>`** : les pièces se déduisent des murs fermés. Une maison dont les murs ne se rejoignent pas (MaisonHA) n'a donc presque pas de pièces, ni de sols : c'est fidèle au fichier.
+- **Aucun des six fichiers n'a de `<room>` ni de `<level>`** : les pièces se déduisent des murs fermés. Une maison dont les murs ne se rejoignent pas (MaisonHA) n'aurait donc presque pas de pièces ni de sols : voir plus bas comment on les ferme.
 
 > [!important] Les matières sans MTL
 > Un modèle du catalogue de Sweet Home 3D cite ses matières par leur nom (`flblonde`, `flgrey`, `amber`) sans fichier de matières : elles sont fournies par le logiciel. Leurs couleurs sont reconstituées d'après le nom (`namedColor`). Une couleur imposée au meuble (`color='FFAE7400'`) ou par matière (`<material>`) est cuite dans le GLB.
