@@ -58,3 +58,24 @@ test('une armoire adossée et l’objet posé dessus disparaissent avec leur mur
   assert.equal(root.getObjectByName('plan_item_w').visible, false);
   assert.equal(root.getObjectByName('plan_item_s').visible, true);
 });
+
+test('mode fantôme : un voile sur les murs seulement, affiché quand le mode est actif', async () => {
+  const { tagWall, wallItemCode, WALL_ATTR } = await import('./low-walls.mjs');
+  const { root, lw } = setup();
+  const wall = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());
+  tagWall(wall.geometry, 0);
+  const sofa = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());
+  sofa.geometry.setAttribute(WALL_ATTR, new THREE.BufferAttribute(new Float32Array(sofa.geometry.getAttribute('position').count).fill(wallItemCode(0)), 1));
+  root.add(wall, sofa);
+  lw.instrument(root);
+  const ghostOf = (m) => m.children.find((c) => c.name === 'owlnest_wall_ghost');
+  assert.ok(ghostOf(wall), 'le mur a son voile');
+  assert.equal(ghostOf(sofa), undefined, 'un meuble n’en a pas');
+  assert.equal(ghostOf(wall).visible, false);
+  lw.setGhost(true, root);
+  assert.equal(lw.ghost, true);
+  assert.equal(ghostOf(wall).visible, true);
+  // Un second passage n'ajoute pas de second voile.
+  lw.instrument(root);
+  assert.equal(wall.children.length, 1);
+});

@@ -1787,7 +1787,10 @@ export class Ha3dFloorplan extends HTMLElement {
     btn.style.cssText = this._hudBtnStyle();
     btn.textContent = '\u{1F9F1}';
     btn.style.display = 'none';
-    try { this._lowWalls.enabled = localStorage.getItem(LOW_WALLS_KEY) === '1'; } catch { /* stockage bloqué */ }
+    let saved = '0';
+    try { saved = localStorage.getItem(LOW_WALLS_KEY) ?? '0'; } catch { /* stockage bloqué */ }
+    this._lowWalls.enabled = saved === '1' || saved === '2';
+    this._lowWalls.setGhost(saved === '2', null);
     btn.addEventListener('click', (e) => { e.stopPropagation(); this._toggleLowWalls(); });
     this._paintLowWallsBtn(btn);
     return btn;
@@ -1795,17 +1798,27 @@ export class Ha3dFloorplan extends HTMLElement {
 
   private _paintLowWallsBtn(btn = this._lowWallsBtn) {
     if (!btn) return;
-    btn.title = this._lowWalls.enabled ? t('lowWallsOff') : t('lowWallsOn');
+    const ghost = this._lowWalls.enabled && this._lowWalls.ghost;
+    // Le bouton montre le mode en cours, et dit le suivant.
+    btn.textContent = ghost ? '\u{1F47B}' : '\u{1F9F1}';
+    btn.title = !this._lowWalls.enabled ? t('lowWallsOn') : ghost ? t('lowWallsOff') : t('lowWallsGhost');
     btn.style.boxShadow = this._lowWalls.enabled ? '0 0 0 2px rgba(125,211,252,0.8)' : 'none';
     btn.style.display = this._plan ? '' : 'none';
   }
 
-  /** Murs bas : les meubles adossés sortent du regroupement le temps du mode. */
+  /**
+   * Éteint, murs bas, murs fantômes, éteint. Les meubles adossés reçoivent le
+   * numéro de leur mur : le regroupement est refait quand le mode s'allume ou
+   * s'éteint, pas entre les deux modes.
+   */
   private _toggleLowWalls() {
-    this._lowWalls.enabled = !this._lowWalls.enabled;
-    try { localStorage.setItem(LOW_WALLS_KEY, this._lowWalls.enabled ? '1' : '0'); } catch { /* stockage bloqué */ }
+    const was = this._lowWalls.enabled;
+    const mode = !was ? 1 : this._lowWalls.ghost ? 0 : 2;
+    this._lowWalls.enabled = mode > 0;
+    this._lowWalls.setGhost(mode === 2, this._modelRoot);
+    try { localStorage.setItem(LOW_WALLS_KEY, String(mode)); } catch { /* stockage bloqué */ }
     const root = this._modelRoot, plan = this._plan;
-    if (root && plan) {
+    if (root && plan && was !== this._lowWalls.enabled) {
       this._batch?.unmerge();
       root.traverse((o) => { if (o.name.startsWith('plan_item_')) { delete o.userData.owlnestWallItem; o.visible = true; } });
       if (!this._lowWalls.enabled) this._lowWalls.reset();

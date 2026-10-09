@@ -17,6 +17,14 @@
  *  - **les murs descendent et remontent en douceur**, avec une marge qui
  *    évite qu'un mur au milieu ne clignote quand on tourne.
  *
+ * Second mode, **fantôme** : les mêmes murs, au lieu de descendre, deviennent
+ * un voile translucide. On voit l'intérieur à travers, la silhouette du mur
+ * reste pour se repérer, et son ombre aussi (la lumière des pièces ne change
+ * pas). Le voile est une seconde passe sur la même géométrie, dessinée par
+ * dessus l'image : pas de tri d'objets transparents, donc pas les
+ * recouvrements aberrants qui avaient fait écarter la transparence sur les
+ * exports OBJ (voir cutaway.ts).
+ *
  * Pour la tablette, les murs restent regroupés (voir batching.ts) : ils
  * descendent dans le shader, d'après une texture qui dit, mur par mur, de
  * combien il est abaissé. Chaque sommet de mur porte le numéro de son mur
@@ -42,6 +50,7 @@ const TALL = 1.4;
 const MARGIN = 0.4;
 
 export const WALL_ATTR = 'owlnestWall';
+const GHOST_NAME = 'owlnest_wall_ghost';
 /** Au-delà, le code désigne un meuble adossé : il disparaît en entier avec son mur. */
 const ITEM_BASE = 10000;
 export const wallItemCode = (wall: number) => ITEM_BASE + wall + 1;
@@ -53,11 +62,37 @@ export function tagWall(geo: THREE.BufferGeometry, index: number, opening = fals
   geo.setAttribute(WALL_ATTR, new THREE.BufferAttribute(new Float32Array(n).fill(v), 1));
 }
 
+/** La géométrie porte-t-elle des murs ou des ouvertures (et pas seulement des meubles) ? */
+function hasWallFaces(geo: THREE.BufferGeometry): boolean {
+  const a = geo.getAttribute(WALL_ATTR);
+  if (!a) return false;
+  for (let i = 0; i < a.count; i++) {
+    const v = a.getX(i);
+    if (v !== 0 && v < ITEM_BASE) return true;
+  }
+  return false;
+}
+
+/**
+ * Un vantail de porte ou de fenêtre : fait de plusieurs pièces animées, il
+ * n'est pas regroupé. Lui donner un voile coûterait un appel de dessin par
+ * pièce ; le cadre, regroupé, suffit à dessiner la silhouette de l'ouverture.
+ */
+function inLeaf(o: THREE.Object3D): boolean {
+  for (let n: THREE.Object3D | null = o; n; n = n.parent) {
+    if (n.userData.owlnestLeaf || n.userData.owlnestPartId || n.name.startsWith('plan_leaf_')) return true;
+  }
+  return false;
+}
+
 /** Un mur vu de dessus, en coordonnées du plan. */
 interface WallInfo { mid: { x: number; y: number } }
 
 export class LowWalls {
   enabled = false;
+  /** Mode fantôme : les murs deviennent translucides au lieu de descendre. */
+  private readonly ghostMode = { value: 0 };
+  private ghostMaterial: THREE.MeshBasicMaterial | null = null;
   private readonly data = new Uint8Array(MAX_WALLS * 4);
   readonly texture = new THREE.DataTexture(this.data, MAX_WALLS, 1, THREE.RGBAFormat);
   /** Hauteur de la coupe, dans le repère du plan, et dans celui de la scène. */
@@ -159,14 +194,32 @@ export class LowWalls {
    * À appeler après chaque construction et chaque regroupement.
    */
   instrument(root: THREE.Object3D) {
+    const found: THREE.Mesh[] = [];
     root.traverse((o) => {
       const m = o as THREE.Mesh;
-      if (!m.isMesh || !m.geometry.getAttribute(WALL_ATTR)) return;
+      if (!m.isMesh || o.userData.owlnestHelper || !m.geometry.getAttribute(WALL_ATTR)) return;
+      found.push(m);
+    });
+    for (const m of found) {
       for (const mat of [m.material].flat()) this.patch(mat);
       // Un mur abaissé ne doit pas projeter l'ombre du mur entier.
       m.customDepthMaterial = this.depthMaterial();
       m.customDistanceMaterial = this.distanceMaterial();
-    });
+      // Le voile du mode fantôme : même géométrie, dessiné par-dessus. Seulement
+      // pour les murs et leurs ouvertures : un regroupement de meubles n'en a
+      // pas besoin, et chaque voile coûte un appel de dessin.
+      if (!m.userData.owlnestGhost && hasWallFaces(m.geometry) && !inLeaf(m)) {
+        m.userData.owlnestGhost = true;
+        const g = new THREE.Mesh(m.geometry, this.ghostMat());
+        g.name = GHOST_NAME;
+        g.userData.owlnestHelper = true;
+        g.castShadow = false;
+        g.receiveShadow = false;
+        g.renderOrder = 10;
+        g.visible = this.ghost;
+        m.add(g);
+      }
+    }
   }
 
   /**
@@ -217,6 +270,14 @@ export class LowWalls {
     this.writeTexture();
   }
 
+  get ghost(): boolean { return this.ghostMode.value > 0.5; }
+
+  /** Passe d'un mode à l'autre ; le voile n'est dessiné qu'en mode fantôme. */
+  setGhost(on: boolean, root: THREE.Object3D | null) {
+    this.ghostMode.value = on ? 1 : 0;
+    root?.traverse((o) => { if (o.name === GHOST_NAME) o.visible = on; });
+  }
+
   get busy(): boolean {
     for (let i = 0; i < this.walls.length; i++) if (this.factor[i] !== this.goal[i]) return true;
     return false;
@@ -236,54 +297,81 @@ export class LowWalls {
     const previous = material.onBeforeCompile;
     material.onBeforeCompile = (shader, renderer) => {
       previous?.call(material, shader, renderer);
-      this.inject(shader);
+      this.inject(shader, 'main');
     };
     material.needsUpdate = true;
   }
 
-  private inject(shader: THREE.WebGLProgramParametersWithUniforms) {
+  /**
+   * `main` : la scène ; `depth` : le calcul des ombres ; `ghost` : le voile.
+   * Nature d'un sommet (`vOwlnestKind`) : 1 mur, 2 porte ou fenêtre, 3 meuble adossé.
+   */
+  private inject(shader: THREE.WebGLProgramParametersWithUniforms, pass: 'main' | 'depth' | 'ghost') {
     shader.uniforms.owlnestLowTex = { value: this.texture };
     shader.uniforms.owlnestCut = this.cut;
     shader.uniforms.owlnestCutWorld = this.cutWorld;
+    shader.uniforms.owlnestGhost = this.ghostMode;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
 attribute float ${WALL_ATTR};
 uniform sampler2D owlnestLowTex;
 uniform float owlnestCut;
+uniform float owlnestGhost;
 varying float vOwlnestLow;
-varying float vOwlnestOpening;
-varying float vOwlnestItem;
+varying float vOwlnestKind;
 varying float vOwlnestY;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
 vOwlnestLow = 0.0;
-vOwlnestOpening = ${WALL_ATTR} < 0.0 ? 1.0 : 0.0;
-vOwlnestItem = ${WALL_ATTR} > ${ITEM_BASE}.0 ? 1.0 : 0.0;
-float owlnestIndex = (vOwlnestItem > 0.5 ? ${WALL_ATTR} - ${ITEM_BASE}.0 : abs(${WALL_ATTR})) - 1.0;
+vOwlnestKind = ${WALL_ATTR} > ${ITEM_BASE}.0 ? 3.0 : ${WALL_ATTR} < 0.0 ? 2.0 : ${WALL_ATTR} > 0.0 ? 1.0 : 0.0;
+float owlnestIndex = (vOwlnestKind > 2.5 ? ${WALL_ATTR} - ${ITEM_BASE}.0 : abs(${WALL_ATTR})) - 1.0;
 if (owlnestIndex >= 0.0) {
   vOwlnestLow = texelFetch(owlnestLowTex, ivec2(int(owlnestIndex + 0.5), 0), 0).r;
-  // Un mur descend : ses sommets hauts viennent à la coupe, il reste fermé.
-  if (${WALL_ATTR} > 0.0 && vOwlnestItem < 0.5) transformed.y = mix(transformed.y, min(transformed.y, owlnestCut), vOwlnestLow);
+  // Murs bas : les sommets hauts d'un mur viennent à la coupe, il reste fermé.
+  if (owlnestGhost < 0.5 && vOwlnestKind > 0.5 && vOwlnestKind < 1.5) transformed.y = mix(transformed.y, min(transformed.y, owlnestCut), vOwlnestLow);
 }
 vOwlnestY = (modelMatrix * vec4(transformed, 1.0)).y;`);
-    // Aussi dans le calcul des ombres : un montant de fenêtre coupé ne doit pas laisser la sienne.
+
+    const discard = pass === 'ghost'
+      // Le voile ne garde que les murs (et leurs portes et fenêtres) devenus fantômes.
+      ? `if (!(vOwlnestKind > 0.5 && vOwlnestKind < 2.5 && vOwlnestLow > 0.5)) discard;`
+      : `if (owlnestGhost < 0.5) {
+  // Murs bas : une porte ou une fenêtre d'un mur abaissé est coupée à sa hauteur.
+  if (vOwlnestKind > 1.5 && vOwlnestKind < 2.5 && vOwlnestLow > 0.5 && vOwlnestY > owlnestCutWorld) discard;
+}${pass === 'main' ? ` else {
+  // Fantôme : le mur et ses ouvertures ne sont pas dessinés, le voile les remplace.
+  if (vOwlnestKind > 0.5 && vOwlnestKind < 2.5 && vOwlnestLow > 0.5) discard;
+}` : ''}
+// Un meuble adossé disparaît avec son mur, ombre comprise.
+if (vOwlnestKind > 2.5 && vOwlnestLow > 0.5) discard;`;
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
 uniform float owlnestCutWorld;
+uniform float owlnestGhost;
 varying float vOwlnestLow;
-varying float vOwlnestOpening;
-varying float vOwlnestItem;
+varying float vOwlnestKind;
 varying float vOwlnestY;`)
       .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
-// Une porte ou une fenêtre d'un mur abaissé est coupée à sa hauteur.
-if (vOwlnestOpening > 0.5 && vOwlnestLow > 0.5 && vOwlnestY > owlnestCutWorld) discard;
-// Un meuble adossé disparaît avec son mur.
-if (vOwlnestItem > 0.5 && vOwlnestLow > 0.5) discard;`);
+${discard}`);
+    if (pass === 'ghost') {
+      shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+diffuseColor.a *= smoothstep(0.5, 1.0, vOwlnestLow);`);
+    }
+  }
+
+  /** Le voile : un blanc froid, à peine présent, qui n'écrit pas la profondeur. */
+  private ghostMat(): THREE.MeshBasicMaterial {
+    if (this.ghostMaterial) return this.ghostMaterial;
+    const m = new THREE.MeshBasicMaterial({ color: 0xe6edf5, transparent: true, opacity: 0.16, depthWrite: false });
+    m.onBeforeCompile = (shader) => this.inject(shader, 'ghost');
+    m.customProgramCacheKey = () => 'owlnest-low-ghost';
+    this.ghostMaterial = m;
+    return m;
   }
 
   private depthMaterial(): THREE.MeshDepthMaterial {
     if (this.depth) return this.depth;
     this.depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
-    this.depth.onBeforeCompile = (shader) => this.inject(shader);
+    this.depth.onBeforeCompile = (shader) => this.inject(shader, 'depth');
     this.depth.customProgramCacheKey = () => 'owlnest-low-depth';
     return this.depth;
   }
@@ -291,7 +379,7 @@ if (vOwlnestItem > 0.5 && vOwlnestLow > 0.5) discard;`);
   private distanceMaterial(): THREE.MeshDistanceMaterial {
     if (this.distance) return this.distance;
     this.distance = new THREE.MeshDistanceMaterial();
-    this.distance.onBeforeCompile = (shader) => this.inject(shader);
+    this.distance.onBeforeCompile = (shader) => this.inject(shader, 'depth');
     this.distance.customProgramCacheKey = () => 'owlnest-low-distance';
     return this.distance;
   }
