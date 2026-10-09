@@ -52,6 +52,7 @@ export class AnchorOverlay {
   private _iconOverride?: string;
   private _pressTimer: ReturnType<typeof setTimeout> | null = null;
   private _pressing = false;
+  private _labelTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     container: HTMLElement,
@@ -110,6 +111,8 @@ export class AnchorOverlay {
       'opacity:0',
       'transition:opacity .15s',
     ].join(';');
+    // `ow-pin-label` : la carte peut afficher tous les noms (réglage « Noms des pastilles »).
+    this._label.className = 'ow-pin-label';
     this.el.appendChild(this._label);
 
     container.appendChild(this.el);
@@ -136,6 +139,10 @@ export class AnchorOverlay {
     });
     this.el.addEventListener('touchstart', (e) => {
       e.stopPropagation();
+      // Au doigt, pas de survol : le nom s'affiche le temps de le lire.
+      this._label.style.opacity = '1';
+      if (this._labelTimer) clearTimeout(this._labelTimer);
+      this._labelTimer = setTimeout(() => { this._label.style.opacity = '0'; }, 2500);
       this._startPress(onShortClick, onLongPress);
     }, { passive: true });
     this.el.addEventListener('touchend', (e) => {
@@ -222,6 +229,13 @@ export class AnchorOverlay {
     this._iconEl.innerHTML = renderIconHTML(domain, mdi);
   }
 
+  /** Un signe à la place de l'icône (le « + » d'un emplacement à relier) ; le nom reste. */
+  setGlyph(text: string) {
+    this._iconOverride = text;
+    this._iconKey = `glyph:${text}`;
+    this._iconEl.textContent = text;
+  }
+
   updateState(on: boolean, color: THREE.Color, labelText: string) {
     const haIcon = this._iconEl.querySelector('ha-icon') as HTMLElement | null;
     const path = !haIcon ? (this._iconEl.querySelector('path,circle,rect') as SVGElement | null) : null;
@@ -286,8 +300,31 @@ export class SensorOverlay {
     container.appendChild(this.el);
   }
 
+  private _value: HTMLSpanElement | null = null;
+  private _name: HTMLDivElement | null = null;
+
   updateValue(value: string, unit: string, label: string) {
-    this.el.textContent = `${value}${unit}`;
+    if (!this._value) {
+      this._value = document.createElement('span');
+      this._name = document.createElement('div');
+      this._name.className = 'ow-pin-label';
+      this._name.style.cssText = [
+        'position:absolute', 'top:calc(100% + 6px)', 'left:50%', 'transform:translateX(-50%)',
+        'background:rgba(0,0,0,0.82)', 'color:#fff', 'font-size:11px', 'font-weight:500', 'padding:3px 8px',
+        'border-radius:4px', 'white-space:nowrap', 'pointer-events:none', 'opacity:0', 'transition:opacity .15s',
+      ].join(';');
+      this.el.textContent = '';
+      this.el.append(this._value, this._name);
+      this.el.addEventListener('mouseenter', () => { if (this._name) this._name.style.opacity = '1'; });
+      this.el.addEventListener('mouseleave', () => { if (this._name) this._name.style.opacity = '0'; });
+      this.el.addEventListener('touchstart', () => {
+        if (!this._name) return;
+        this._name.style.opacity = '1';
+        setTimeout(() => { if (this._name) this._name.style.opacity = '0'; }, 2500);
+      }, { passive: true });
+    }
+    this._value.textContent = `${value}${unit}`;
+    this._name!.textContent = label;
     this.el.title = label;
   }
 

@@ -4002,6 +4002,8 @@ export class Ha3dFloorplan extends HTMLElement {
     });
 
     // 3. Show/hide individual overlays
+    // Distance de référence : celle du point visé, où une pastille garde sa taille.
+    const refDist = Math.max(this.camera!.position.distanceTo(this.controls?.target ?? new THREE.Vector3()), 1e-4);
     this.anchors.forEach((_entry, name) => {
       const ov = this.overlays.get(name);
       if (!ov) return;
@@ -4038,6 +4040,20 @@ export class Ha3dFloorplan extends HTMLElement {
       ov.el.style.display = ov instanceof SensorOverlay ? 'block' : 'flex';
       ov.el.style.left = `${p.x}px`;
       ov.el.style.top = `${p.y}px`;
+
+      // La profondeur se lit sur la taille : une pastille au fond de la maison
+      // est un peu plus petite et plus pâle qu'une pastille au premier plan.
+      // Rien n'est caché, et ce n'est qu'une division (aucun lancer de rayon).
+      if (!(ov instanceof CameraOverlay)) {
+        const entry = this.anchors.get(name)!;
+        const d = Math.max(this.camera!.position.distanceTo(entry.worldPos), 1e-4);
+        const k = THREE.MathUtils.clamp(Math.sqrt(refDist / d), 0.72, 1.15);
+        const scale = k.toFixed(2);
+        if (ov.el.style.scale !== scale) {
+          ov.el.style.scale = scale;
+          ov.el.style.opacity = String(Math.round((k < 1 ? 0.62 + 0.38 * (k - 0.72) / 0.28 : 1) * 100) / 100);
+        }
+      }
     });
   }
 
@@ -4094,10 +4110,10 @@ export class Ha3dFloorplan extends HTMLElement {
         );
         slot.el.style.borderStyle = 'dashed';
         slot.el.style.borderColor = 'rgba(125,211,252,0.7)';
-        slot.el.innerHTML = '';
         slot.el.style.color = '#7dd3fc';
         slot.el.style.fontSize = '20px';
-        slot.el.textContent = '+';
+        slot.setGlyph('+');
+        slot.el.dataset.placeholder = '1';
         this.overlays.set(name, slot);
         return;
       }
@@ -4466,6 +4482,9 @@ export class Ha3dFloorplan extends HTMLElement {
         }
         return;
       }
+
+      // Un emplacement à relier garde son invitation : il n'a pas d'état.
+      if (overlay.el.dataset.placeholder) return;
 
       const stateObj = this._hass?.states[entry.entityId];
 

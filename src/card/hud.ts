@@ -174,6 +174,7 @@ export class CardHud {
   // ── Rendu ────────────────────────────────────────────────────────────────
 
   private render() {
+    this.host.classList.toggle('ow-names', this.prefs.show.names);
     for (const [, el] of this.slots) el.innerHTML = '';
     this.dockEl = this.viewsEl = this.statusEl = this.roomsEl = null;
     this.renderDock();
@@ -401,6 +402,7 @@ export class CardHud {
           ${sw(p.show.rooms, 'rooms', t('uiModRooms'))}
           ${sw(p.show.views, 'views', t('uiModViews'))}
           ${sw(p.show.status, 'status', t('uiModStatus'))}
+          ${sw(p.show.names, 'names', t('uiNames'))}
           ${sw(p.autohide, 'autohide', t('uiAutohide'))}</div>
       </div>
       <footer><button type="button" class="ow-btn ow-ghost" data-act="reset">${t('uiReset')}</button><button type="button" class="ow-btn ow-primary" data-act="close">${t('planDone')}</button></footer>`;
@@ -421,6 +423,7 @@ export class CardHud {
     if (b.dataset.opt) {
       const k = b.dataset.opt;
       if (k === 'autohide') this.prefs.autohide = !this.prefs.autohide;
+      else if (k === 'names') this.prefs.show.names = !this.prefs.show.names;
       else this.prefs.show[k as Toggleable] = !this.prefs.show[k as Toggleable];
       this.save(); this.render(); this.renderSheet(); return;
     }

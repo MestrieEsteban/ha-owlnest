@@ -130,6 +130,8 @@ export const STYLES = `
 .ow-slot[data-slot="tc"] { top: 12px; left: 50%; transform: translateX(-50%); flex-direction: column; align-items: center; }
 .ow-slot[data-slot="bc"] { bottom: 12px; left: 50%; transform: translateX(-50%); flex-direction: column-reverse; align-items: center; }
 .ow-fade { transition: opacity .25s ease; }
+/* « Noms des pastilles » : chaque pastille montre son nom en permanence. */
+.ow-names .ow-pin-label { opacity: 1 !important; }
 .ow-fade.ow-hidden { opacity: 0; pointer-events: none !important; }
 .ow-fade.ow-hidden * { pointer-events: none !important; }
 
