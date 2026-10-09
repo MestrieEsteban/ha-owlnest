@@ -5085,9 +5085,9 @@ export class EditPanel {
     // Les champs sont donc des mots dans la phrase, pas des cases d'un
     // formulaire empilé.
 
-    const PILL = 'background:#111a2e;border:1px solid rgba(255,255,255,0.14);border-radius:7px;color:#e2e8f0;padding:5px 9px;font-size:12px;font-family:inherit;cursor:pointer;outline:none;color-scheme:dark;';
-    const WORD = 'font-size:12px;color:#94a3b8;';
-    const LINK = 'background:none;border:none;color:#64748b;font-size:11px;font-family:inherit;cursor:pointer;padding:0;text-align:left;';
+    const PILL = 'background:var(--ow-chrome2);border:1px solid var(--ow-line);border-radius:9px;color:var(--ow-text);padding:7px 10px;font-size:13px;font-family:inherit;cursor:pointer;outline:none;color-scheme:dark;';
+    const WORD = 'font-size:13px;color:var(--ow-muted);';
+    const LINK = 'background:none;border:none;color:var(--ow-acc);font-size:12.5px;font-weight:600;font-family:inherit;cursor:pointer;padding:3px 0;text-align:left;';
 
     const nameOf = (id: string) => {
       if (!id) return '';
@@ -5103,7 +5103,7 @@ export class EditPanel {
     /** Ligne-phrase : les éléments s'enchaînent et passent à la ligne au besoin. */
     const sentence = (...els: HTMLElement[]) => {
       const r = mk('div') as HTMLDivElement;
-      r.style.cssText = 'display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:7px;';
+      r.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:9px;';
       els.forEach((e) => r.appendChild(e));
       return r;
     };
@@ -5115,7 +5115,7 @@ export class EditPanel {
       for (const [v, l] of options) {
         const o = mk('option') as HTMLOptionElement;
         o.value = v; o.textContent = l;
-        o.style.backgroundColor = '#1a1f2e'; o.style.color = '#e2e8f0';
+        styleOption(o);
         sel.appendChild(o);
       }
       sel.value = value;
@@ -5132,7 +5132,7 @@ export class EditPanel {
       b.style.cssText = PILL;
       const paint = (v: string) => {
         b.textContent = v ? nameOf(v) : t('ruleChoose');
-        b.style.color = v ? '#e2e8f0' : '#64748b';
+        b.style.color = v ? 'var(--ow-text)' : 'var(--ow-muted)';
       };
       paint(value);
       b.addEventListener('click', () => {
@@ -5198,32 +5198,36 @@ export class EditPanel {
     const linkBtn = (label: string, onClick: () => void) => {
       const b = mk('button') as HTMLButtonElement;
       b.textContent = label; b.style.cssText = LINK;
-      b.addEventListener('mouseenter', () => { b.style.color = '#94a3b8'; });
-      b.addEventListener('mouseleave', () => { b.style.color = '#64748b'; });
+      b.type = 'button';
       b.addEventListener('click', onClick);
       return b;
     };
 
     const removeBtn = (onClick: () => void) => {
       const b = mk('button') as HTMLButtonElement;
-      b.textContent = '×'; b.title = t('ruleRemove');
-      b.style.cssText = 'background:none;border:none;color:rgba(248,113,113,0.55);cursor:pointer;font-size:15px;line-height:1;padding:0 2px;margin-left:auto;';
+      b.type = 'button';
+      b.className = 'ow-ib';
+      b.title = t('ruleRemove');
+      b.setAttribute('aria-label', t('ruleRemove'));
+      b.style.cssText = 'width:30px;height:30px;color:#f87171;margin-left:auto;';
+      b.append(icon('trash', 15));
       b.addEventListener('click', onClick);
       return b;
     };
 
     /** Bloc coloré d'une phase de la règle. */
-    const phase = (accent: string, tint: string, icon: string, title: string) => {
+    const PHASE_ICON: Record<string, string> = { '⚡': 'bolt', '⊘': 'eyeOff', '▶': 'play' };
+    const phase = (accent: string, tint: string, glyph: string, title: string) => {
       const box = mk('div') as HTMLDivElement;
-      box.style.cssText = `background:${tint};border-left:3px solid ${accent};padding:11px 13px;margin-bottom:9px;`;
+      box.className = 'ow-card';
+      box.style.cssText = `padding:12px;margin-bottom:10px;background:color-mix(in srgb, ${tint} 100%, var(--ow-chrome2));`;
       const hdr = mk('div') as HTMLDivElement;
-      hdr.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:9px;';
-      const ic = mk('span') as HTMLSpanElement;
-      ic.textContent = icon;
-      ic.style.cssText = `font-size:13px;color:${accent};`;
+      hdr.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px;';
+      const ic = icon(PHASE_ICON[glyph] ?? 'bolt', 17);
+      ic.style.color = accent;
       const tt = mk('span') as HTMLSpanElement;
       tt.textContent = title;
-      tt.style.cssText = 'font-size:12px;font-weight:600;color:#cbd5e1;';
+      tt.style.cssText = 'font-size:13.5px;font-weight:700;color:var(--ow-text);';
       hdr.append(ic, tt);
       box.appendChild(hdr);
       const body = mk('div') as HTMLDivElement;
@@ -5239,12 +5243,13 @@ export class EditPanel {
     // ── Exemples de départ ───────────────────────────────────────────────────
     if (!existing) {
       const tplTitle = mk('div') as HTMLDivElement;
-      tplTitle.style.cssText = 'font-size:11px;color:#64748b;margin-bottom:6px;';
+      tplTitle.style.cssText = 'font-size:12px;font-weight:600;color:var(--ow-muted);margin-bottom:8px;';
       tplTitle.textContent = t('ruleTplTitle');
       bodyInner.appendChild(tplTitle);
 
       const tplRow = mk('div') as HTMLDivElement;
-      tplRow.style.cssText = 'display:flex;gap:5px;flex-wrap:wrap;margin-bottom:14px;';
+      tplRow.className = 'ow-chips';
+      tplRow.style.marginBottom = '14px';
 
       const templates: Array<[string, () => void]> = [
         [t('ruleTplDoor'), () => {
@@ -5270,11 +5275,9 @@ export class EditPanel {
 
       templates.forEach(([label, apply], i) => {
         const c = mk('button') as HTMLButtonElement;
+        c.type = 'button';
         c.textContent = label;
-        const last = i === templates.length - 1;
-        c.style.cssText = last
-          ? 'font-size:11px;color:#64748b;background:none;border:1px solid rgba(255,255,255,0.12);border-radius:999px;padding:5px 11px;cursor:pointer;font-family:inherit;'
-          : 'font-size:11px;color:#7dd3fc;background:rgba(125,209,252,0.12);border:1px solid rgba(125,209,252,0.32);border-radius:999px;padding:5px 11px;cursor:pointer;font-family:inherit;';
+        c.className = i === templates.length - 1 ? 'ow-chip2' : 'ow-chip2 ow-on';
         c.addEventListener('click', () => {
           apply();
           renderTriggers(); renderConditions(); renderActions();
@@ -5415,7 +5418,7 @@ export class EditPanel {
       // Vide : une seule ligne discrète, pas une section entière.
       if (!conds.length) {
         const idle = mk('div') as HTMLDivElement;
-        idle.style.cssText = 'padding:9px 13px;margin-bottom:9px;border-left:3px solid rgba(255,255,255,0.1);display:flex;gap:6px;align-items:center;';
+        idle.style.cssText = 'padding:10px 12px;margin-bottom:10px;border-radius:12px;border:1px dashed var(--ow-line);display:flex;gap:8px;align-items:center;flex-wrap:wrap;';
         idle.appendChild(word(t('ruleOnlyIf')));
         idle.appendChild(linkBtn(t('ruleAddConditionLink'), () => {
           draft.conditions = [{ entity_id: '', operator: 'eq', value: '' }];
@@ -5525,7 +5528,7 @@ export class EditPanel {
         } else if (action.type === 'highlight_anchor') {
           const col = mk('input') as HTMLInputElement;
           col.type = 'color'; col.value = action.color ?? '#ef4444';
-          col.style.cssText = 'width:26px;height:26px;padding:0;border:1px solid rgba(255,255,255,0.14);border-radius:6px;background:transparent;cursor:pointer;';
+          col.style.cssText = 'width:34px;height:32px;padding:0;border:1px solid var(--ow-line);border-radius:9px;background:transparent;cursor:pointer;';
           col.addEventListener('change', () => { (draft.actions[idx] as typeof action).color = col.value; });
           const opts = anchorOptions(action.anchor);
           block.appendChild(sentence(
@@ -5536,7 +5539,7 @@ export class EditPanel {
           ));
           if (opts.length <= 1) {
             const warn = mk('div') as HTMLDivElement;
-            warn.style.cssText = 'font-size:11px;color:#fbbf24;line-height:1.4;';
+            warn.className = 'ow-warn-t';
             warn.textContent = t('ruleNoAnchors');
             block.appendChild(warn);
           }
@@ -5576,7 +5579,7 @@ export class EditPanel {
 
       if (!draft.actions.length) {
         const hint = mk('div') as HTMLDivElement;
-        hint.style.cssText = 'font-size:11px;color:#475569;margin-bottom:8px;line-height:1.5;';
+        hint.style.cssText = 'font-size:12px;color:var(--ow-muted);margin-bottom:8px;line-height:1.5;';
         hint.textContent = t('ruleScopeHint');
         thenPhase.body.appendChild(hint);
       }
@@ -5597,7 +5600,7 @@ export class EditPanel {
 
     // ── Réglages avancés ─────────────────────────────────────────────────────
     const advWrap = mk('div') as HTMLDivElement;
-    advWrap.style.cssText = 'margin-top:14px;padding-top:11px;border-top:1px solid rgba(255,255,255,0.08);';
+    advWrap.style.cssText = 'margin-top:14px;padding-top:12px;border-top:1px solid var(--ow-line);';
     const advBody = mk('div') as HTMLDivElement;
     advBody.style.cssText = 'display:none;padding-top:10px;';
 

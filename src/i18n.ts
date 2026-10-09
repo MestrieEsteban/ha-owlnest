@@ -200,7 +200,7 @@ const STRINGS = {
     sh3dReplaceConfirm: 'Replace your {n} opening(s) with the {m} detected? Sensors already linked to the same door or window are kept.',
     sh3dReplaced:     'Openings replaced: link the new ones to your sensors in the Openings tab',
     sh3dReplaceDetected: '↻ Replace my openings with the {n} detected',
-    sh3dAddDetected:  '✨ {n} Sweet Home 3D opening(s) found in the model: add them',
+    sh3dAddDetected:  '{n} Sweet Home 3D opening(s) found in the model: add them',
     sh3dAdded:        'Openings added: link them to your sensors in the Openings tab',
     sh3dDoor:         'Door',
     planSlider:       'Sliding door',
@@ -398,7 +398,7 @@ const STRINGS = {
 
     // Inspector header
     inspectorTitle: 'Scene',
-    saveIndicator_saved:   '✓ Saved',
+    saveIndicator_saved:   'Saved',
     saveIndicator_unsaved: '● Unsaved',
     saveIndicator_saving:  '… Saving',
     warnNoSceneId: 'No scene is set for this card: changes will not be kept.',
@@ -682,8 +682,8 @@ const STRINGS = {
     anchorSectionVisibility: 'Visibility',
     anchorSectionManage: 'Manage',
     anchorBtnDuplicate: '⎘ Duplicate',
-    anchorBtnDelete:    '✕ Delete',
-    anchorBtnConfirm:   '⚠ Confirm?',
+    anchorBtnDelete:    'Delete',
+    anchorBtnConfirm:   'Confirm?',
     anchorDeleteTitle:  'X: remove the device',
 
     // Card template picker
@@ -705,8 +705,8 @@ const STRINGS = {
     cardFieldAccentColor: 'Accent color',
     cardSectionVisibility: 'Visibility',
     cardSectionManage:    'Manage',
-    cardBtnDelete:        '✕ Delete card',
-    cardBtnDeleteConfirm: '⚠ Confirm deletion?',
+    cardBtnDelete:        'Delete card',
+    cardBtnDeleteConfirm: 'Confirm deletion?',
     cardBtnDeleteTitle:   'X: delete the card',
 
     // Card type labels
@@ -762,8 +762,8 @@ const STRINGS = {
     ruleModalCancel:   'Cancel',
     ruleModalTrigger:  'Trigger',
     ruleModalActions:  'Actions',
-    ruleActionGoToView:   '📷 Go to view',
-    ruleActionCallService: '⚙ Call service',
+    ruleActionGoToView:   'Go to view',
+    ruleActionCallService: 'Call service',
     ruleTplTitle:         'Start from an example',
     ruleTplDoor:          'A door opens',
     ruleTplLeak:          'Water leak',
@@ -819,7 +819,7 @@ const STRINGS = {
     ruleToastInfo:       'Neutral',
     ruleToastWarn:       'Warning',
     ruleTestHint:        'Runs the actions right now, ignoring the trigger',
-    ruleTestDone:        'Fired ✓',
+    ruleTestDone:        'Fired',
     ruleNeedsTrigger:    'A trigger needs an entity',
     ruleSummaryNoTrigger:'no trigger',
     ruleSummaryNoAction: 'no action',
@@ -841,7 +841,7 @@ const STRINGS = {
     ruleNameExPh: 'e.g. Door open → Entry view',
 
     // View manager
-    viewMgrTitle:      '📷 Camera views',
+    viewMgrTitle:      'Camera views',
     viewMgrSaveBtn:    '＋  Save current view',
     viewMgrNoSceneId:  'No scene is set for this card: views will not be kept.',
     viewMgrNoViews:    'No saved views',
@@ -851,14 +851,14 @@ const STRINGS = {
     viewMgrDelete:     'Delete',
     viewMgrConfirmDelete: 'Click again to confirm',
     viewMgrNamePh:     'View name (e.g. Living room)…',
-    viewMgrSaveError:  '✗ Error saving views',
+    viewMgrSaveError:  'The views could not be saved',
 
     // Card chrome, hint bars and model loading
     hintShow:              'Show',
     anchorEntityPh:        'light.kitchen, switch.tv…',
     anchorLabelDefault:    'Label',
-    toastSceneSaved:       '✓ Scene saved',
-    toastSceneSaveError:   '✗ Error while saving',
+    toastSceneSaved:       'Scene saved',
+    toastSceneSaveError:   'The scene could not be saved',
     viewLock:              'Lock view',
     viewUnlock:            'Unlock view',
     editAnchorsTitle:      'Edit my home',
@@ -869,7 +869,7 @@ const STRINGS = {
     hintBarAxis:           'Move along axis  ·  Release to confirm',
     hintBarPlaceAnchor:    'Tap the house where the device is',
     hintBarMoveCard:       'Move card  ·  Enter to confirm  ·  Esc to cancel',
-    hintBarPlaceCard:      '🎯 Click the model to place the card  ·  Esc to cancel',
+    hintBarPlaceCard:      'Click the model to place the card  ·  Esc to cancel',
     modelLoading:          'Loading model…',
     modelErrLoad:          'Could not load the model',
     modelErrNotFound:      'Model not found: check the path',
@@ -1284,7 +1284,7 @@ const STRINGS = {
     sh3dReplaceConfirm: 'Remplacer tes {n} ouvrant(s) par les {m} détectés ? Les capteurs déjà reliés à la même porte ou fenêtre sont conservés.',
     sh3dReplaced:     'Ouvrants remplacés : relie les nouveaux à tes capteurs dans l’onglet Ouvrants',
     sh3dReplaceDetected: '↻ Remplacer mes ouvrants par les {n} détectés',
-    sh3dAddDetected:  '✨ {n} ouvrant(s) Sweet Home 3D trouvé(s) dans le modèle : les ajouter',
+    sh3dAddDetected:  '{n} ouvrant(s) Sweet Home 3D trouvé(s) dans le modèle : les ajouter',
     sh3dAdded:        'Ouvrants ajoutés : relie-les à tes capteurs dans l’onglet Ouvrants',
     sh3dDoor:         'Porte',
     planSlider:       'Baie coulissante',
@@ -1475,7 +1475,7 @@ const STRINGS = {
     hintRClick:  'Menu',
 
     inspectorTitle: 'Scène',
-    saveIndicator_saved:   '✓ Sauvé',
+    saveIndicator_saved:   'Enregistré',
     saveIndicator_unsaved: '● Non sauvé',
     saveIndicator_saving:  '… Sauvegarde',
     warnNoSceneId: 'Aucune scène réglée pour cette carte : les modifications ne seront pas gardées.',
@@ -1751,8 +1751,8 @@ const STRINGS = {
     anchorSectionVisibility: 'Visibilité',
     anchorSectionManage: 'Gérer',
     anchorBtnDuplicate: '⎘ Dupliquer',
-    anchorBtnDelete:    '✕ Supprimer',
-    anchorBtnConfirm:   '⚠ Confirmer ?',
+    anchorBtnDelete:    'Supprimer',
+    anchorBtnConfirm:   'Confirmer ?',
     anchorDeleteTitle:  "X : retirer l'appareil",
 
     // Card template picker
@@ -1774,8 +1774,8 @@ const STRINGS = {
     cardFieldAccentColor: 'Couleur accent',
     cardSectionVisibility: 'Visibilité',
     cardSectionManage:    'Gérer',
-    cardBtnDelete:        '✕ Supprimer la carte',
-    cardBtnDeleteConfirm: '⚠ Confirmer la suppression ?',
+    cardBtnDelete:        'Supprimer la carte',
+    cardBtnDeleteConfirm: 'Confirmer la suppression ?',
     cardBtnDeleteTitle:   'X : supprimer la carte',
 
     // Card type labels
@@ -1831,8 +1831,8 @@ const STRINGS = {
     ruleModalCancel:   'Annuler',
     ruleModalTrigger:  'Déclencheur',
     ruleModalActions:  'Actions',
-    ruleActionGoToView:   '📷 Aller à la vue',
-    ruleActionCallService: '⚙ Appeler service',
+    ruleActionGoToView:   'Aller à la vue',
+    ruleActionCallService: 'Appeler un service',
     ruleTplTitle:         "Partir d'un exemple",
     ruleTplDoor:          "Une porte s'ouvre",
     ruleTplLeak:          "Fuite d'eau",
@@ -1888,7 +1888,7 @@ const STRINGS = {
     ruleToastInfo:       'Neutre',
     ruleToastWarn:       'Avertissement',
     ruleTestHint:        'Exécute les actions maintenant, sans attendre le déclencheur',
-    ruleTestDone:        'Déclenchée ✓',
+    ruleTestDone:        'Déclenchée',
     ruleNeedsTrigger:    'Un déclencheur sans entité',
     ruleSummaryNoTrigger:'aucun déclencheur',
     ruleSummaryNoAction: 'aucune action',
@@ -1910,7 +1910,7 @@ const STRINGS = {
     ruleNameExPh: 'Ex: Porte ouverte → Vue entrée',
 
     // View manager
-    viewMgrTitle:      '📷 Vues caméra',
+    viewMgrTitle:      'Vues caméra',
     viewMgrSaveBtn:    '＋  Sauvegarder la vue actuelle',
     viewMgrNoSceneId:  'Aucune scène réglée pour cette carte : les vues ne seront pas gardées.',
     viewMgrNoViews:    'Aucune vue sauvegardée',
@@ -1920,14 +1920,14 @@ const STRINGS = {
     viewMgrDelete:     'Supprimer',
     viewMgrConfirmDelete: 'Cliquer à nouveau pour confirmer',
     viewMgrNamePh:     'Nom de la vue (ex: Salon)…',
-    viewMgrSaveError:  '✗ Erreur lors de la sauvegarde des vues',
+    viewMgrSaveError:  "Les vues n'ont pas pu être enregistrées",
 
     // Card chrome, hint bars and model loading
     hintShow:              'Afficher',
     anchorEntityPh:        'light.salon, switch.tv…',
     anchorLabelDefault:    'Étiquette',
-    toastSceneSaved:       '✓ Scène sauvegardée',
-    toastSceneSaveError:   '✗ Erreur lors de la sauvegarde',
+    toastSceneSaved:       'Scène enregistrée',
+    toastSceneSaveError:   "La scène n'a pas pu être enregistrée",
     viewLock:              'Verrouiller la vue',
     viewUnlock:            'Déverrouiller la vue',
     editAnchorsTitle:      'Modifier ma maison',
