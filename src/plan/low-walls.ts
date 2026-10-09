@@ -11,16 +11,16 @@
  *    restent debout et donnent le volume des pièces. « Devant » se juge par
  *    rapport au point visé : en zoomant sur une pièce, ce sont ses murs
  *    côté caméra qui descendent ;
- *  - **un meuble adossé à un mur qui descend** (armoire, rideaux, étagère
- *    murale, tableau) disparaît avec lui, et ce qui est posé dessus aussi :
- *    rien n'est coupé, rien ne flotte ;
+ *  - **ce qui est accroché à un mur qui descend** (tableau, miroir, meuble
+ *    haut, applique) disparaît avec lui, et ce qui est posé dessus aussi :
+ *    rien ne flotte. Les meubles posés au sol restent toujours ;
  *  - **les murs descendent et remontent en douceur**, avec une marge qui
  *    évite qu'un mur au milieu ne clignote quand on tourne.
  *
  * Second mode, **fantôme** : les mêmes murs, au lieu de descendre, deviennent
  * un voile translucide. On voit l'intérieur à travers, la silhouette du mur
  * reste pour se repérer, et son ombre aussi (la lumière des pièces ne change
- * pas). Le voile est une seconde passe sur la même géométrie, dessinée par
+ * pas), comme ses portes et fenêtres. Le voile est une seconde passe sur la même géométrie, dessinée par
  * dessus l'image : pas de tri d'objets transparents, donc pas les
  * recouvrements aberrants qui avaient fait écarter la transparence sur les
  * exports OBJ (voir cutaway.ts).
@@ -44,8 +44,6 @@ export const LOW_RATIO = 0.18;
 const MAX_WALLS = 1024;
 /** Durée de la descente ou de la remontée, en secondes. */
 const TRANSITION = 0.3;
-/** Un meuble adossé plus haut que ça disparaît avec son mur. */
-const TALL = 1.4;
 /** Un mur à moins de cette distance du point visé garde son état : pas de clignotement. */
 const MARGIN = 0.4;
 
@@ -62,13 +60,13 @@ export function tagWall(geo: THREE.BufferGeometry, index: number, opening = fals
   geo.setAttribute(WALL_ATTR, new THREE.BufferAttribute(new Float32Array(n).fill(v), 1));
 }
 
-/** La géométrie porte-t-elle des murs ou des ouvertures (et pas seulement des meubles) ? */
+/** La géométrie porte-t-elle des murs ? Seuls eux ont un voile : les ouvertures restent entières. */
 function hasWallFaces(geo: THREE.BufferGeometry): boolean {
   const a = geo.getAttribute(WALL_ATTR);
   if (!a) return false;
   for (let i = 0; i < a.count; i++) {
     const v = a.getX(i);
-    if (v !== 0 && v < ITEM_BASE) return true;
+    if (v > 0 && v < ITEM_BASE) return true;
   }
   return false;
 }
@@ -162,11 +160,14 @@ export class LowWalls {
     const c = catalogItem(it.model);
     const { w, d, h } = itemSize(it);
     const base = itemElevation(plan, it);
-    // Ce qui bouche la vue (armoire, étagère, rideaux) ou qui est accroché
-    // au-dessus de la coupe (tableau, meuble haut). Un canapé, un buffet bas
-    // restent : ils se voient très bien par-dessus un mur bas.
-    const tall = c?.wall !== undefined || base > this.cut.value || base + h > TALL;
-    if (!tall || c?.ceiling) return null;
+    // Seul ce qui est accroché au-dessus de la coupe (tableau, miroir, meuble
+    // haut, applique) disparaît : sinon il flotterait. Un meuble posé au sol
+    // reste toujours, comme dans les Sims, même grand : le cacher faisait
+    // disparaître l'armoire adossée à l'autre face d'un mur intérieur, dans la
+    // pièce même qu'on regarde.
+    // Au-dessus de la coupe et posé sur rien : accroché. Une lampe sur une commode ne l'est pas.
+    const hung = c?.wall !== undefined || (base > this.cut.value && !supportOf(plan, it));
+    if (!hung || c?.ceiling || h <= 0) return null;
     const r = (it.rotation * Math.PI) / 180;
     const front = { x: -Math.sin(r), y: Math.cos(r) };
     const back = { x: it.x - front.x * d / 2, y: it.y - front.y * d / 2 };
@@ -333,13 +334,14 @@ vOwlnestY = (modelMatrix * vec4(transformed, 1.0)).y;`);
 
     const discard = pass === 'ghost'
       // Le voile ne garde que les murs (et leurs portes et fenêtres) devenus fantômes.
-      ? `if (!(vOwlnestKind > 0.5 && vOwlnestKind < 2.5 && vOwlnestLow > 0.5)) discard;`
+      ? `if (!(vOwlnestKind > 0.5 && vOwlnestKind < 1.5 && vOwlnestLow > 0.5)) discard;`
       : `if (owlnestGhost < 0.5) {
   // Murs bas : une porte ou une fenêtre d'un mur abaissé est coupée à sa hauteur.
   if (vOwlnestKind > 1.5 && vOwlnestKind < 2.5 && vOwlnestLow > 0.5 && vOwlnestY > owlnestCutWorld) discard;
 }${pass === 'main' ? ` else {
-  // Fantôme : le mur et ses ouvertures ne sont pas dessinés, le voile les remplace.
-  if (vOwlnestKind > 0.5 && vOwlnestKind < 2.5 && vOwlnestLow > 0.5) discard;
+  // Fantôme : le mur n'est pas dessiné, le voile le remplace. Ses portes et
+  // fenêtres restent entières : sans elles, on perdait les battants.
+  if (vOwlnestKind > 0.5 && vOwlnestKind < 1.5 && vOwlnestLow > 0.5) discard;
 }` : ''}
 // Un meuble adossé disparaît avec son mur, ombre comprise.
 if (vOwlnestKind > 2.5 && vOwlnestLow > 0.5) discard;`;

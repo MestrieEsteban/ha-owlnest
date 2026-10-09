@@ -41,22 +41,27 @@ test('vu d’en haut, aucun mur ne descend ; mode coupé, tout remonte', () => {
   assert.ok(Array.from(lw.factor.slice(0, 4)).every((f) => f === 0));
 });
 
-test('une armoire adossée et l’objet posé dessus disparaissent avec leur mur, pas le canapé', () => {
+test('une étagère accrochée et l’objet posé dessus disparaissent avec leur mur ; l’armoire au sol reste', () => {
   const { plan, root, lw } = setup();
-  // Armoire contre le mur sud (dos au sud, l'avant vers le nord : rotation 180).
+  const back = 4 - 0.075;
   plan.items = [
-    { id: 'w', model: 'x', x: 3, y: 4 - 0.075 - 0.3, rotation: 180, size: [1.2, 0.6, 2] },
-    { id: 'v', model: 'y', x: 3, y: 4 - 0.075 - 0.3, rotation: 0, size: [0.2, 0.2, 0.3], elevation: undefined },
-    { id: 's', model: 'z', x: 1.5, y: 4 - 0.075 - 0.45, rotation: 180, size: [2, 0.9, 0.8] },
+    // Étagère murale à 1,60 m, contre le mur sud.
+    { id: 'shelf', model: 'x', x: 3, y: back - 0.15, rotation: 180, size: [1, 0.3, 0.05], elevation: 1.6 },
+    { id: 'vase', model: 'y', x: 3, y: back - 0.15, rotation: 0, size: [0.15, 0.15, 0.3] },
+    // Armoire posée au sol contre le même mur : elle reste.
+    { id: 'wardrobe', model: 'z', x: 1.2, y: back - 0.3, rotation: 180, size: [1.2, 0.6, 2] },
+    // Commode, et lampe posée dessus (au-dessus de la coupe, mais pas accrochée).
+    { id: 'chest', model: 'c', x: 4.5, y: back - 0.25, rotation: 180, size: [1, 0.5, 0.8] },
+    { id: 'lamp', model: 'l', x: 4.5, y: back - 0.25, rotation: 180, size: [0.3, 0.3, 0.5], elevation: 0.8 },
   ];
   for (const it of plan.items) { const g = new THREE.Group(); g.name = `plan_item_${it.id}`; root.add(g); }
   lw.attachItems(plan, root);
-  const ids = lw.attached.map((a) => a.holder.name).sort();
-  assert.deepEqual(ids, ['plan_item_v', 'plan_item_w']);
+  assert.deepEqual(lw.attached.map((a) => a.holder.name).sort(), ['plan_item_shelf', 'plan_item_vase']);
   const cam = new THREE.PerspectiveCamera(); cam.position.set(0, 6, 10);
   settle(lw, cam, root);
-  assert.equal(root.getObjectByName('plan_item_w').visible, false);
-  assert.equal(root.getObjectByName('plan_item_s').visible, true);
+  assert.equal(root.getObjectByName('plan_item_shelf').visible, false);
+  assert.equal(root.getObjectByName('plan_item_wardrobe').visible, true);
+  assert.equal(root.getObjectByName('plan_item_lamp').visible, true);
 });
 
 test('mode fantôme : un voile sur les murs seulement, affiché quand le mode est actif', async () => {
