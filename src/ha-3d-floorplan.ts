@@ -633,6 +633,7 @@ export class Ha3dFloorplan extends HTMLElement {
         return `${displayName(reg, this._hass, entity)}${area ? ` · ${area}` : ''}`;
       },
       importFurniture: async (files) => (await importModel(this._hass as unknown as UploadHass, files, () => {})).url,
+      importSh3d: () => pickFiles((files) => void this._importModel(files)),
       onLayout: (covered) => {
         this._viewShift = covered;
         this._applyViewShift();

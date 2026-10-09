@@ -93,6 +93,8 @@ export interface PlanEditorOptions {
   pickEntity?: (current: string | undefined, done: (entityId: string) => void) => void;
   /** Le nom d'une entité tel que l'utilisateur le connaît, avec sa pièce. */
   entityLabel?: (entityId: string) => string;
+  /** Ouvre le choix d'un fichier Sweet Home 3D, qui remplacera le plan. */
+  importSh3d?: () => void;
   /** Envoie un meuble importé (GLB, ou OBJ et ses fichiers) et rend son adresse. */
   importFurniture?: (files: File[]) => Promise<string>;
   onClose: () => void;
@@ -2478,6 +2480,11 @@ export class PlanEditor {
     a.target = '_blank';
     a.rel = 'noopener';
     text.append(a);
+    if (this.opts.importSh3d) {
+      const imp = this.pill(t('planSh3dImport'), () => this.opts.importSh3d?.(), !light, 'plus');
+      imp.style.cssText += ';margin-top:8px;';
+      text.append(el('div', ''), imp);
+    }
     box.append(ic, text);
     return box;
   }
