@@ -39,7 +39,7 @@ import './card-editor';
 import { EnvironmentController } from './card/environment';
 import { SimulationPanel } from './card/simulation';
 import { ViewManager } from './card/view-manager';
-import { EditPanel } from './card/edit-panel';
+import { EditPanel, editorTabs } from './card/edit-panel';
 import { SceneCardRenderer } from './cards/renderer';
 import { PanelGizmo } from './panels/gizmo';
 import type { SceneCard, SceneCardType } from './cards/types';
@@ -611,6 +611,8 @@ export class Ha3dFloorplan extends HTMLElement {
   openPlanEditor() {
     const sceneId = this._getActiveSceneId();
     if (this._planEditor || !this.overlayContainer || !sceneId) return;
+    // Le plein écran est pris avant de quitter l'édition : rien ne clignote.
+    this._setFullscreen('plan', true);
     if (this._editMode) this._exitEditMode();
     if (!this._scene) this._scene = emptyScene(sceneId);
     this.overlayContainer.querySelector('#owlnest-demo-banner')?.remove();
@@ -651,6 +653,14 @@ export class Ha3dFloorplan extends HTMLElement {
       },
       importFurniture: async (files) => (await importModel(this._hass as unknown as UploadHass, files, () => {})).url,
       importSh3d: () => pickFiles((files) => void this._importModel(files)),
+      navTabs: editorTabs(true),
+      onNavTab: (id) => {
+        // Le plein écran reste : l'éditeur de la maison prend le relais du plan.
+        this._setFullscreen('edit', true);
+        this._planEditor?.close();
+        if (this.modelLoaded && this._modelRoot) this._enterEditMode(id);
+        else this._setFullscreen('edit', false);
+      },
       onLayout: (covered) => {
         this._viewShift = covered;
         this._applyViewShift();
@@ -1282,34 +1292,50 @@ export class Ha3dFloorplan extends HTMLElement {
    */
   private _showDemoBanner() {
     if (!this.overlayContainer || this.overlayContainer.querySelector('#owlnest-demo-banner')) return;
+    // L'accueil d'une carte toute neuve : ce qu'on regarde, et par où commencer.
     const banner = document.createElement('div');
     banner.id = 'owlnest-demo-banner';
+    banner.className = 'ow-ui ow-surface';
+    banner.setAttribute('role', 'region');
+    banner.setAttribute('aria-label', t('demoTitle'));
     banner.style.cssText = [
-      'position:absolute', 'top:12px', 'left:50%', 'transform:translateX(-50%)',
-      'max-width:calc(100% - 140px)', 'display:flex', 'align-items:center', 'gap:10px',
-      'padding:7px 8px 7px 14px', 'border-radius:999px', 'z-index:40',
-      'background:rgba(8,13,26,0.82)', 'backdrop-filter:blur(8px)',
-      'border:1px solid rgba(125,211,252,0.35)', 'color:#dbeafe',
-      'font:12px var(--primary-font-family,sans-serif)', 'pointer-events:auto',
+      'position:absolute', 'top:12px', 'left:50%', 'transform:translateX(-50%)', 'z-index:40',
+      'width:min(520px, calc(100% - 24px))', 'padding:12px 14px', 'display:flex', 'flex-direction:column', 'gap:8px',
+      'pointer-events:auto',
     ].join(';');
-    const text = document.createElement('span');
-    text.textContent = t('demoBanner');
+    if (this._editMode) banner.style.display = 'none';
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:center;gap:8px;';
+    const title = document.createElement('strong');
+    title.style.cssText = 'flex:1;font-size:14px;';
+    title.textContent = t('demoTitle');
     const close = document.createElement('button');
-    close.textContent = '✕';
-    close.style.cssText = 'background:none;border:none;color:#94a3b8;cursor:pointer;font-size:12px;padding:2px 6px;';
+    close.type = 'button';
+    close.className = 'ow-ib';
+    close.style.cssText = 'width:28px;height:28px;';
+    close.setAttribute('aria-label', t('tourClose'));
+    close.append(uiIcon('close', 15));
     close.addEventListener('click', () => banner.remove());
-    banner.append(text);
+    head.append(title, close);
+    const text = document.createElement('div');
+    text.style.cssText = 'font-size:12.5px;color:var(--ow-muted);line-height:1.45;';
+    text.textContent = t('demoBanner');
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;';
+    const btn = (iconName: string, label: string, onClick: () => void, primary = false) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = `ow-btn ow-small${primary ? ' ow-primary' : ''}`;
+      b.append(uiIcon(iconName, 15), document.createTextNode(label));
+      b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+      row.append(b);
+    };
     if (this._canImport()) {
-      const importBtn = document.createElement('button');
-      importBtn.textContent = t('importButton');
-      importBtn.style.cssText = 'flex-shrink:0;background:rgba(125,209,252,0.18);border:1px solid rgba(125,209,252,0.4);border-radius:999px;color:#7dd3fc;cursor:pointer;font:600 11px var(--primary-font-family,sans-serif);padding:4px 10px;white-space:nowrap;';
-      importBtn.addEventListener('click', () => pickFiles((files) => this._importModel(files)));
-      const drawBtn = importBtn.cloneNode() as HTMLButtonElement;
-      drawBtn.textContent = t('planDraw');
-      drawBtn.addEventListener('click', () => this.openPlanEditor());
-      banner.append(drawBtn, importBtn);
+      btn('pencil', t('planDraw'), () => this.openPlanEditor(), true);
+      btn('plus', t('importButton'), () => pickFiles((files) => this._importModel(files)));
     }
-    banner.append(close);
+    btn('help', t('uiHelp'), () => { banner.remove(); this._startViewTour(); });
+    banner.append(head, text, row);
     this.overlayContainer.appendChild(banner);
   }
 
@@ -2139,7 +2165,8 @@ export class Ha3dFloorplan extends HTMLElement {
     this._closeWallMenu();
     this._tour?.end();
     this._ui?.setHidden(true);
-    if (this._hud) this._hud.style.display = 'flex';
+    const welcome = this.overlayContainer?.querySelector<HTMLElement>('#owlnest-demo-banner');
+    if (welcome) welcome.style.display = 'none';
     // Reposition HUD to center + restore bar glassmorphism for edit toolbar
     if (this._hud) {
       this._hud.style.bottom = '12px';
@@ -2294,6 +2321,9 @@ export class Ha3dFloorplan extends HTMLElement {
     );
 
     this._editPanel.onTestRule = (rule) => this.runRuleNow(rule);
+    this._editPanel.setInitialTab(tab);
+    // Le panneau ancré à droite : la 3D se recentre sur ce qui reste visible.
+    this._editPanel.onDock = (px) => { this._viewShift = -px; this._applyViewShift(); };
     console.debug('[Owlnest] import:', {
       admin: this._hass?.user?.is_admin, scene: this._getActiveSceneId(), backendDown: this._backendDown,
     });
@@ -2346,7 +2376,7 @@ export class Ha3dFloorplan extends HTMLElement {
       const hint = document.createElement('div');
       hint.id = 'ha-editor-hint';
       hint.style.cssText = [
-        'position:absolute', 'top:50%', 'left:50%',
+        'position:absolute', 'top:50%', 'left:calc(50% - var(--ow-dock, 0px) / 2)',
         'transform:translate(-50%,-50%)',
         'background:rgba(26,107,255,0.18)',
         'border:1px dashed rgba(26,107,255,0.5)',
@@ -2373,6 +2403,8 @@ export class Ha3dFloorplan extends HTMLElement {
     this._mergeStatic();
     this._ui?.setHidden(false);
     this._setFullscreen('edit', false);
+    const welcome = this.overlayContainer?.querySelector<HTMLElement>('#owlnest-demo-banner');
+    if (welcome) welcome.style.display = 'flex';
 
     document.removeEventListener('keydown', this._onCardKeyDown);
     this._selectedCardId = null;
@@ -3462,7 +3494,7 @@ export class Ha3dFloorplan extends HTMLElement {
     const radius = Math.max(size.length() / 2, 1e-3);
     const vfov = (this.camera.fov * Math.PI) / 180;
     // Seule la partie de la carte que l'éditeur de plan ne couvre pas compte.
-    const visible = this.canvas?.clientWidth ? 1 - this._viewShift / this.canvas.clientWidth : 1;
+    const visible = this.canvas?.clientWidth ? 1 - Math.abs(this._viewShift) / this.canvas.clientWidth : 1;
     const hfov = 2 * Math.atan(Math.tan(vfov / 2) * this.camera.aspect * Math.max(visible, 0.2));
     const dist = (radius / Math.sin(Math.min(vfov, hfov) / 2)) * 0.85;
 
@@ -3828,7 +3860,7 @@ export class Ha3dFloorplan extends HTMLElement {
 
     this._rebuildNormalHUD();
     this._ui?.refreshStatus();
-    if (!tourSeen() && !this._editMode && !this._planEditor) this._ui?.showHello();
+    if (!tourSeen() && !this._editMode && !this._planEditor && !this.overlayContainer?.querySelector('#owlnest-demo-banner')) this._ui?.showHello();
 
     // Sync cards from scene
     const cards = this._scene?.cards ?? [];
@@ -4441,15 +4473,16 @@ export class Ha3dFloorplan extends HTMLElement {
   }
 
   /**
-   * Largeur couverte à gauche par l'éditeur de plan, en pixels : la 3D se
-   * décale d'autant pour rester dans la partie visible de la carte.
+   * Largeur couverte par un panneau, en pixels : à gauche (positive) l'éditeur
+   * de plan, à droite (négative) celui de la maison. La 3D se décale d'autant
+   * pour rester dans la partie visible de la carte.
    */
   private _viewShift = 0;
 
   private _applyViewShift() {
     if (!this.camera || !this.canvas) return;
     const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
-    if (this._viewShift > 0 && w && h) this.camera.setViewOffset(w, h, -this._viewShift / 2, 0, w, h);
+    if (this._viewShift !== 0 && w && h) this.camera.setViewOffset(w, h, -this._viewShift / 2, 0, w, h);
     else this.camera.clearViewOffset();
     this._requestRender();
   }

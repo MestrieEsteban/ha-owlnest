@@ -6,6 +6,10 @@ import type { OwlnestRule } from '../rules/types';
 import { normalizeRule } from '../rules/types';
 import { t, tn, setLang } from '../i18n';
 import { makeDraggable, type WindowPos } from './draggable';
+import { icon } from '../ui/icons';
+import { Tour, type TourStep } from '../ui/tour';
+import { EDITOR_STYLES, BAR_H, PANEL_W } from '../ui/editor-styles';
+import { loadRegistry, cachedRegistry, areaOf } from '../entities/registry';
 import { openEntityPicker } from '../entities/picker';
 import { deleteScene, summarizeScenes } from '../scene';
 import { PARTS_ENABLED } from '../parts';
@@ -86,7 +90,38 @@ function anchorTitle(a: { label?: string; entity: string; kind?: AnchorKind }): 
 /** Seconde ligne : l'entity_id, ou la nature quand il n'y en a pas. */
 function anchorSubtitle(a: { entity: string; kind?: AnchorKind }): string {
   if (a.entity) return a.entity;
+  if ((a.kind ?? 'entity') === 'entity') return t('edNotLinked');
   return KIND_LABEL[a.kind ?? 'entity']();
+}
+
+/** Les onglets de l'éditeur de la maison, dans l'ordre. Le plan ouvre son propre éditeur. */
+export function editorTabs(withPlan: boolean): { id: string; icon: string; label: string }[] {
+  return [
+    ...(withPlan ? [{ id: 'plan', icon: 'plan', label: t('tabPlan') }] : []),
+    { id: 'anchors', icon: 'bulb', label: t('tabDevices') },
+    ...(CARDS_ENABLED ? [{ id: 'cards', icon: 'layout', label: t('tabCards') }] : []),
+    ...(PARTS_ENABLED ? [{ id: 'parts', icon: 'door', label: t('tabParts') }] : []),
+    { id: 'rules', icon: 'bolt', label: t('tabRules') },
+    { id: 'weather', icon: 'sun', label: t('tabAmbiance') },
+    { id: 'settings', icon: 'gear', label: t('tabSettings') },
+  ];
+}
+
+/** La visite de l'éditeur a déjà été proposée sur cet appareil. */
+const EDITOR_TOUR_KEY = 'owlnest_tour_editor_seen';
+
+/** Le dessin d'un appareil dans la liste, d'après sa nature et son domaine. */
+function anchorIcon(a: { entity: string; kind?: AnchorKind }): string {
+  if (!a.entity && (a.kind ?? 'entity') === 'entity') return 'plus';
+  if (a.kind === 'label') return 'tag';
+  if (a.kind === 'menu') return 'menu';
+  if (a.kind === 'nav') return 'nav';
+  const domain = a.entity.split('.')[0];
+  const ICON: Record<string, string> = {
+    light: 'bulb', switch: 'plug', input_boolean: 'plug', cover: 'window', climate: 'temp', media_player: 'speaker',
+    camera: 'camera', binary_sensor: 'sensor', sensor: 'sensor', lock: 'lock', fan: 'gear', scene: 'sparkle', script: 'play',
+  };
+  return ICON[domain] ?? 'sensor';
 }
 
 const KIND_LABEL: Record<AnchorKind, () => string> = {
@@ -383,146 +418,314 @@ export class EditPanel {
     return true;
   }
 
+  // ── La coquille de l'éditeur : barre d'onglets en haut, panneau à droite ──
+
+  private _bar: HTMLDivElement | null = null;
+  private _tour: Tour | null = null;
+  private _switchTab: ((id: string) => void) | null = null;
+  private _anchorQuery = '';
+  private _narrow = false;
+  private _panelOpen = false;
+  private _widthObs: ResizeObserver | null = null;
+  private _popmenu: HTMLElement | null = null;
+  private _helloEl: HTMLElement | null = null;
+  private _registryAsked = false;
+  /** La 3D se décale de la largeur du panneau ancré à droite (0 : rien ne la couvre). */
+  onDock?: (px: number) => void;
+
+  /** L'onglet à ouvrir en entrant, par exemple en revenant de l'éditeur de plan. */
+  setInitialTab(id?: string) {
+    if (!id || id === 'plan') return;
+    this._activeInspectorTab = id === 'camera' || id === 'config' ? 'settings' : id;
+  }
+
+  private _tabs() { return editorTabs(!!this.onDrawPlan); }
+
   showToolbar() {
-    // Preserve existing view buttons so they stay visible in edit mode
-    const existingViewBtns = Array.from(this.hudLeft.children) as HTMLElement[];
-    this.hudLeft.innerHTML = '';
-    this.hudRight.innerHTML = '';
-    this.hudSep.style.display = 'none';
-
-    // ── Tool buttons (left) ───────────────────────────────────────────
-    const tools: Array<{ id: string; label: string; title: string }> = [
-      { id: 'select', label: t('toolSelect'), title: t('toolSelectTitle') },
-    ];
-
-    const toolBtns = new Map<string, HTMLButtonElement>();
-    const setActiveTool = (id: string) => {
-      toolBtns.forEach((b, k) => {
-        const on = k === id;
-        b.style.background = on ? 'rgba(59,130,246,0.9)' : 'rgba(255,255,255,0.07)';
-        b.style.boxShadow  = on ? '0 0 0 1.5px rgba(59,130,246,0.5)' : 'none';
-        b.style.color = on ? '#fff' : 'rgba(255,255,255,0.55)';
-      });
-    };
-
-    tools.forEach(({ id, label, title }) => {
-      const btn = this._btn(label, 'rgba(255,255,255,0.07)');
-      btn.style.color = 'rgba(255,255,255,0.55)';
-      btn.style.fontSize = '14px';
-      btn.style.minWidth = '30px';
-      btn.style.padding = '4px 8px';
-      btn.title = title;
-      btn.addEventListener('click', () => {
-        this.getEditor()?.setTool(id as EditorTool);
-        setActiveTool(id);
-      });
-      toolBtns.set(id, btn);
-      this.hudLeft.appendChild(btn);
-    });
-
-    // Separator
-    const sep1 = document.createElement('div');
-    sep1.style.cssText = 'width:1px;height:16px;background:rgba(255,255,255,0.12);margin:0 2px;';
-    this.hudLeft.appendChild(sep1);
-
-    // Undo / Redo
-    const undoBtn = this._btn('↩', 'rgba(255,255,255,0.07)');
-    undoBtn.title = t('undoTitle');
-    undoBtn.style.cssText += ';color:rgba(255,255,255,0.55);font-size:14px;min-width:28px;padding:4px 7px;';
-    undoBtn.addEventListener('click', () => this.getEditor()?.undo());
-
-    const redoBtn = this._btn('↪', 'rgba(255,255,255,0.07)');
-    redoBtn.title = t('redoTitle');
-    redoBtn.style.cssText += ';color:rgba(255,255,255,0.55);font-size:14px;min-width:28px;padding:4px 7px;';
-    redoBtn.addEventListener('click', () => this.getEditor()?.redo());
-
-    this.hudLeft.appendChild(undoBtn);
-    this.hudLeft.appendChild(redoBtn);
-
-    // Move view buttons to center of HUD (hudSep repurposed as flex center container)
-    this.hudSep.innerHTML = '';
-    if (existingViewBtns.length > 0) {
-      this.hudSep.style.cssText = 'flex:1;display:flex;align-items:center;justify-content:center;gap:2px;';
-      existingViewBtns.forEach(b => this.hudSep.appendChild(b));
-    } else {
-      this.hudSep.style.cssText = 'flex:1;';
+    // L'ancienne barre du bas n'a plus de rôle en édition.
+    this.hud.style.display = 'none';
+    if (!this.overlayContainer.querySelector('#ow-editor-styles')) {
+      const st = document.createElement('style');
+      st.id = 'ow-editor-styles';
+      st.textContent = EDITOR_STYLES;
+      this.overlayContainer.appendChild(st);
     }
+    this._buildBar();
 
     const editor = this.getEditor();
     if (editor) {
       const prevOnToolChange = editor.onToolChange;
-      editor.onToolChange = (t) => {
-        setActiveTool(t);
-        prevOnToolChange?.(t);
+      editor.onToolChange = (tool) => {
+        this._paintModes();
+        prevOnToolChange?.(tool);
       };
       // Chain card/rule undo into anchor editor fallback so Ctrl+Z and buttons both work
       editor.onUndoFallback = () => { if (!this._undoCards()) this._undoRules(); };
       editor.onRedoFallback = () => { if (!this._redoCards()) this._redoRules(); };
     }
 
-    // ── Right: close ─────────────────────────────────────────────────
-    const doneBtn = this._btn(t('doneBtn'), 'rgba(255,255,255,0.07)');
-    doneBtn.style.color = 'rgba(255,255,255,0.6)';
-    doneBtn.title = t('doneBtnTitle');
-    doneBtn.addEventListener('click', () => this.onClose());
-    this.hudRight.appendChild(doneBtn);
-
-    setActiveTool('select');
-
-    // Hint row — inserted above the pill bar inside _hud so it never overlaps
-    const hintBar = document.createElement('div');
-    hintBar.id = 'editor-hint-bar';
-    hintBar.style.cssText = [
-      'display:flex', 'gap:8px', 'align-items:center', 'justify-content:center',
-      'font-size:10px', 'color:rgba(255,255,255,0.35)', 'pointer-events:none',
-      'white-space:nowrap', 'padding:0 4px',
-    ].join(';');
-    const kbdStyle = 'background:rgba(255,255,255,0.1);border-radius:3px;padding:1px 4px;color:rgba(255,255,255,0.6);font-weight:600;margin-right:3px;font-size:9px;';
-    const hint = (key: string, label: string) => {
-      const span = document.createElement('span');
-      span.innerHTML = `<span style="${kbdStyle}">${key}</span>${label}`;
-      return span;
-    };
-    hintBar.appendChild(hint('S', t('hintSelect')));
-    hintBar.appendChild(hint('A', t('hintAdd')));
-    hintBar.appendChild(hint('G', t('hintGrab')));
-    hintBar.appendChild(hint('G→X/Y/Z', t('hintAxis')));
-    hintBar.appendChild(hint('R', t('hintRotate')));
-    hintBar.appendChild(hint('X', t('hintDelete')));
-    hintBar.appendChild(hint('H', t('hintHide')));
-    hintBar.appendChild(hint('Ctrl+D', t('hintDup')));
-    hintBar.appendChild(hint('Ctrl+Z', t('hintUndo')));
-    hintBar.appendChild(hint('Esc', t('hintEsc')));
-    hintBar.appendChild(hint(t('hintRClickKey'), t('hintRClick')));
-    // Insert before the last child (the pill bar) so it appears above it
-    this.hud.insertBefore(hintBar, this.hud.lastChild);
-
     this._saveStatus = 'saved';
     this.buildAnchorList();
+    this._tour = new Tour(this.overlayContainer);
+    this._widthObs = new ResizeObserver(() => this._applyWidth());
+    this._widthObs.observe(this.cardContainer);
+    this._applyWidth();
+    this._offerTour();
   }
 
-  private _btn(label: string, bg: string): HTMLButtonElement {
-    const btn = document.createElement('button');
-    btn.textContent = label;
-    btn.style.cssText = [
-      `background:${bg}`,
-      'border:none',
-      'color:#fff',
-      'border-radius:8px',
-      'padding:5px 10px',
-      'cursor:pointer',
-      'font-size:12px',
-      'font-family:var(--primary-font-family,sans-serif)',
-      'transition:background .15s, box-shadow .15s',
-      'white-space:nowrap',
-    ].join(';');
-    return btn;
+  private _buildBar() {
+    this._bar?.remove();
+    const bar = document.createElement('div');
+    bar.className = 'ow-ed ow-edbar';
+    bar.setAttribute('role', 'toolbar');
+
+    const title = document.createElement('div');
+    title.className = 'ow-edtitle';
+    const titleText = document.createElement('span');
+    titleText.textContent = t('editTitle');
+    title.append(icon('pencil', 18), titleText);
+
+    const tabs = document.createElement('div');
+    tabs.className = 'ow-tabs';
+    tabs.setAttribute('role', 'tablist');
+    for (const tab of this._tabs()) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'ow-tab';
+      b.dataset.tab = tab.id;
+      b.setAttribute('role', 'tab');
+      b.title = tab.label;
+      const label = document.createElement('span');
+      label.textContent = tab.label;
+      b.append(icon(tab.icon, 16), label);
+      b.addEventListener('click', () => {
+        this._closePopmenu();
+        if (tab.id === 'plan') { this.onDrawPlan?.(); return; }
+        this._switchTab?.(tab.id);
+        if (this._narrow) this._setPanelOpen(true);
+      });
+      tabs.appendChild(b);
+    }
+
+    const act = document.createElement('div');
+    act.className = 'ow-edact';
+    const iconBtn = (name: string, label: string, onClick: (b: HTMLButtonElement) => void, extra = '') => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = `ow-ib ${extra}`;
+      b.title = label;
+      b.setAttribute('aria-label', label);
+      b.append(icon(name, 18));
+      b.addEventListener('click', () => onClick(b));
+      return b;
+    };
+    const panelBtn = iconBtn('layout', t('edPanel'), () => this._setPanelOpen(!this._panelOpen), 'ow-only-narrow');
+    panelBtn.dataset.act = 'panel';
+    const undo = iconBtn('undo', t('undoTitle'), () => this.getEditor()?.undo());
+    const redo = iconBtn('redo', t('redoTitle'), () => this.getEditor()?.redo());
+    const help = iconBtn('help', t('edHelp'), (b) => this._openHelpMenu(b));
+    help.dataset.act = 'help';
+    const save = document.createElement('span');
+    save.id = 'save-indicator';
+    save.className = 'ow-save';
+    if (!this.getSceneId()) save.style.display = 'none';
+    const done = document.createElement('button');
+    done.type = 'button';
+    done.className = 'ow-btn ow-primary';
+    done.dataset.act = 'done';
+    done.title = t('doneBtnTitle');
+    done.append(icon('check', 16), document.createTextNode(t('doneBtn')));
+    done.addEventListener('click', () => this.onClose());
+    act.append(save, panelBtn, undo, redo, help, done);
+
+    bar.append(title, tabs, act);
+    this.overlayContainer.appendChild(bar);
+    this._bar = bar;
+    this._paintTabs();
+    this._updateSaveIndicator();
+  }
+
+  private _paintTabs() {
+    const active = this._activeInspectorTab ?? 'anchors';
+    this._bar?.querySelectorAll<HTMLButtonElement>('.ow-tab').forEach((b) => {
+      const on = b.dataset.tab === active;
+      b.classList.toggle('ow-on', on);
+      b.setAttribute('aria-selected', String(on));
+    });
+  }
+
+  /** Sur une carte étroite, le panneau passe par-dessus la 3D et s'ouvre à la demande. */
+  private _applyWidth() {
+    const narrow = this.cardContainer.clientWidth < 760;
+    if (narrow !== this._narrow) {
+      this._narrow = narrow;
+      if (!narrow) this._panelOpen = false;
+    }
+    this._bar?.classList.toggle('ow-narrow', narrow);
+    this._panel?.classList.toggle('ow-narrow', narrow);
+    this._panel?.classList.toggle('ow-panel-open', this._panelOpen);
+    this.cardContainer.style.setProperty('--ow-dock', `${narrow ? 0 : PANEL_W}px`);
+    this.onDock?.(narrow ? 0 : PANEL_W);
+  }
+
+  private _setPanelOpen(on: boolean) {
+    this._panelOpen = on;
+    this._panel?.classList.toggle('ow-panel-open', on);
+  }
+
+  private _closePopmenu() {
+    this._popmenu?.remove();
+    this._popmenu = null;
+    document.removeEventListener('pointerdown', this._onPopOutside, true);
+  }
+
+  private _onPopOutside = (e: PointerEvent) => {
+    if (this._popmenu && !e.composedPath().includes(this._popmenu)) this._closePopmenu();
+  };
+
+  /** Un petit menu sous un bouton de la barre ou du panneau. */
+  private _openPopmenu(anchor: HTMLElement, fill: (menu: HTMLDivElement) => void) {
+    if (this._popmenu) { this._closePopmenu(); return; }
+    const menu = document.createElement('div');
+    menu.className = 'ow-ed ow-popmenu';
+    menu.setAttribute('role', 'menu');
+    fill(menu);
+    this.overlayContainer.appendChild(menu);
+    const hr = this.overlayContainer.getBoundingClientRect(), br = anchor.getBoundingClientRect();
+    menu.style.top = `${br.bottom - hr.top + 6}px`;
+    menu.style.right = `${Math.max(8, hr.right - br.right)}px`;
+    this._popmenu = menu;
+    setTimeout(() => document.addEventListener('pointerdown', this._onPopOutside, true), 0);
+  }
+
+  private _menuItem(menu: HTMLElement, iconName: string, label: string, onClick: () => void) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.setAttribute('role', 'menuitem');
+    b.append(icon(iconName, 18), document.createTextNode(label));
+    b.addEventListener('click', () => { this._closePopmenu(); onClick(); });
+    menu.appendChild(b);
+  }
+
+  /** L'aide : la visite de l'onglet courant, et les raccourcis clavier. */
+  private _openHelpMenu(btn: HTMLElement) {
+    this._openPopmenu(btn, (menu) => {
+      this._menuItem(menu, 'play', t('edTourThisTab'), () => this.startTabTour());
+      this._menuItem(menu, 'more', t('edShortcuts'), () => this._showShortcuts(btn));
+    });
+  }
+
+  private _showShortcuts(btn: HTMLElement) {
+    this._openPopmenu(btn, (menu) => {
+      const title = document.createElement('div');
+      title.className = 'ow-menu-title';
+      title.style.cssText = 'font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ow-muted);padding:4px 10px 0;';
+      title.textContent = t('edShortcuts');
+      const keys = document.createElement('div');
+      keys.className = 'ow-keys';
+      const rows: [string, string][] = [
+        ['S', t('hintSelect')], ['A', t('hintAdd')], ['G', t('hintGrab')], ['G → X/Y/Z', t('hintAxis')], ['R', t('hintRotate')],
+        ['X', t('hintDelete')], ['H', t('hintHide')], ['Ctrl+D', t('hintDup')], ['Ctrl+Z', t('hintUndo')], ['Esc', t('hintEsc')],
+        [t('hintRClickKey'), t('hintRClick')],
+      ];
+      for (const [k, v] of rows) {
+        const kbd = document.createElement('kbd');
+        kbd.textContent = k;
+        const span = document.createElement('span');
+        span.textContent = v;
+        keys.append(kbd, span);
+      }
+      menu.append(title, keys);
+    });
+  }
+
+  /** La première fois dans l'éditeur, une invitation discrète à la visite. */
+  private _offerTour() {
+    let seen = true;
+    try { seen = localStorage.getItem(EDITOR_TOUR_KEY) === '1'; } catch { /* stockage bloqué */ }
+    if (seen) return;
+    const pill = document.createElement('div');
+    pill.className = 'ow-ui ow-surface ow-pill ow-ed';
+    pill.style.cssText = `top:${BAR_H + 12}px;left:calc(50% - var(--ow-dock, 0px) / 2);z-index:30;`;
+    const text = document.createElement('span');
+    text.textContent = t('edHello');
+    const go = document.createElement('button');
+    go.type = 'button';
+    go.className = 'ow-btn ow-primary ow-small';
+    go.style.borderRadius = '999px';
+    go.textContent = t('uiHelloGo');
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'ow-ib';
+    x.style.cssText = 'width:28px;height:28px;';
+    x.setAttribute('aria-label', t('tourClose'));
+    x.append(icon('close', 15));
+    const close = () => {
+      pill.remove();
+      this._helloEl = null;
+      try { localStorage.setItem(EDITOR_TOUR_KEY, '1'); } catch { /* stockage bloqué */ }
+    };
+    go.addEventListener('click', () => { close(); this.startTabTour(); });
+    x.addEventListener('click', close);
+    pill.append(text, go, x);
+    this.overlayContainer.appendChild(pill);
+    this._helloEl = pill;
+  }
+
+  /** La visite de l'onglet ouvert. */
+  startTabTour() {
+    if (!this._tour) return;
+    this._helloEl?.remove();
+    this._helloEl = null;
+    try { localStorage.setItem(EDITOR_TOUR_KEY, '1'); } catch { /* stockage bloqué */ }
+    const tab = this._activeInspectorTab ?? 'anchors';
+    const pane = () => this._panel?.querySelector<HTMLElement>(`[data-pane="${tab}"]`);
+    const inPane = (sel: string) => () => pane()?.querySelector<HTMLElement>(sel) ?? pane();
+    if (this._narrow) this._setPanelOpen(true);
+    const steps: TourStep[] = [];
+    if (tab === 'anchors') {
+      steps.push(
+        { target: () => this._bar?.querySelector('.ow-tabs'), title: 'tourEdTabsTitle', text: 'tourEdTabsText', anim: 'gear' },
+        { target: inPane('.ow-acts'), title: 'tourEdAddTitle', text: 'tourEdAddText', anim: 'add' },
+        { target: inPane('.ow-list'), title: 'tourEdListTitle', text: 'tourEdListText', anim: 'tap' },
+        { target: () => this._bar?.querySelector('[data-act="help"]'), title: 'tourEdHelpTitle', text: 'tourEdHelpText', anim: 'gear' },
+        { target: () => this._bar?.querySelector('[data-act="done"]'), title: 'tourEdDoneTitle', text: 'tourEdDoneText', anim: 'full' },
+      );
+    } else if (tab === 'parts') {
+      steps.push({ target: inPane('.ow-ph'), title: 'tourEdPartsTitle', text: 'tourEdPartsText', anim: 'door' });
+    } else if (tab === 'rules') {
+      steps.push({ target: inPane('.ow-ph'), title: 'tourEdRulesTitle', text: 'tourEdRulesText', anim: 'rule' });
+    } else if (tab === 'weather') {
+      steps.push({ target: pane, title: 'tourEdMoodTitle', text: 'tourEdMoodText', anim: 'sun' });
+    } else if (tab === 'settings') {
+      steps.push(
+        { target: inPane('[data-sec="views"]'), title: 'tourEdViewsTitle', text: 'tourEdViewsText', anim: 'views' },
+        { target: pane, title: 'tourEdSettingsTitle', text: 'tourEdSettingsText', anim: 'gear' },
+      );
+    } else {
+      steps.push({ target: pane, title: 'tourEdTabsTitle', text: 'tourEdTabsText', anim: 'gear' });
+    }
+    if (this.onDrawPlan && tab === 'anchors') {
+      steps.splice(1, 0, { target: () => this._bar?.querySelector('[data-tab="plan"]'), title: 'tourEdPlanTitle', text: 'tourEdPlanText', anim: 'plan' });
+    }
+    this._tour.start(steps);
   }
 
   hideToolbar() {
     this._closePartModal?.();
+    this._closePopmenu();
+    this._tour?.end();
+    this._tour = null;
+    this._helloEl?.remove();
+    this._helloEl = null;
+    this._widthObs?.disconnect();
+    this._widthObs = null;
     this._panel?.remove();
     this._panel = null;
+    this._bar?.remove();
+    this._bar = null;
+    this.cardContainer.style.removeProperty('--ow-dock');
+    this.onDock?.(0);
     this.hud.querySelector('#editor-hint-bar')?.remove();
     // Restore HUD to normal camera view + action buttons
     this.rebuildNormalHUD();
@@ -533,18 +736,7 @@ export class EditPanel {
     if (!this.overlayContainer || !this.getEditor()) return;
 
     const panel = document.createElement('div');
-    panel.style.cssText = [
-      'position:absolute', 'top:8px', 'right:8px',
-      'width:264px', 'max-height:calc(100% - 80px)',
-      'background:rgba(6,10,20,0.93)',
-      'backdrop-filter:blur(18px)', '-webkit-backdrop-filter:blur(18px)',
-      'border:1px solid rgba(255,255,255,0.09)',
-      'border-radius:14px', 'overflow:hidden',
-      'display:flex', 'flex-direction:column',
-      'z-index:15', 'pointer-events:auto',
-      'font-family:var(--primary-font-family,sans-serif)',
-      'box-shadow:0 8px 32px rgba(0,0,0,0.6)',
-    ].join(';');
+    panel.className = `ow-ed ow-edpanel${this._narrow ? ' ow-narrow' : ''}${this._panelOpen ? ' ow-panel-open' : ''}`;
 
     // Stop key events bubbling to HA shortcuts
     panel.addEventListener('keydown', (e) => {
@@ -553,30 +745,10 @@ export class EditPanel {
       }
     });
 
-    // ── Header ────────────────────────────────────────────────────────
-    const header = document.createElement('div');
-    header.style.cssText = 'display:flex;align-items:center;padding:9px 12px 8px;border-bottom:1px solid rgba(255,255,255,0.07);flex-shrink:0;gap:6px;';
-    const headerTitle = document.createElement('span');
-    headerTitle.style.cssText = 'font-size:11px;font-weight:700;color:#7dd3fc;text-transform:uppercase;letter-spacing:.08em;flex:1;';
-    headerTitle.textContent = t('inspectorTitle');
-    header.appendChild(headerTitle);
-    if (this.getSceneId()) {
-      const saveInd = document.createElement('span');
-      saveInd.id = 'save-indicator';
-      saveInd.style.cssText = 'font-size:10px;color:#22c55e;transition:color .2s;';
-      saveInd.textContent = t('saveIndicator_saved');
-      header.appendChild(saveInd);
-    }
-    panel.appendChild(header);
-
     // Warning banner if no scene_id — modifications not persisted
     if (!this.getSceneId()) {
       const warn = document.createElement('div');
-      warn.style.cssText = [
-        'padding:7px 12px', 'font-size:10px', 'color:#f59e0b',
-        'background:rgba(245,158,11,0.08)', 'border-bottom:1px solid rgba(245,158,11,0.18)',
-        'line-height:1.5', 'flex-shrink:0',
-      ].join(';');
+      warn.className = 'ow-warn';
       warn.textContent = t('warnNoSceneId');
       panel.appendChild(warn);
     }
@@ -588,6 +760,7 @@ export class EditPanel {
 
     const detailView = document.createElement('div');
     detailView.id = 'inspector-detail';
+    detailView.className = 'ow-legacy';
     detailView.style.cssText = 'flex:1;min-height:0;overflow-y:auto;padding:12px 12px 10px;display:none;';
 
     const showDetail = () => { listView.style.display = 'none'; detailView.style.display = 'block'; };
@@ -611,6 +784,17 @@ export class EditPanel {
       const selCard = (this.getCards?.() ?? []).find((c) => c.id === selCardId);
       if (selCard) { this._buildCardPropsSection(detailView, selCard, showList); showDetail(); }
     }
+    if (this._narrow && (selKey || selCardId)) this._setPanelOpen(true);
+  }
+
+  /** L'outil de l'éditeur d'ancres se lit sur les boutons du haut de la liste. */
+  private _paintModes() {
+    const tool = this.getEditor()?.tool;
+    this._panel?.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((b) => {
+      const on = b.dataset.tool === tool;
+      b.classList.toggle('ow-on', on);
+      if (b.getAttribute('role') === 'radio') b.setAttribute('aria-checked', String(on));
+    });
   }
 
   private _fillListView(
@@ -624,278 +808,225 @@ export class EditPanel {
     if (!editor) return;
     const anchors = editor.anchors;
     const selectedKey = editor.selectedKey;
-
-    const DOMAIN_ICONS: Record<string, string> = {
-      light: '💡', switch: '🔌', cover: '🪟',
-      sensor: '📡', binary_sensor: '⬤', climate: '🌡️', media_player: '🔊',
-    };
-    const DOMAIN_COLORS: Record<string, string> = {
-      light: '#fbbf24', switch: '#4ade80', cover: '#fb923c',
-      sensor: '#60a5fa', binary_sensor: '#22d3ee',
-      climate: '#f87171', media_player: '#c084fc',
-    };
+    const hass = this.getHass();
 
     const cards = this.getCards ? this.getCards() : [];
     const rulesCount = (this.getRules?.() ?? []).length;
     const partsCount = (this.getParts?.() ?? []).length;
 
-    // ── Sidebar + content layout ──────────────────────────────────────
-    listView.style.flexDirection = 'row';
-
-    const TAB_DEFS = [
-      { id: 'anchors', icon: '⊕', label: anchors.size > 0 ? `${t('tabAnchors')} (${anchors.size})` : t('tabAnchors') },
-      { id: 'cards',   icon: '☰', label: cards.length > 0  ? `${t('tabCards')} (${cards.length})`  : t('tabCards') },
-      { id: 'parts',   icon: '🚪', label: partsCount > 0    ? `${t('tabParts')} (${partsCount})`    : t('tabParts') },
-      { id: 'rules',   icon: '⚡', label: rulesCount > 0    ? `${t('tabRules')} (${rulesCount})`    : t('tabRules') },
-      { id: 'camera',  icon: '◎', label: t('tabCamera') },
-      { id: 'weather', icon: '☁', label: t('tabWeather') },
-      { id: 'config',  icon: '⚙', label: t('tabConfig') },
-    ] as const;
-    type TabId = typeof TAB_DEFS[number]['id'];
-
-    const defaultTab: TabId = CARDS_ENABLED && this.getSelectedCardId?.() ? 'cards' : 'anchors';
+    const TAB_IDS = ['anchors', 'cards', 'parts', 'rules', 'weather', 'settings'] as const;
+    type TabId = typeof TAB_IDS[number];
     // Un onglet masqué mémorisé d'un précédent rendu ne doit pas être restauré :
-    // son volet existe toujours, mais aucun bouton ne permettrait d'en sortir.
+    // aucun bouton ne permettrait d'en sortir.
     const tabVisible = (id: string) =>
       (id !== 'cards' || CARDS_ENABLED) && (id !== 'parts' || PARTS_ENABLED);
+    const defaultTab: TabId = CARDS_ENABLED && this.getSelectedCardId?.() ? 'cards' : 'anchors';
     const remembered = this._activeInspectorTab;
     let activeTab: TabId =
-      (remembered && TAB_DEFS.find(d => d.id === remembered) && tabVisible(remembered)
+      (remembered && (TAB_IDS as readonly string[]).includes(remembered) && tabVisible(remembered)
         ? remembered as TabId
         : null) ?? defaultTab;
 
-    // Left icon rail
-    const sidebar = document.createElement('div');
-    sidebar.style.cssText = [
-      'width:36px', 'flex-shrink:0',
-      'display:flex', 'flex-direction:column', 'align-items:center',
-      'background:rgba(0,0,0,0.22)',
-      'border-right:1px solid rgba(255,255,255,0.06)',
-      'padding:4px 0', 'gap:1px',
-    ].join(';');
-
-    // Right content area
-    const contentArea = document.createElement('div');
-    contentArea.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden;';
-
-    const tabBtns = new Map<TabId, HTMLButtonElement>();
     const tabPanes = new Map<TabId, HTMLDivElement>();
-
-    const switchTab = (id: TabId) => {
-      activeTab = id;
-      this._activeInspectorTab = id;
-      tabBtns.forEach((b, k) => {
-        const on = k === id;
-        b.style.color      = on ? '#7dd3fc' : 'rgba(255,255,255,0.22)';
-        b.style.borderLeft = on ? '2px solid #7dd3fc' : '2px solid transparent';
-        b.style.background = on ? 'rgba(125,209,252,0.1)' : 'transparent';
-      });
-      tabPanes.forEach((p, k) => { p.style.display = k === id ? 'flex' : 'none'; });
-    };
-
-    TAB_DEFS.forEach(({ id, icon, label }) => {
-      // Onglet masqué : pas de bouton dans la barre latérale…
-      const hideTab = (id === 'cards' && !CARDS_ENABLED) || (id === 'parts' && !PARTS_ENABLED);
-      if (!hideTab) {
-        const btn = document.createElement('button');
-        btn.style.cssText = [
-          'width:32px', 'height:32px',
-          'background:transparent',
-          'border:none', 'border-left:2px solid transparent',
-          'border-radius:6px',
-          'cursor:pointer', 'color:rgba(255,255,255,0.22)',
-          'font-size:14px', 'line-height:1',
-          'display:flex', 'align-items:center', 'justify-content:center',
-          'transition:all .15s', 'flex-shrink:0',
-        ].join(';');
-        btn.textContent = icon;
-        btn.title = label;
-        btn.addEventListener('click', () => switchTab(id));
-        tabBtns.set(id, btn);
-        sidebar.appendChild(btn);
-      }
-
-      // …mais le volet est toujours créé : la suite de cette fonction y accède
-      // par son identifiant, et une absence ferait échouer toute la construction
-      // des onglets suivants.
+    for (const id of TAB_IDS) {
       const pane = document.createElement('div');
+      pane.dataset.pane = id;
       pane.style.cssText = 'flex-direction:column;flex:1;min-height:0;overflow:hidden;display:none;';
       tabPanes.set(id, pane);
-    });
+      listView.appendChild(pane);
+    }
+    const applyTab = (id: TabId) => {
+      activeTab = id;
+      this._activeInspectorTab = id;
+      tabPanes.forEach((p, k) => { p.style.display = k === id ? 'flex' : 'none'; });
+      this._paintTabs();
+    };
+    this._switchTab = (id: string) => {
+      if (!(TAB_IDS as readonly string[]).includes(id) || !tabVisible(id)) return;
+      this._tour?.end();
+      showList();
+      applyTab(id as TabId);
+    };
 
-    // Sidebar tooltip (floats to the right of the icon rail)
-    listView.style.position = 'relative';
-    const sidebarTooltip = document.createElement('div');
-    sidebarTooltip.style.cssText = [
-      'position:absolute', 'left:42px', 'z-index:30',
-      'background:rgba(15,23,42,0.97)', 'border:1px solid rgba(255,255,255,0.1)',
-      'border-radius:7px', 'padding:4px 9px',
-      'font-size:10px', 'font-weight:600', 'color:#e2e8f0',
-      'white-space:nowrap', 'pointer-events:none',
-      'opacity:0', 'transition:opacity .12s',
-      'font-family:var(--primary-font-family,sans-serif)',
-      'box-shadow:0 4px 12px rgba(0,0,0,0.5)',
-    ].join(';');
-    listView.appendChild(sidebarTooltip);
-
-    tabBtns.forEach((btn, id) => {
-      const def = TAB_DEFS.find(d => d.id === id)!;
-      btn.addEventListener('mouseenter', () => {
-        const br = btn.getBoundingClientRect();
-        const lr = listView.getBoundingClientRect();
-        sidebarTooltip.style.top = `${br.top - lr.top + br.height / 2 - 11}px`;
-        sidebarTooltip.textContent = def.label;
-        sidebarTooltip.style.opacity = '1';
-      });
-      btn.addEventListener('mouseleave', () => { sidebarTooltip.style.opacity = '0'; });
-    });
-
-    // Uniform tab pane header helper
+    /** L'en-tête commun : titre, nombre, une ligne d'explication, l'action principale. */
     const buildTabHeader = (
       pane: HTMLElement,
       title: string,
       desc: string,
       action?: { label: string; onClick: () => void; badge?: string },
+      count?: number,
     ): void => {
       const hdr = document.createElement('div');
-      hdr.style.cssText = 'padding:8px 10px 6px;border-bottom:1px solid rgba(255,255,255,0.06);flex-shrink:0;';
-
+      hdr.className = 'ow-ph';
       const row = document.createElement('div');
-      row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:3px;';
-
-      const titleEl = document.createElement('span');
-      titleEl.style.cssText = 'font-size:10px;font-weight:700;color:#e2e8f0;text-transform:uppercase;letter-spacing:.06em;flex:1;';
-      titleEl.textContent = title;
-      row.appendChild(titleEl);
-
+      row.className = 'ow-ph-t';
+      const b = document.createElement('b');
+      b.textContent = title;
+      row.appendChild(b);
+      if (count) {
+        const n = document.createElement('span');
+        n.className = 'ow-n';
+        n.textContent = String(count);
+        row.appendChild(n);
+      }
       if (action?.badge) {
         const badge = document.createElement('span');
-        badge.style.cssText = 'font-size:8px;font-weight:700;background:rgba(251,191,36,0.15);border:1px solid rgba(251,191,36,0.3);color:#fbbf24;border-radius:3px;padding:1px 4px;';
+        badge.className = 'ow-beta';
         badge.textContent = action.badge;
         row.appendChild(badge);
       }
-
+      hdr.appendChild(row);
+      const d = document.createElement('div');
+      d.className = 'ow-ph-d';
+      d.textContent = desc;
+      hdr.appendChild(d);
       if (action) {
         const btn = document.createElement('button');
-        btn.style.cssText = 'background:rgba(125,209,252,0.12);border:1px solid rgba(125,209,252,0.28);border-radius:6px;color:#7dd3fc;padding:2px 8px;font-size:10px;font-family:inherit;cursor:pointer;white-space:nowrap;flex-shrink:0;transition:all .15s;';
-        btn.textContent = action.label;
+        btn.type = 'button';
+        btn.className = 'ow-btn ow-primary';
+        btn.append(icon('plus', 16), document.createTextNode(action.label.replace(/^\+\s*/, '')));
         btn.addEventListener('click', action.onClick);
-        row.appendChild(btn);
+        hdr.appendChild(btn);
       }
-
-      hdr.appendChild(row);
-
-      const descEl = document.createElement('div');
-      descEl.style.cssText = 'font-size:9px;color:rgba(255,255,255,0.25);line-height:1.4;';
-      descEl.textContent = desc;
-      hdr.appendChild(descEl);
-
       pane.appendChild(hdr);
     };
 
-    listView.appendChild(sidebar);
-    listView.appendChild(contentArea);
-    tabPanes.forEach(p => contentArea.appendChild(p));
-
-    // ── Anchors pane ─────────────────────────────────────────────────
+    // ── Appareils (les ancres) ───────────────────────────────────────
     const anchorsPane = tabPanes.get('anchors')!;
+    {
+      const hdr = document.createElement('div');
+      hdr.className = 'ow-ph';
+      const row = document.createElement('div');
+      row.className = 'ow-ph-t';
+      const b = document.createElement('b');
+      b.textContent = t('tabDevices');
+      row.appendChild(b);
+      if (anchors.size) {
+        const n = document.createElement('span');
+        n.className = 'ow-n';
+        n.textContent = String(anchors.size);
+        row.appendChild(n);
+      }
+      hdr.appendChild(row);
 
-    buildTabHeader(anchorsPane, t('tabAnchors'), t('tabAnchorsDesc'), {
-      label: t('addAnchor'),
-      onClick: () => this.getEditor()?.setTool('add'),
-    });
-
-    // Batch visibility bar
-    const batchBar = document.createElement('div');
-    batchBar.style.cssText = 'display:flex;align-items:center;padding:3px 10px 3px;gap:4px;border-bottom:1px solid rgba(255,255,255,0.04);flex-shrink:0;';
-    const batchBtnStyle = 'background:none;border:none;cursor:pointer;padding:3px 6px;border-radius:5px;font-size:11px;color:rgba(255,255,255,0.35);transition:all .15s;';
-    const showAllBtn = document.createElement('button');
-    showAllBtn.title = t('showAll'); showAllBtn.innerHTML = t('showAll'); showAllBtn.style.cssText = batchBtnStyle;
-    showAllBtn.addEventListener('mouseenter', () => { showAllBtn.style.color = '#4ade80'; });
-    showAllBtn.addEventListener('mouseleave', () => { showAllBtn.style.color = 'rgba(255,255,255,0.35)'; });
-    showAllBtn.addEventListener('click', () => this.getEditor()?.updateAll({ hidden: false }));
-    const hideAllBtn = document.createElement('button');
-    hideAllBtn.title = t('hideAll'); hideAllBtn.innerHTML = t('hideAll'); hideAllBtn.style.cssText = batchBtnStyle;
-    hideAllBtn.addEventListener('mouseenter', () => { hideAllBtn.style.color = '#f87171'; });
-    hideAllBtn.addEventListener('mouseleave', () => { hideAllBtn.style.color = 'rgba(255,255,255,0.35)'; });
-    hideAllBtn.addEventListener('click', () => this.getEditor()?.updateAll({ hidden: true }));
-    batchBar.appendChild(showAllBtn); batchBar.appendChild(hideAllBtn);
-    anchorsPane.appendChild(batchBar);
-
-    const anchorsScroll = document.createElement('div');
-    anchorsScroll.id = 'anchor-list-body';
-    anchorsScroll.style.cssText = 'overflow-y:auto;flex:1;min-height:0;padding:3px 0;';
-    anchorsPane.appendChild(anchorsScroll);
-
-    if (anchors.size === 0) {
-      const empty = document.createElement('div');
-      empty.style.cssText = 'padding:14px 12px;font-size:11px;color:rgba(255,255,255,0.28);text-align:center;line-height:1.7;';
-      empty.innerHTML = `${t('anchorEmpty')}<br><span style="font-size:10px;opacity:.7">${t('anchorEmptyHint')}</span>`;
-      anchorsScroll.appendChild(empty);
-    } else {
-      anchors.forEach((a, key) => {
-        const isSelected = key === selectedKey;
-        const domain = a.entity.split('.')[0];
-        const color = DOMAIN_COLORS[domain] ?? '#94a3b8';
-        const icon = DOMAIN_ICONS[domain] ?? '●';
-
-        const row = document.createElement('div');
-        row.style.cssText = [
-          'display:flex', 'align-items:center', 'gap:8px',
-          'padding:6px 10px', 'cursor:pointer',
-          `background:${isSelected ? 'rgba(59,130,246,0.18)' : 'transparent'}`,
-          `border-left:2px solid ${isSelected ? '#3b82f6' : 'transparent'}`,
-          'transition:background .1s, border-color .1s',
-        ].join(';');
-        if (!isSelected) {
-          row.addEventListener('mouseenter', () => { row.style.background = 'rgba(255,255,255,0.05)'; row.style.borderLeftColor = 'rgba(255,255,255,0.12)'; });
-          row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; row.style.borderLeftColor = 'transparent'; });
-        }
-
-        const iconEl = document.createElement('span');
-        iconEl.style.cssText = `font-size:13px;flex-shrink:0;opacity:${a.hidden ? 0.2 : 0.9};`;
-        iconEl.textContent = icon;
-
-        const col = document.createElement('div');
-        col.style.cssText = 'flex:1;min-width:0;';
-        const nameEl = document.createElement('div');
-        nameEl.style.cssText = `font-size:12px;font-weight:500;${a.hidden ? 'color:rgba(255,255,255,0.25);' : 'color:#e2e8f0;'}overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.3;`;
-        nameEl.textContent = anchorTitle(a);
-        const entityEl = document.createElement('div');
-        entityEl.style.cssText = `font-size:10px;color:${a.hidden ? 'rgba(255,255,255,0.15)' : color};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.3;opacity:0.8;`;
-        entityEl.textContent = anchorSubtitle(a);
-        col.appendChild(nameEl); col.appendChild(entityEl);
-
-        const rowBtnStyle = 'background:none;border:none;cursor:pointer;padding:2px 4px;font-size:12px;flex-shrink:0;line-height:1;border-radius:4px;color:rgba(255,255,255,0.4);transition:all .12s;opacity:0;';
-        const eyeBtn = document.createElement('button');
-        eyeBtn.style.cssText = rowBtnStyle;
-        eyeBtn.textContent = a.hidden ? '🙈' : '👁';
-        eyeBtn.title = a.hidden ? t('anchorShow') : t('anchorHide');
-        if (a.hidden) eyeBtn.style.opacity = '0.45';
-        eyeBtn.addEventListener('mouseenter', () => { eyeBtn.style.opacity = '1'; eyeBtn.style.background = 'rgba(255,255,255,0.1)'; });
-        eyeBtn.addEventListener('mouseleave', () => { eyeBtn.style.opacity = a.hidden ? '0.5' : '0.6'; eyeBtn.style.background = 'none'; });
-        eyeBtn.addEventListener('click', (e) => { e.stopPropagation(); this.getEditor()?.updateAnchor(key, { hidden: !a.hidden }); this.scheduleAutoSave(); });
-
-        const dupBtn = document.createElement('button');
-        dupBtn.style.cssText = rowBtnStyle;
-        dupBtn.textContent = '⎘'; dupBtn.title = t('anchorDup');
-        dupBtn.addEventListener('mouseenter', () => { dupBtn.style.opacity = '1'; dupBtn.style.background = 'rgba(255,255,255,0.1)'; });
-        dupBtn.addEventListener('mouseleave', () => { dupBtn.style.opacity = '0.6'; dupBtn.style.background = 'none'; });
-        dupBtn.addEventListener('click', (e) => { e.stopPropagation(); this.getEditor()?.selectAnchor(key); this.getEditor()?.duplicate(); });
-
-        const showBtns = () => { eyeBtn.style.opacity = a.hidden ? '0.5' : '0.6'; dupBtn.style.opacity = '0.6'; };
-        const hideBtns = () => { eyeBtn.style.opacity = a.hidden ? '0.35' : '0'; dupBtn.style.opacity = '0'; };
-        if (!isSelected) { row.addEventListener('mouseenter', showBtns); row.addEventListener('mouseleave', hideBtns); }
-        else { setTimeout(showBtns, 0); }
-
-        row.appendChild(iconEl); row.appendChild(col); row.appendChild(eyeBtn); row.appendChild(dupBtn);
-        row.addEventListener('click', () => {
-          this.getEditor()?.selectAnchor(key);
-          this._buildPropsSection(detailView, key, editor.anchors.get(key)!, showList);
-          showDetail();
-        });
-        anchorsScroll.appendChild(row);
+      // Les actions, juste au-dessus de la liste : le mode, et « Ajouter » mis en avant.
+      const acts = document.createElement('div');
+      acts.className = 'ow-acts';
+      const modes = document.createElement('div');
+      modes.className = 'ow-modes';
+      modes.setAttribute('role', 'radiogroup');
+      modes.setAttribute('aria-label', t('edMode'));
+      const MODES: [EditorTool, string, string][] = [
+        ['select', 'select', t('edModeSelect')],
+        ['rotate', 'rotl', t('edModeRotate')],
+        ['delete', 'trash', t('edModeRemove')],
+      ];
+      for (const [tool, ic, label] of MODES) {
+        const m = document.createElement('button');
+        m.type = 'button';
+        m.className = `ow-mode${tool === 'delete' ? ' ow-danger' : ''}`;
+        m.dataset.tool = tool;
+        m.setAttribute('role', 'radio');
+        m.title = label;
+        m.append(icon(ic, 17), document.createTextNode(label));
+        m.addEventListener('click', () => this.getEditor()?.setTool(tool));
+        modes.appendChild(m);
+      }
+      const add = document.createElement('button');
+      add.type = 'button';
+      add.className = 'ow-btn ow-primary ow-big';
+      add.dataset.tool = 'add';
+      add.title = t('hintBarPlaceAnchor');
+      add.append(icon('plus', 17), document.createTextNode(t('edModeAdd')));
+      add.addEventListener('click', () => {
+        const ed = this.getEditor();
+        ed?.setTool(ed.tool === 'add' ? 'select' : 'add');
+        if (this._narrow) this._setPanelOpen(false);
       });
+      acts.append(modes, add);
+      hdr.appendChild(acts);
+
+      // Recherche, et le menu « Tout afficher / tout masquer ».
+      const search = document.createElement('label');
+      search.className = 'ow-search';
+      const input = document.createElement('input');
+      input.type = 'search';
+      input.placeholder = t('edSearch');
+      input.setAttribute('aria-label', t('edSearch'));
+      input.value = this._anchorQuery;
+      const more = document.createElement('button');
+      more.type = 'button';
+      more.className = 'ow-ib';
+      more.title = t('edMore');
+      more.setAttribute('aria-label', t('edMore'));
+      more.append(icon('more', 18));
+      more.addEventListener('click', (e) => {
+        e.preventDefault();
+        this._openPopmenu(more, (menu) => {
+          this._menuItem(menu, 'eye', t('edShowAll'), () => this.getEditor()?.updateAll({ hidden: false }));
+          this._menuItem(menu, 'eyeOff', t('edHideAll'), () => this.getEditor()?.updateAll({ hidden: true }));
+        });
+      });
+      search.append(icon('search', 16), input, more);
+      hdr.appendChild(search);
+      anchorsPane.appendChild(hdr);
+
+      const list = document.createElement('div');
+      list.id = 'anchor-list-body';
+      list.className = 'ow-list';
+      anchorsPane.appendChild(list);
+
+      // Les pièces viennent du registre de Home Assistant : chargé une fois.
+      if (hass && !this._registryAsked) {
+        this._registryAsked = true;
+        void loadRegistry(hass).then(() => this.updateAnchorList()).catch(() => {});
+      }
+
+      const renderRows = () => {
+        list.innerHTML = '';
+        if (anchors.size === 0) {
+          const empty = document.createElement('div');
+          empty.className = 'ow-empty';
+          const strong = document.createElement('b');
+          strong.textContent = t('anchorEmpty');
+          empty.append(strong, document.createTextNode(t('edEmptyHint')));
+          list.appendChild(empty);
+          return;
+        }
+        const reg = cachedRegistry();
+        const q = this._anchorQuery.trim().toLowerCase();
+        const groups = new Map<string, [string, EditableAnchor][]>();
+        anchors.forEach((a, key) => {
+          const area = a.entity ? areaOf(reg, a.entity)?.name : undefined;
+          const name = anchorTitle(a);
+          if (q && !`${name} ${a.entity} ${area ?? ''}`.toLowerCase().includes(q)) return;
+          const g = area ?? '';
+          if (!groups.has(g)) groups.set(g, []);
+          groups.get(g)!.push([key, a]);
+        });
+        if (!groups.size) {
+          const empty = document.createElement('div');
+          empty.className = 'ow-empty';
+          empty.textContent = t('edNoMatch');
+          list.appendChild(empty);
+          return;
+        }
+        const names = [...groups.keys()].sort((x, y) => (x ? (y ? x.localeCompare(y) : -1) : 1));
+        for (const g of names) {
+          const items = groups.get(g)!;
+          const head = document.createElement('div');
+          head.className = 'ow-room';
+          const hb = document.createElement('b');
+          hb.textContent = g || t('edNoRoom');
+          const hn = document.createElement('span');
+          hn.textContent = String(items.length);
+          head.append(hb, hn);
+          list.appendChild(head);
+          for (const [key, a] of items) list.appendChild(this._anchorRow(key, a, key === selectedKey, detailView, showDetail, showList));
+        }
+      };
+      input.addEventListener('input', () => { this._anchorQuery = input.value; renderRows(); });
+      renderRows();
     }
 
     // ── Cards pane ───────────────────────────────────────────────────
@@ -906,48 +1037,37 @@ export class EditPanel {
       label: t('addCard'),
       badge: 'BETA',
       onClick: () => this._showCardTemplatePicker(cardsScroll),
-    });
+    }, cards.length);
 
     const cardsScroll = document.createElement('div');
-    cardsScroll.style.cssText = 'overflow-y:auto;flex:1;min-height:0;padding:3px 0;';
+    cardsScroll.className = 'ow-list';
     cardsPane.appendChild(cardsScroll);
 
-    const CARD_ICONS: Record<SceneCardType, string> = { room: '🏠', entity: '📊', info: 'ℹ️' };
-    const CARD_COLORS: Record<SceneCardType, string> = { room: '#7dd3fc', entity: '#86efac', info: '#fbbf24' };
+    const CARD_ICONS: Record<SceneCardType, string> = { room: 'room', entity: 'sensor', info: 'tag' };
 
     if (cards.length === 0) {
       const empty = document.createElement('div');
-      empty.style.cssText = 'padding:14px 12px;font-size:11px;color:rgba(255,255,255,0.28);text-align:center;line-height:1.7;';
-      empty.innerHTML = `${t('cardEmptyList')}<br><span style="font-size:10px;opacity:.7">${t('cardEmptyListHint')}</span>`;
+      empty.className = 'ow-empty';
+      const strong = document.createElement('b');
+      strong.textContent = t('cardEmptyList');
+      empty.append(strong, document.createTextNode(t('cardEmptyListHint')));
       cardsScroll.appendChild(empty);
     } else {
       cards.forEach((c) => {
         const isSelected = this.getSelectedCardId ? this.getSelectedCardId() === c.id : false;
         const row = document.createElement('div');
-        row.style.cssText = [
-          'display:flex', 'align-items:center', 'gap:8px',
-          'padding:6px 10px', 'cursor:pointer',
-          `background:${isSelected ? 'rgba(59,130,246,0.18)' : 'transparent'}`,
-          `border-left:2px solid ${isSelected ? '#3b82f6' : 'transparent'}`,
-          'transition:background .1s, border-color .1s',
-        ].join(';');
-        if (!isSelected) {
-          row.addEventListener('mouseenter', () => { row.style.background = 'rgba(255,255,255,0.05)'; });
-          row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
-        }
-        const iconEl = document.createElement('span');
-        iconEl.style.cssText = 'font-size:16px;flex-shrink:0;';
-        iconEl.textContent = CARD_ICONS[c.type] ?? '▦';
-        const col = document.createElement('div');
-        col.style.cssText = 'flex:1;min-width:0;';
-        const nameEl = document.createElement('div');
-        nameEl.style.cssText = 'font-size:12px;font-weight:500;color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.3;';
+        row.className = `ow-dev${isSelected ? ' ow-on' : ''}`;
+        const tile = document.createElement('span');
+        tile.className = 'ow-tile';
+        tile.append(icon(CARD_ICONS[c.type] ?? 'layout', 18));
+        const col = document.createElement('span');
+        col.className = 'ow-nm';
+        const nameEl = document.createElement('b');
         nameEl.textContent = c.name;
-        const subEl = document.createElement('div');
-        subEl.style.cssText = `font-size:10px;color:${CARD_COLORS[c.type] ?? '#7dd3fc'};opacity:0.65;line-height:1.3;`;
+        const subEl = document.createElement('span');
         subEl.textContent = `${(CARD_TYPE_LABELS[c.type] ?? (() => c.type))()} · ${c.size ?? 'medium'}`;
-        col.appendChild(nameEl); col.appendChild(subEl);
-        row.appendChild(iconEl); row.appendChild(col);
+        col.append(nameEl, subEl);
+        row.append(tile, col);
         row.addEventListener('click', () => {
           if (this.onSelectCard) this.onSelectCard(c.id);
           this._buildCardPropsSection(detailView, c, showList);
@@ -965,9 +1085,10 @@ export class EditPanel {
       label: t('addRule'),
       badge: 'BETA',
       onClick: () => this._openRuleModal(null, () => this._fillRulesList(rulesBody)),
-    });
+    }, rulesCount);
 
     const rulesBody = document.createElement('div');
+    rulesBody.className = 'ow-legacy';
     rulesBody.style.cssText = 'overflow-y:auto;flex:1;min-height:0;';
     rulesPane.appendChild(rulesBody);
     this._fillRulesList(rulesBody);
@@ -979,39 +1100,107 @@ export class EditPanel {
       label: t('addPart'),
       badge: 'BETA',
       onClick: () => this._startPartPick(),
-    });
+    }, partsCount);
     const partsBody = document.createElement('div');
+    partsBody.className = 'ow-legacy';
     partsBody.style.cssText = 'overflow-y:auto;flex:1;min-height:0;';
     partsPane.appendChild(partsBody);
     this._partsBody = partsBody;
     this._fillPartsList(partsBody);
 
-    // ── Camera pane ───────────────────────────────────────────────────
-    const cameraPane = tabPanes.get('camera')!;
-    cameraPane.style.cssText += ';overflow-y:auto;';
-    buildTabHeader(cameraPane, t('tabCamera'), t('tabCameraDesc'));
+    // ── Ambiance (lumière du jour, météo, simulation) ─────────────────
+    const weatherPane = tabPanes.get('weather')!;
+    weatherPane.style.cssText += ';overflow-y:auto;';
+    buildTabHeader(weatherPane, t('tabAmbiance'), t('tabWeatherDesc'));
+    const weatherBody = document.createElement('div');
+    weatherBody.className = 'ow-legacy';
+    weatherPane.appendChild(weatherBody);
+    this._buildWeatherTab(weatherBody);
+
+    // ── Réglages : les vues enregistrées, puis la configuration ───────
+    const settingsPane = tabPanes.get('settings')!;
+    settingsPane.style.cssText += ';overflow-y:auto;';
+    buildTabHeader(settingsPane, t('tabSettings'), t('tabSettingsDesc'));
+    const viewsSec = document.createElement('div');
+    viewsSec.dataset.sec = 'views';
+    viewsSec.style.cssText = 'padding:12px 12px 4px;border-bottom:1px solid var(--ow-line);';
+    const viewsTitle = document.createElement('div');
+    viewsTitle.style.cssText = 'font-size:13px;font-weight:700;margin:0 2px 2px;';
+    viewsTitle.textContent = t('tabCamera');
+    const viewsDesc = document.createElement('div');
+    viewsDesc.style.cssText = 'font-size:12px;color:var(--ow-muted);margin:0 2px 10px;line-height:1.4;';
+    viewsDesc.textContent = t('tabCameraDesc');
     const viewsContainer = document.createElement('div');
-    viewsContainer.style.cssText = 'padding:4px 12px 8px;';
-    cameraPane.appendChild(viewsContainer);
+    viewsContainer.className = 'ow-legacy';
+    viewsContainer.style.cssText = 'padding:0 0 8px;';
+    viewsSec.append(viewsTitle, viewsDesc, viewsContainer);
+    settingsPane.appendChild(viewsSec);
     const viewMgr = this.getViewMgr?.();
     if (viewMgr) {
       viewMgr.buildViewsSection(viewsContainer);
     }
+    const configBody = document.createElement('div');
+    configBody.className = 'ow-legacy';
+    settingsPane.appendChild(configBody);
+    this._buildConfigTab(configBody);
 
-    // ── Weather pane ──────────────────────────────────────────────────
-    const weatherPane = tabPanes.get('weather')!;
-    weatherPane.style.cssText += ';overflow-y:auto;';
-    buildTabHeader(weatherPane, t('tabWeather'), t('tabWeatherDesc'));
-    this._buildWeatherTab(weatherPane);
+    applyTab(activeTab);
+    this._paintModes();
+  }
 
-    // ── Config pane ──────────────────────────────────────────────────
-    const configPane = tabPanes.get('config')!;
-    configPane.style.cssText += ';overflow-y:auto;';
-    buildTabHeader(configPane, t('tabConfig'), t('tabConfigDesc'));
-    this._buildConfigTab(configPane);
-
-    // Activate default tab
-    switchTab(activeTab);
+  /** Une ligne de la liste des appareils. */
+  private _anchorRow(
+    key: string,
+    a: EditableAnchor,
+    selected: boolean,
+    detailView: HTMLDivElement,
+    showDetail: () => void,
+    showList: () => void,
+  ): HTMLElement {
+    const hass = this.getHass();
+    const st = a.entity ? hass?.states[a.entity] : undefined;
+    const domain = a.entity.split('.')[0];
+    const row = document.createElement('div');
+    row.className = `ow-dev${selected ? ' ow-on' : ''}${a.hidden ? ' ow-off' : ''}`;
+    row.tabIndex = 0;
+    row.setAttribute('role', 'button');
+    const tile = document.createElement('span');
+    tile.className = `ow-tile${domain === 'light' && st?.state === 'on' ? ' ow-lit' : ''}`;
+    tile.append(icon(anchorIcon(a), 18));
+    const col = document.createElement('span');
+    col.className = 'ow-nm';
+    const name = document.createElement('b');
+    name.textContent = anchorTitle(a);
+    const sub = document.createElement('span');
+    sub.textContent = st ? stateLabel(a.entity, st.state, st.attributes ?? {}) : anchorSubtitle(a);
+    sub.title = a.entity;
+    col.append(name, sub);
+    const btns = document.createElement('span');
+    btns.className = 'ow-rowbtns';
+    const eye = document.createElement('button');
+    eye.type = 'button';
+    eye.className = 'ow-ib';
+    eye.title = a.hidden ? t('anchorShow') : t('anchorHide');
+    eye.setAttribute('aria-label', eye.title);
+    eye.append(icon(a.hidden ? 'eyeOff' : 'eye', 16));
+    eye.addEventListener('click', (e) => { e.stopPropagation(); this.getEditor()?.updateAnchor(key, { hidden: !a.hidden }); this.scheduleAutoSave(); });
+    const dup = document.createElement('button');
+    dup.type = 'button';
+    dup.className = 'ow-ib';
+    dup.title = t('anchorDup');
+    dup.setAttribute('aria-label', dup.title);
+    dup.append(icon('copy', 16));
+    dup.addEventListener('click', (e) => { e.stopPropagation(); this.getEditor()?.selectAnchor(key); this.getEditor()?.duplicate(); });
+    btns.append(eye, dup);
+    row.append(tile, col, btns);
+    const open = () => {
+      this.getEditor()?.selectAnchor(key);
+      this._buildPropsSection(detailView, key, this.getEditor()!.anchors.get(key)!, showList);
+      showDetail();
+    };
+    row.addEventListener('click', open);
+    row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+    return row;
   }
 
   private _buildConfigTab(container: HTMLElement) {
@@ -2676,8 +2865,8 @@ export class EditPanel {
       bar.id = 'editor-status-bar';
       Object.assign(bar.style, {
         position: 'absolute',
-        bottom: '48px',
-        left: '50%',
+        bottom: '16px',
+        left: 'calc(50% - var(--ow-dock, 0px) / 2)',
         transform: 'translateX(-50%)',
         background: 'rgba(0,0,0,0.75)',
         color: '#fff',

@@ -30,7 +30,7 @@
     callWS: async (msg) => {
       if (msg.type === 'owlnest/load_scene') {
         if (saved) return saved;
-        throw new Error('scène absente');
+        throw Object.assign(new Error('scène absente'), { code: 'not_found' });
       }
       if (msg.type === 'owlnest/save_scene') { saved = msg.data; return { success: true }; }
       if (msg.type === 'owlnest/list_scenes') return { scenes: saved ? ['main'] : [] };

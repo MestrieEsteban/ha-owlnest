@@ -98,6 +98,12 @@ export interface PlanEditorOptions {
   importSh3d?: () => void;
   /** Envoie un meuble importé (GLB, ou OBJ et ses fichiers) et rend son adresse. */
   importFurniture?: (files: File[]) => Promise<string>;
+  /**
+   * Les onglets de l'éditeur de la maison : le plan en est un. Toucher un autre
+   * onglet le quitte pour l'éditeur, sans repasser par la carte.
+   */
+  navTabs?: { id: string; label: string; icon: string }[];
+  onNavTab?: (id: string) => void;
   onClose: () => void;
 }
 
@@ -235,10 +241,35 @@ export class PlanEditor {
       'transition:width .25s ease',
     ].join(';'));
 
-    const top = el('div', `display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid ${C.line};min-height:44px;box-sizing:border-box;`);
+    const top = el('div', `display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid ${C.line};min-height:52px;box-sizing:border-box;container-type:inline-size;`);
+    top.className = 'owp-top';
     const title = el('div', 'font-weight:700;font-size:14px;color:#7dd3fc;display:flex;align-items:center;gap:8px;white-space:nowrap;');
     title.append(icon('pencil', 18), document.createTextNode(t('planTitle')));
-    this.modeBar = el('div', `display:flex;background:${C.chrome2};border:1px solid ${C.line};border-radius:10px;padding:3px;gap:2px;`);
+    // Ouvert depuis l'éditeur de la maison : ses onglets remplacent le titre.
+    if (opts.navTabs?.length) {
+      title.innerHTML = '';
+      title.style.cssText = `display:flex;gap:2px;padding:3px;border-radius:11px;background:${C.chrome2};border:1px solid ${C.line};min-width:0;overflow-x:auto;scrollbar-width:none;`;
+      title.setAttribute('role', 'tablist');
+      for (const tab of opts.navTabs) {
+        const on = tab.id === 'plan';
+        const b = el('button', [
+          'display:flex', 'align-items:center', 'gap:6px', 'padding:6px 10px', 'border-radius:8px', 'border:none', 'cursor:pointer',
+          `font-family:${FONT}`, 'font-size:12.5px', 'font-weight:600', 'white-space:nowrap', 'flex-shrink:0',
+          on ? 'background:#0ea5e9;color:#fff' : `background:transparent;color:${C.muted}`,
+        ].join(';'));
+        b.setAttribute('role', 'tab');
+        b.setAttribute('aria-selected', String(on));
+        b.title = tab.label;
+        b.append(icon(tab.icon, 16), el('span', '', tab.label));
+        if (!on) b.addEventListener('click', () => opts.onNavTab?.(tab.id));
+        title.append(b);
+      }
+      const st = document.createElement('style');
+      st.textContent = '@container (max-width: 980px) { .owp-top [role=tablist] span { display: none; } } @container (max-width: 640px) { .owp-top .owp-modes span { display: none; } }';
+      top.append(st);
+    }
+    this.modeBar = el('div', `display:flex;background:${C.chrome2};border:1px solid ${C.line};border-radius:10px;padding:3px;gap:2px;flex-shrink:0;`);
+    this.modeBar.className = 'owp-modes';
     this.undoBtn = this.iconButton('undo', t('planUndo'), () => this.undo());
     this.redoBtn = this.iconButton('redo', t('planRedo'), () => this.redo());
     const done = this.pill(t('planDone'), () => this.close(), true, 'check');
@@ -477,7 +508,8 @@ export class PlanEditor {
         `font-family:${FONT}`, 'font-size:12px', 'font-weight:600',
         on ? 'background:#0ea5e9;color:#fff' : `background:transparent;color:${C.muted}`,
       ].join(';'));
-      b.append(icon(ic, 16), document.createTextNode(t(label)));
+      b.title = t(label);
+      b.append(icon(ic, 16), el('span', '', t(label)));
       b.addEventListener('click', () => this.setMode(mode));
       this.modeBar.append(b);
     }

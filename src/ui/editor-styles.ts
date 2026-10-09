@@ -1,0 +1,94 @@
+/**
+ * L'habillage de l'éditeur (ancres, ouvrants, règles, ambiance, réglages) :
+ * celui de l'éditeur de plan. Barre d'onglets en haut, panneau à droite, le
+ * reste de la carte pour la 3D.
+ */
+import { EDITOR_VARS, FONT } from './theme';
+
+/** Hauteur de la barre du haut, en pixels : le panneau commence dessous. */
+export const BAR_H = 52;
+/** Largeur du panneau ancré. */
+export const PANEL_W = 340;
+
+export const EDITOR_STYLES = `
+.ow-ed { ${EDITOR_VARS}; font-family: ${FONT}; color: var(--ow-text); }
+.ow-ed *, .ow-ed *::before, .ow-ed *::after { box-sizing: border-box; }
+.ow-edbar { position: absolute; top: 0; left: 0; right: 0; height: ${BAR_H}px; z-index: 25; pointer-events: auto; display: flex; align-items: center;
+  gap: 10px; padding: 0 10px; background: var(--ow-chrome); border-bottom: 1px solid var(--ow-line); min-width: 0; }
+.ow-edtitle { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; color: #7dd3fc; white-space: nowrap; flex-shrink: 0; }
+.ow-tabs { display: flex; gap: 2px; padding: 3px; border-radius: 11px; background: var(--ow-chrome2); border: 1px solid var(--ow-line);
+  overflow-x: auto; scrollbar-width: none; min-width: 0; margin-inline: auto; }
+.ow-tabs::-webkit-scrollbar { display: none; }
+.ow-tab { display: flex; align-items: center; gap: 6px; font: 600 12.5px ${FONT}; padding: 6px 11px; border-radius: 8px; border: none;
+  background: transparent; color: var(--ow-muted); cursor: pointer; white-space: nowrap; flex-shrink: 0; }
+.ow-tab:hover { color: var(--ow-text); }
+.ow-tab.ow-on { background: var(--ow-acc); color: var(--ow-acc-ink); }
+.ow-edact { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.ow-edact .ow-ib { width: 34px; height: 34px; border-radius: 9px; border: 1px solid var(--ow-line); background: var(--ow-chrome2); }
+.ow-edact .ow-ib:disabled { opacity: .35; cursor: default; }
+.ow-save { font-size: 11px; white-space: nowrap; color: #22c55e; }
+.ow-edpanel { position: absolute; top: ${BAR_H}px; right: 0; bottom: 0; width: ${PANEL_W}px; z-index: 15; pointer-events: auto; display: flex;
+  flex-direction: column; background: var(--ow-chrome); border-left: 1px solid var(--ow-line); overflow: hidden; }
+.ow-edpanel.ow-narrow { width: min(${PANEL_W}px, 92%); box-shadow: var(--ow-shadow); transform: translateX(105%); transition: transform .25s ease; }
+.ow-edpanel.ow-narrow.ow-panel-open { transform: none; }
+.ow-edbar .ow-only-narrow { display: none; }
+.ow-edbar.ow-narrow .ow-only-narrow { display: inline-flex; }
+.ow-edbar.ow-narrow .ow-tab span, .ow-edbar.ow-narrow .ow-edtitle span, .ow-edbar.ow-narrow .ow-save { display: none; }
+.ow-edbar.ow-narrow .ow-tab { padding: 7px 9px; }
+
+/*
+ * Le contenu repris de l'ancien inspecteur était écrit pour un panneau de
+ * 264 px, en 9 à 11 px. Agrandi d'un bloc plutôt que réécrit ligne à ligne.
+ */
+.ow-legacy { zoom: 1.18; }
+
+/* En-tête d'un onglet */
+.ow-ph { padding: 14px 14px 10px; display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid var(--ow-line); flex-shrink: 0; }
+.ow-ph-t { display: flex; align-items: baseline; gap: 8px; }
+.ow-ph-t b { font-size: 15px; }
+.ow-ph-t .ow-n { font-size: 12px; color: var(--ow-muted); font-variant-numeric: tabular-nums; }
+.ow-ph-t .ow-beta { font-size: 9px; font-weight: 700; color: #fbbf24; border: 1px solid rgba(251,191,36,0.35); border-radius: 4px; padding: 1px 4px; }
+.ow-ph-d { font-size: 12px; color: var(--ow-muted); line-height: 1.4; margin-top: -4px; }
+.ow-acts { display: flex; gap: 6px; align-items: stretch; }
+.ow-modes { flex: 1; display: flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--ow-chrome2); border: 1px solid var(--ow-line); min-width: 0; }
+.ow-mode { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 5px 2px; border: none; border-radius: 8px;
+  background: transparent; color: var(--ow-muted); font: 600 10.5px ${FONT}; cursor: pointer; min-width: 0; }
+.ow-mode.ow-on { background: var(--ow-chrome); color: var(--ow-text); box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+.ow-mode.ow-danger.ow-on { color: #f87171; }
+.ow-acts .ow-big { flex-direction: column; gap: 2px; padding: 5px 12px; font-size: 10.5px; }
+.ow-acts .ow-big.ow-on { box-shadow: 0 0 0 2px var(--ow-chrome), 0 0 0 4px var(--ow-acc); }
+.ow-search { display: flex; align-items: center; gap: 8px; padding: 0 10px; border-radius: 10px; background: var(--ow-chrome2);
+  border: 1px solid var(--ow-line); color: var(--ow-muted); }
+.ow-search input { flex: 1; min-width: 0; border: none; background: transparent; color: var(--ow-text); font: 13px ${FONT}; padding: 8px 0; outline: none; }
+.ow-search .ow-ib { width: 28px; height: 28px; }
+
+/* Liste des appareils */
+.ow-list { overflow-y: auto; flex: 1; min-height: 0; padding: 4px 0 12px; }
+.ow-room { padding: 12px 14px 4px; display: flex; align-items: baseline; gap: 6px; }
+.ow-room b { font-size: 13px; }
+.ow-room span { font-size: 11.5px; color: var(--ow-muted); }
+.ow-dev { display: flex; align-items: center; gap: 12px; margin: 2px 8px; padding: 8px; border-radius: 12px; cursor: pointer; }
+.ow-dev:hover { background: var(--ow-chrome2); }
+.ow-dev.ow-on { background: color-mix(in srgb, var(--ow-acc) 14%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ow-acc) 55%, transparent); }
+.ow-dev.ow-off { opacity: .45; }
+.ow-tile { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; flex-shrink: 0; background: var(--ow-chrome2); color: var(--ow-muted); }
+.ow-tile.ow-lit { background: #fbbf24; color: #3b2a05; }
+.ow-dev .ow-nm { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ow-dev .ow-nm b { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ow-dev .ow-nm span { font-size: 12px; color: var(--ow-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ow-dev .ow-rowbtns { display: flex; gap: 2px; opacity: 0; transition: opacity .12s; }
+.ow-dev:hover .ow-rowbtns, .ow-dev.ow-on .ow-rowbtns, .ow-dev:focus-within .ow-rowbtns { opacity: 1; }
+.ow-dev .ow-ib { width: 30px; height: 30px; color: var(--ow-muted); }
+.ow-dev .ow-ib:hover { color: var(--ow-text); }
+.ow-empty { padding: 24px 18px; text-align: center; color: var(--ow-muted); font-size: 12.5px; line-height: 1.6; }
+.ow-empty b { display: block; color: var(--ow-text); font-size: 14px; margin-bottom: 4px; }
+.ow-warn { padding: 8px 14px; font-size: 11.5px; color: #f59e0b; background: rgba(245,158,11,0.08); border-bottom: 1px solid rgba(245,158,11,0.18); line-height: 1.5; }
+.ow-popmenu { position: absolute; z-index: 40; padding: 6px; min-width: 210px; display: flex; flex-direction: column; gap: 2px;
+  background: var(--ow-chrome); border: 1px solid var(--ow-line); border-radius: 12px; box-shadow: var(--ow-shadow); pointer-events: auto; }
+.ow-popmenu button { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: none; border-radius: 8px; background: transparent;
+  color: var(--ow-text); font: 13px ${FONT}; cursor: pointer; text-align: left; }
+.ow-popmenu button:hover { background: var(--ow-chrome2); }
+.ow-keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; padding: 8px 10px; font-size: 12.5px; align-items: center; }
+.ow-keys kbd { font: 600 11px ${FONT}; background: var(--ow-chrome2); border: 1px solid var(--ow-line); border-radius: 5px; padding: 2px 6px; color: var(--ow-text); justify-self: start; white-space: nowrap; }
+.ow-keys span { color: var(--ow-muted); }
+`;
