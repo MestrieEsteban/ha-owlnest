@@ -50,6 +50,8 @@ import { syncPlanParts } from './plan/parts';
 import { emptyPlan, type PlanDoc, type OpeningKind } from './plan/types';
 import { PlanEditor } from './plan/editor-ui';
 import { migratePlan } from './plan/migrate';
+import { placeFurniture, bulbPosition } from './plan/furniture';
+import { catalogItem } from './plan/catalog';
 import { createUniforms, instrumentMaterials, updateXray, createGhost } from './cutaway';
 import type { CutawayUniforms } from './cutaway';
 import { evalCondition, RuleEngine } from './rules/engine';
@@ -478,6 +480,51 @@ export class Ha3dFloorplan extends HTMLElement {
     for (const c of [...fresh.children]) root.add(c);
     root.updateMatrixWorld(true);
     this._afterPlanBuilt(root);
+    this._placeFurniture(root, plan);
+  }
+
+  /**
+   * Les meubles arrivent après la maison : leurs modèles se chargent à part.
+   * Une fois posés, les lampes reliées à Home Assistant deviennent des ancres.
+   */
+  private _placeFurniture(root: THREE.Object3D, plan: PlanDoc) {
+    if (!plan.items?.length) { this._syncLampAnchors(root, plan); return; }
+    void placeFurniture(plan, root, () => {
+      if (root !== this._modelRoot) return;
+      root.updateMatrixWorld(true);
+      this._syncLampAnchors(root, plan);
+      this._requestShadowUpdate();
+      this._requestRender();
+    });
+  }
+
+  /**
+   * Une lampe posée sur le plan et reliée à une lumière de Home Assistant est
+   * une ancre comme une autre : elle éclaire la pièce quand l'ampoule est
+   * allumée, et un appui dessus la commande. Le plan reste la source : ces
+   * ancres (`plan_lamp_…`) suivent la lampe quand on la déplace.
+   */
+  private _syncLampAnchors(root: THREE.Object3D, plan: PlanDoc) {
+    if (!this._scene) return;
+    const prefix = 'plan_lamp_';
+    const all = this._scene.anchors ?? [];
+    const before = new Map(all.filter((a) => a.id.startsWith(prefix)).map((a) => [a.id, a]));
+    const mine = (plan.items ?? [])
+      .filter((i) => i.entity && catalogItem(i.model)?.light)
+      .map((i) => {
+        const p = root.localToWorld(new THREE.Vector3(...bulbPosition(plan, i)));
+        const prev = before.get(prefix + i.id);
+        return {
+          ...prev,
+          id: prefix + i.id,
+          entity: i.entity!,
+          position: [p.x, p.y, p.z].map((v) => Math.round(v * 1000) / 1000) as [number, number, number],
+        };
+      });
+    const next = [...all.filter((a) => !a.id.startsWith(prefix)), ...mine];
+    if (JSON.stringify(next) === JSON.stringify(all)) return;
+    this._scene = { ...this._scene, anchors: next };
+    this._rebuildAnchors();
   }
 
   /** Bornes, ouvrants, ombres et rendu, après une (re)construction du plan. */
@@ -529,6 +576,10 @@ export class Ha3dFloorplan extends HTMLElement {
         this.applyPlan(plan);
         this._schedulePlanSave(800);
       },
+      lights: () => Object.entries(this._hass?.states ?? {})
+        .filter(([id]) => /^(light|switch)\./.test(id))
+        .map(([id, st]) => ({ id, name: String(st.attributes?.friendly_name ?? id) }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
       onLayout: (covered) => {
         this._viewShift = covered;
         this._applyViewShift();
@@ -3215,6 +3266,7 @@ export class Ha3dFloorplan extends HTMLElement {
     }
 
     this._batch = new StaticBatch(model);
+    if (plan) this._placeFurniture(model, plan);
     if (plan && this._syncPlanPartsAfterLoad && this._scene) {
       this._syncPlanPartsAfterLoad = false;
       this._scene = {

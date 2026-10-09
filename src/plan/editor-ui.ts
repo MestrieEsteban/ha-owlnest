@@ -13,7 +13,7 @@
  */
 
 import { t, getLang, type StringKey } from '../i18n';
-import type { PlanDoc, PlanOpening, OpeningKind, PlanWall, FloorMaterial, DoorStyle, WindowStyle } from './types';
+import type { PlanDoc, PlanOpening, OpeningKind, PlanWall, FloorMaterial, DoorStyle, WindowStyle, PlanItem } from './types';
 import { OPENING_DEFAULTS, PLAN_COLORS } from './types';
 import {
   type Pt, sub, add, mul, dot, dist, norm, perp, project, insidePoint, pointInPolygon, clipAlong, round3,
@@ -25,17 +25,20 @@ import {
 } from './graph';
 import { wallFootprints } from './footprint';
 import { TEMPLATES, templatePlan, type TemplateId } from './templates';
+import { CATALOG, CATEGORIES, catalogItem, itemLabel, thumbUrl, type ItemCategory } from './catalog';
+import { loadFurniture, itemSize, topView, furnitureTints, type Tintable } from './furniture';
 import {
   ROOM_TYPES, FLOOR_COLORS, WALL_COLORS, DOOR_COLORS, FRAME_COLORS, FLOOR_MATERIALS, type RoomType,
 } from './rooms';
 
-type Tool = 'select' | 'room' | 'wall' | OpeningKind | 'erase' | 'calibrate' | 'image';
+type Tool = 'select' | 'room' | 'wall' | OpeningKind | 'furniture' | 'erase' | 'calibrate' | 'image';
 type ViewMode = 'plan' | 'split' | '3d';
 type Hit =
   | { type: 'node'; id: string }
   | { type: 'wall'; id: string }
   | { type: 'opening'; id: string }
-  | { type: 'room'; id: string };
+  | { type: 'room'; id: string }
+  | { type: 'item'; id: string };
 type Guide = { x?: number; y?: number };
 
 const SVG = 'http://www.w3.org/2000/svg';
@@ -75,6 +78,8 @@ export interface PlanEditorOptions {
   onChange: (plan: PlanDoc) => void;
   /** Largeur couverte à gauche, en pixels : la 3D occupe le reste. */
   onLayout: (covered: number) => void;
+  /** Les lampes de Home Assistant, pour en relier une à une lampe posée. */
+  lights?: () => { id: string; name: string }[];
   onClose: () => void;
 }
 
@@ -134,6 +139,12 @@ const ICONS: Record<string, string> = {
   split: '<rect x="3" y="5" width="18" height="14" rx="1.5"/><path d="M12 5v14"/>',
   plan: '<rect x="3" y="5" width="18" height="14" rx="1.5"/><path d="M3 12h9v7M12 5v4"/>',
   sparkle: '<path d="M12 3l2 6 6 2-6 2-2 6-2-6-6-2 6-2z"/>',
+  sofa: '<path d="M5 11V8a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v3"/><path d="M3 13a2 2 0 0 1 4 0v2h10v-2a2 2 0 0 1 4 0v5H3z"/><path d="M5 18v2M19 18v2"/>',
+  rotl: '<path d="M4 12a8 8 0 1 0 3-6.2"/><path d="M4 4v4h4"/>',
+  rotr: '<path d="M20 12a8 8 0 1 1-3-6.2"/><path d="M20 4v4h-4"/>',
+  copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
+  bulb: '<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-4 10.5c.8.8 1 1.5 1 2.5h6c0-1 .2-1.7 1-2.5A6 6 0 0 0 12 3z"/>',
+  search: '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>',
 };
 
 function icon(name: string, size = 22): SVGSVGElement {
@@ -159,6 +170,7 @@ const TOOLS: { tool: Tool; icon: string; label: StringKey; key: string }[] = [
   { tool: 'window', icon: 'window', label: 'planToolWindow', key: 'f' },
   { tool: 'slider', icon: 'slider', label: 'planToolSlider', key: 'b' },
   { tool: 'passage', icon: 'passage', label: 'planToolPassage', key: 'o' },
+  { tool: 'furniture', icon: 'sofa', label: 'planToolFurniture', key: 'n' },
   { tool: 'erase', icon: 'erase', label: 'planToolErase', key: 'e' },
 ];
 
@@ -212,6 +224,7 @@ export class PlanEditor {
     | { kind: 'wall'; id: string; from: Pt; normal: Pt; orig: Map<string, Pt>; shapes: Map<string, string[]>; detached: boolean }
     | { kind: 'room'; id: string; from: Pt; orig: Map<string, Pt>; shapes: Map<string, string[]> }
     | { kind: 'opening'; id: string; grab: number }
+    | { kind: 'item'; id: string; grab: Pt }
     | { kind: 'rect'; a: Pt; b: Pt }
     | { kind: 'image'; from: Pt; ox: number; oy: number }
     | null = null;
@@ -227,6 +240,12 @@ export class PlanEditor {
   private pinch: { d: number; scale: number; mid: Pt } | null = null;
   private longPress: ReturnType<typeof setTimeout> | null = null;
   private roomCounter = 0;
+  /** Le catalogue de meubles : sa catégorie ouverte et la recherche. */
+  private drawer: HTMLDivElement | null = null;
+  private shelf: ItemCategory | 'all' = 'living';
+  private search = '';
+  /** Vues de dessus déjà rendues, par meuble. */
+  private tops = new Map<string, string>();
   /** Les réglages généraux restent repliés tant qu'on ne les demande pas. */
   private showSettings = false;
 
@@ -383,6 +402,7 @@ export class PlanEditor {
     if (h.type === 'node') return !!nodeOf(this.plan, h.id);
     if (h.type === 'wall') return this.plan.walls.some((w) => w.id === h.id);
     if (h.type === 'opening') return this.plan.openings.some((o) => o.id === h.id);
+    if (h.type === 'item') return (this.plan.items ?? []).some((i) => i.id === h.id);
     return this.plan.rooms.some((r) => r.id === h.id);
   }
 
@@ -412,7 +432,7 @@ export class PlanEditor {
       e.preventDefault();
       if (this.popup) this.closePopup();
       else if (this.chain) { this.endChain(); }
-      else if (this.tool !== 'select') this.setTool('select');
+      else if (this.tool !== 'select' && this.tool !== 'furniture') this.setTool('select');
       else { this.sel = null; this.refresh(); }
       return;
     }
@@ -487,7 +507,7 @@ export class PlanEditor {
       b.title = `${t(label)} (${key.toUpperCase()})`;
       b.append(icon(ic, 24), el('span', '', t(label)));
       b.addEventListener('click', () => this.setTool(tool));
-      if (tool === 'door' || tool === 'erase') this.rail.append(el('div', `height:1px;background:${C.line};margin:4px 6px;`));
+      if (tool === 'door' || tool === 'furniture' || tool === 'erase') this.rail.append(el('div', `height:1px;background:${C.line};margin:4px 6px;`));
       this.rail.append(b);
     }
   }
@@ -500,13 +520,20 @@ export class PlanEditor {
     this.guides = [];
     this.svg.style.cursor = tool === 'select' ? 'default' : tool === 'image' ? 'move' : tool === 'erase' ? 'pointer' : 'crosshair';
     this.buildRail();
+    this.renderDrawer();
     this.refresh();
+  }
+
+  /** Outils où l'on attrape et tire ce qui est dessiné. */
+  private get picking() {
+    return this.tool === 'select' || this.tool === 'furniture';
   }
 
   private hint() {
     let key: StringKey;
     switch (this.tool) {
       case 'select': key = this.sel ? 'planHintSelected' : 'planHintSelect'; break;
+      case 'furniture': key = 'planHintFurniture'; break;
       case 'room': key = 'planHintRoom'; break;
       case 'wall': key = this.chain?.pts.length ? 'planHintWall2' : 'planHintWall'; break;
       case 'erase': key = 'planHintErase'; break;
@@ -637,6 +664,9 @@ export class PlanEditor {
       const n = nodeAt(this.plan, p, tol);
       if (n) return { type: 'node', id: n.id };
     }
+    // Les meubles, du plus petit au plus grand : on attrape la lampe posée sur la table.
+    const items = [...(this.plan.items ?? [])].sort((a, b) => { const sa = itemSize(a), sb = itemSize(b); return sa.w * sa.d - sb.w * sb.d; });
+    for (const it of items) if (this.inItem(it, p, tol * 0.3)) return { type: 'item', id: it.id };
     const w = wallAt(this.plan, p, tol * 0.8);
     if (w) return { type: 'wall', id: w.wall.id };
     const r = roomAtPoint(this.plan, p, this.all);
@@ -735,6 +765,9 @@ export class PlanEditor {
       const w = this.plan.walls.find((q) => q.id === o.wall)!;
       const [a, b] = wallEnds(this.plan, w);
       this.drag = { kind: 'opening', id: h.id, grab: dot(sub(p, a), norm(sub(b, a))) - o.offset };
+    } else if (h.type === 'item') {
+      const it = this.item(h.id)!;
+      this.drag = { kind: 'item', id: h.id, grab: sub(p, it) };
     } else {
       const face = this.all.find((f) => f.nodes.length && pointInPolygon(this.plan.rooms.find((r) => r.id === h.id)!.seed, f.poly));
       // Une pièce seule (aucun mur partagé) se déplace d'un bloc ; une pièce
@@ -779,11 +812,11 @@ export class PlanEditor {
 
     if (!d) {
       this.guides = [];
-      if (this.tool === 'select' || this.tool === 'erase') {
+      if (this.picking || this.tool === 'erase') {
         const h = this.hitAt(p);
         if (!this.same(h, this.hover)) { this.hover = h; this.render(); }
         this.svg.style.cursor = this.tool === 'erase' ? (h ? 'pointer' : 'default')
-          : h?.type === 'node' || h?.type === 'opening' ? 'grab'
+          : h?.type === 'node' || h?.type === 'opening' || h?.type === 'item' ? 'grab'
             : h?.type === 'wall' ? this.wallCursor(h.id) : 'default';
         return;
       }
@@ -878,6 +911,11 @@ export class PlanEditor {
           this.plan.background.y = d.oy + p.y - d.from.y;
         }
         break;
+      case 'item': {
+        const it = this.item(d.id);
+        if (it) this.moveItem(it, sub(p, d.grab));
+        break;
+      }
     }
     this.render();
   }
@@ -950,9 +988,9 @@ export class PlanEditor {
         if (r) { this.sel = { type: 'room', id: r.roomId }; this.refresh(); }
         return;
       }
-      case 'node': case 'wall': case 'room': case 'opening': case 'image':
+      case 'node': case 'wall': case 'room': case 'opening': case 'image': case 'item':
         if (!this.moved) { this.history.pop(); this.refresh(); return; }
-        if (d.kind !== 'opening' && d.kind !== 'image') {
+        if (d.kind !== 'opening' && d.kind !== 'image' && d.kind !== 'item') {
           settle(this.plan);
           this.all = faces(this.plan);
           reseedRooms(this.plan, d.shapes, this.all);
@@ -974,12 +1012,13 @@ export class PlanEditor {
 
   private onDouble(e: MouseEvent) {
     if (this.tool === 'wall') { this.endChain(); return; }
-    if (this.tool !== 'select') return;
+    if (!this.picking) return;
     const p = this.toPlan(e);
     const h = this.hitAt(p);
     if (h?.type === 'room') this.rename(h.id);
     else if (h?.type === 'wall') this.addCorner(h.id, p);
     else if (h?.type === 'opening') this.flipOpening(h.id, 'swing');
+    else if (h?.type === 'item') this.rotateItem(h.id, 90);
   }
 
   // ── Actions ──────────────────────────────────────────────────────────────
@@ -1068,6 +1107,8 @@ export class PlanEditor {
     this.commit();
     if (h.type === 'opening') {
       this.plan.openings = this.plan.openings.filter((o) => o.id !== h.id);
+    } else if (h.type === 'item') {
+      this.plan.items = (this.plan.items ?? []).filter((i) => i.id !== h.id);
     } else if (h.type === 'wall') {
       removeWall(this.plan, h.id);
     } else if (h.type === 'node') {
@@ -1240,6 +1281,11 @@ export class PlanEditor {
     } else if (h?.type === 'node') {
       this.sel = h;
       items.push(['trash', t('planDeleteCorner'), () => this.remove(h), true]);
+    } else if (h?.type === 'item') {
+      this.sel = h;
+      items.push(['rotr', t('planRotate'), () => this.rotateItem(h.id, 90)]);
+      items.push(['copy', t('planDuplicate'), () => this.duplicateItem(h.id)]);
+      items.push(['trash', t('planDelete'), () => this.remove(h), true]);
     } else {
       items.push(['room', t('planToolRoom'), () => this.setTool('room')]);
       items.push(['wall', t('planToolWall'), () => this.setTool('wall')]);
@@ -1353,6 +1399,9 @@ export class PlanEditor {
       }
     }
 
+    // Meubles, vus de dessus.
+    for (const it of plan.items ?? []) this.drawItem(svg, it, px);
+
     // Cotes de chaque mur, côté extérieur.
     const showDims = plan.walls.length < 400;
     if (showDims) for (const wall of plan.walls) this.drawDim(svg, wall, px);
@@ -1379,7 +1428,7 @@ export class PlanEditor {
     }
 
     // Coins : visibles en sélection, pour qu'on sache qu'on peut les tirer.
-    if (this.tool === 'select' || this.tool === 'wall' || this.tool === 'erase') {
+    if (this.picking || this.tool === 'wall' || this.tool === 'erase') {
       for (const n of plan.nodes) {
         const hit = { type: 'node' as const, id: n.id };
         const on = this.same(this.sel, hit), hov = this.same(this.hover, hit);
@@ -1574,10 +1623,234 @@ export class PlanEditor {
     svg.append(g);
   }
 
+  // ── Meubles ──────────────────────────────────────────────────────────────
+
+  private item(id: string): PlanItem | undefined {
+    return (this.plan.items ?? []).find((i) => i.id === id);
+  }
+
+  /** Le point est-il sur ce meuble (rectangle tourné) ? */
+  private inItem(it: PlanItem, p: Pt, margin = 0): boolean {
+    const { w, d } = itemSize(it);
+    const a = (it.rotation * Math.PI) / 180;
+    const v = sub(p, it);
+    const lx = v.x * Math.cos(a) + v.y * Math.sin(a), ly = -v.x * Math.sin(a) + v.y * Math.cos(a);
+    return Math.abs(lx) <= w / 2 + margin && Math.abs(ly) <= d / 2 + margin;
+  }
+
+  /**
+   * Déplace un meuble. Près d'un mur, il s'y adosse : il se tourne dos au mur
+   * et s'y colle. Ailleurs, il suit le doigt au pas de 5 cm.
+   */
+  private moveItem(it: PlanItem, to: Pt) {
+    const { d } = itemSize(it);
+    const reach = Math.max(0.35, d / 2 + 0.25);
+    let best: { w: PlanWall; pr: ReturnType<typeof project>; a: Pt; b: Pt } | null = null;
+    for (const w of this.plan.walls) {
+      const [a, b] = wallEnds(this.plan, w);
+      const pr = project(to, a, b);
+      if (pr.t <= 0 || pr.t >= 1) continue;
+      const gap = pr.d - thicknessOf(this.plan, w) / 2 - d / 2;
+      if (Math.abs(gap) < reach - d / 2 && (!best || pr.d < best.pr.d)) best = { w, pr, a, b };
+    }
+    if (best) {
+      const dir = norm(sub(best.b, best.a));
+      let n = perp(dir);
+      if (dot(sub(to, best.pr.p), n) < 0) n = mul(n, -1);
+      // L'avant du meuble regarde la pièce : l'arrière touche le mur.
+      it.rotation = Math.round((Math.atan2(-n.x, n.y) * 180) / Math.PI);
+      const c = add(best.pr.p, mul(n, thicknessOf(this.plan, best.w) / 2 + d / 2 + 0.005));
+      const along = dot(sub(to, best.pr.p), dir);
+      const q = add(c, mul(dir, along));
+      it.x = round3(q.x); it.y = round3(q.y);
+      this.guides = [];
+      return;
+    }
+    it.x = round3(Math.round(to.x / STEP) * STEP);
+    it.y = round3(Math.round(to.y / STEP) * STEP);
+  }
+
+  private rotateItem(id: string, deg: number) {
+    const it = this.item(id);
+    if (!it) return;
+    this.commit();
+    it.rotation = (((it.rotation + deg) % 360) + 360) % 360;
+    this.changed();
+  }
+
+  private duplicateItem(id: string) {
+    const it = this.item(id);
+    if (!it) return;
+    this.commit();
+    const { w } = itemSize(it);
+    const a = (it.rotation * Math.PI) / 180;
+    const copy: PlanItem = { ...JSON.parse(JSON.stringify(it)), id: newId('i'), x: round3(it.x + Math.cos(a) * (w + 0.05)), y: round3(it.y + Math.sin(a) * (w + 0.05)) };
+    delete copy.entity;
+    this.plan.items = [...(this.plan.items ?? []), copy];
+    this.sel = { type: 'item', id: copy.id };
+    this.changed();
+  }
+
+  /** Pose un meuble du catalogue au milieu de la vue, dans la pièce qui s'y trouve. */
+  private async addItem(model: string) {
+    try {
+      await loadFurniture(model);
+    } catch {
+      this.flash(t('planFurnitureError'));
+      return;
+    }
+    this.commit();
+    const { w, h } = this.box();
+    // Le milieu de ce qui est visible, à gauche de la bulle de réglages.
+    const at = this.toPlan({ clientX: this.box().left + (w - 270) / 2 + 135, clientY: this.box().top + h / 2 });
+    const it: PlanItem = { id: newId('i'), model, x: round3(at.x), y: round3(at.y), rotation: 0 };
+    this.plan.items = [...(this.plan.items ?? []), it];
+    this.sel = { type: 'item', id: it.id };
+    this.changed();
+  }
+
+  private drawItem(svg: SVGElement, it: PlanItem, px: (n: number) => number) {
+    const { w, d } = itemSize(it);
+    const hit = { type: 'item' as const, id: it.id };
+    const sel = this.same(this.sel, hit), hov = this.same(this.hover, hit);
+    const g = svgEl('g', { transform: `translate(${it.x} ${it.y}) rotate(${it.rotation})` });
+    const key = `${it.model}|${JSON.stringify(it.colors ?? {})}`;
+    const url = this.tops.get(key);
+    if (url) {
+      g.append(svgEl('image', { href: url, x: -w / 2, y: -d / 2, width: w, height: d, preserveAspectRatio: 'none' }));
+    } else {
+      g.append(svgEl('rect', { x: -w / 2, y: -d / 2, width: w, height: d, rx: px(3), fill: '#e5e7eb', stroke: '#9ca3af', 'stroke-width': px(1) }));
+      if (!this.tops.has(key)) {
+        this.tops.set(key, '');
+        void topView(it).then((u) => { if (u) { this.tops.set(key, u); this.render(); } });
+      }
+    }
+    if (sel || hov) {
+      const color = this.tool === 'erase' ? C.danger : sel ? C.select : C.hover;
+      g.append(svgEl('rect', {
+        x: -w / 2 - px(3), y: -d / 2 - px(3), width: w + px(6), height: d + px(6), rx: px(4), fill: 'none',
+        stroke: color, 'stroke-width': px(2), 'stroke-dasharray': sel ? 'none' : `${px(5)} ${px(3)}`,
+      }));
+      // L'avant du meuble : une petite flèche.
+      if (sel) g.append(svgEl('path', { d: `M ${-px(6)} ${d / 2 + px(6)} L 0 ${d / 2 + px(12)} L ${px(6)} ${d / 2 + px(6)}`, fill: 'none', stroke: color, 'stroke-width': px(2) }));
+    }
+    if (it.entity) g.append(svgEl('circle', { cx: 0, cy: 0, r: px(5), fill: '#facc15', stroke: '#fff', 'stroke-width': px(1.5) }));
+    svg.append(g);
+  }
+
+  /** Le tiroir du catalogue, à gauche du plan, quand l'outil Meubles est pris. */
+  private renderDrawer() {
+    if (this.tool !== 'furniture') { this.drawer?.remove(); this.drawer = null; return; }
+    if (!this.drawer) {
+      this.drawer = el('div', [
+        'position:absolute', 'left:0', 'top:0', 'bottom:0', 'width:236px', `background:${C.chrome}`,
+        `border-right:1px solid ${C.line}`, 'display:flex', 'flex-direction:column', 'z-index:3', 'box-shadow:6px 0 18px rgba(0,0,0,0.18)',
+      ].join(';'));
+      this.stage.append(this.drawer);
+    }
+    const box = this.drawer;
+    box.innerHTML = '';
+    const head = el('div', 'padding:10px 10px 6px;');
+    const search = el('div', `display:flex;align-items:center;gap:6px;background:${C.chrome2};border:1px solid rgba(255,255,255,0.12);border-radius:9px;padding:0 8px;color:${C.muted};`);
+    const input = el('input', `flex:1;min-width:0;background:transparent;border:none;color:#fff;padding:8px 0;font-size:13px;font-family:${FONT};outline:none;`);
+    input.placeholder = t('planFurnitureSearch');
+    input.value = this.search;
+    input.addEventListener('keydown', (e) => e.stopPropagation());
+    input.addEventListener('input', () => { this.search = input.value; this.renderShelf(list); });
+    search.append(icon('search', 16), input);
+    const cats = el('div', 'display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;');
+    const CAT: Record<ItemCategory | 'all', StringKey> = {
+      all: 'planCatAll', living: 'planCatLiving', bedroom: 'planCatBedroom', kitchen: 'planCatKitchen',
+      bathroom: 'planCatBathroom', office: 'planCatOffice', lights: 'planCatLights', decor: 'planCatDecor',
+    };
+    for (const c of ['all', ...CATEGORIES] as (ItemCategory | 'all')[]) {
+      const on = c === this.shelf;
+      const b = el('button', `padding:4px 8px;border-radius:999px;cursor:pointer;font-size:11px;font-family:${FONT};font-weight:600;border:1px solid ${on ? '#38bdf8' : 'rgba(255,255,255,0.1)'};background:${on ? '#0ea5e9' : 'transparent'};color:${on ? '#fff' : '#cbd5e1'};`, t(CAT[c]));
+      b.addEventListener('click', () => { this.shelf = c; this.renderDrawer(); });
+      cats.append(b);
+    }
+    head.append(search, cats);
+    const list = el('div', 'flex:1;overflow-y:auto;padding:6px 10px 10px;display:grid;grid-template-columns:1fr 1fr;gap:6px;align-content:start;');
+    this.renderShelf(list);
+    const foot = el('div', `padding:8px 12px;border-top:1px solid ${C.line};font-size:10.5px;color:#64748b;line-height:1.4;`, t('planFurnitureCredit'));
+    box.append(head, list, foot);
+  }
+
+  private renderShelf(list: HTMLElement) {
+    list.innerHTML = '';
+    const q = this.search.trim().toLowerCase();
+    const shown = CATALOG.filter((c) => (q ? `${c.en} ${c.fr}`.toLowerCase().includes(q) : this.shelf === 'all' || c.category === this.shelf));
+    for (const c of shown) {
+      const b = el('button', `display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 4px;border-radius:10px;border:1px solid transparent;background:${C.chrome2};cursor:pointer;color:#e2e8f0;font-family:${FONT};font-size:11px;line-height:1.2;text-align:center;`);
+      b.addEventListener('mouseenter', () => { b.style.borderColor = '#38bdf8'; });
+      b.addEventListener('mouseleave', () => { b.style.borderColor = 'transparent'; });
+      const img = el('img', 'width:64px;height:64px;object-fit:contain;pointer-events:none;');
+      img.src = thumbUrl(c.id);
+      img.alt = '';
+      img.loading = 'lazy';
+      b.append(img, el('span', '', itemLabel(c)));
+      if (c.light) {
+        const tag = el('span', 'display:inline-flex;align-items:center;gap:3px;color:#facc15;font-size:10px;');
+        tag.append(icon('bulb', 12), document.createTextNode('HA'));
+        b.append(tag);
+      }
+      b.addEventListener('click', () => void this.addItem(c.id));
+      list.append(b);
+    }
+    if (!shown.length) list.append(el('div', `grid-column:1/-1;color:${C.muted};font-size:12px;padding:12px 4px;`, t('planFurnitureNone')));
+  }
+
+  private itemBubble(id: string) {
+    const it = this.item(id);
+    if (!it) return;
+    const c = catalogItem(it.model);
+    this.heading(it.name || (c ? itemLabel(c) : t('planToolFurniture')), c?.light ? 'bulb' : 'sofa');
+    this.actions(
+      this.pill(t('planRotateLeft'), () => this.rotateItem(id, -90), false, 'rotl'),
+      this.pill(t('planRotateRight'), () => this.rotateItem(id, 90), false, 'rotr'),
+    );
+    this.bubble.append(el('div', 'height:8px;'));
+    this.stepper(t('planItemSize'), Math.round((it.scale ?? 1) * 100), 5, 30, 300, (v) => { it.scale = v === 100 ? undefined : v / 100; });
+    this.stepper(t('planItemElevation'), it.elevation ?? (c?.wall ?? 0), 0.05, 0, 5, (v) => { it.elevation = v; });
+    const tints = furnitureTints(it.model);
+    const FABRIC = ['#c9c2b8', '#8a8f98', '#3e4a5c', '#5b7083', '#7a9a7e', '#b5655b', '#d9a441', '#2f343b', '#e8e4dc', '#9b7bb0', '#c97b8a', '#4f6d5a'];
+    const WOOD = ['#e0c49a', '#c8a77e', '#a97c55', '#7a5a3f', '#4a3626', '#f4f4f2', '#d6d3cd', '#2f343b'];
+    const labels: Record<Tintable, StringKey> = { carpet: 'planTintFabric', carpetBlue: 'planTintFabric2', wood: 'planTintWood' };
+    for (const tint of tints) {
+      const palette = tint === 'wood' ? WOOD : FABRIC;
+      this.swatches(t(labels[tint]), palette, it.colors?.[tint], (col) => { it.colors = { ...it.colors, [tint]: col }; });
+    }
+    if (c?.light) {
+      this.bubble.append(el('div', 'color:#cbd5e1;margin:8px 0 6px;', t('planLampEntity')));
+      const select = el('select', `width:100%;background:${C.chrome2};border:1px solid rgba(255,255,255,0.14);border-radius:9px;color:#fff;padding:8px;font-size:13px;font-family:${FONT};margin-bottom:6px;`);
+      const none = el('option', '', t('planLampNone'));
+      none.value = '';
+      select.append(none);
+      for (const l of this.opts.lights?.() ?? []) {
+        const o = el('option', '', l.name);
+        o.value = l.id;
+        if (l.id === it.entity) o.selected = true;
+        select.append(o);
+      }
+      if (it.entity && !select.value) {
+        const o = el('option', '', it.entity);
+        o.value = it.entity; o.selected = true;
+        select.append(o);
+      }
+      select.addEventListener('change', () => { this.commit(); it.entity = select.value || undefined; this.changed(); });
+      this.bubble.append(select);
+      this.small(t('planLampHelp'));
+    }
+    this.actions(
+      this.pill(t('planDuplicate'), () => this.duplicateItem(id), false, 'copy'),
+      this.pill(t('planDelete'), () => this.remove({ type: 'item', id }), false, 'trash', true),
+    );
+  }
+
   // ── Écran d'accueil ──────────────────────────────────────────────────────
 
   private renderEmpty() {
-    const empty = !this.plan.walls.length && this.tool === 'select';
+    const empty = !this.plan.walls.length && !(this.plan.items ?? []).length && this.tool === 'select';
     if (!empty) { this.emptyState?.remove(); this.emptyState = null; this.bubble.style.display = ''; this.hintEl.style.display = ''; return; }
     this.bubble.style.display = 'none';
     this.hintEl.style.display = 'none';
@@ -1702,6 +1975,7 @@ export class PlanEditor {
     if (sel?.type === 'room') return this.roomBubble(sel.id);
     if (sel?.type === 'wall') return this.wallBubble(sel.id);
     if (sel?.type === 'opening') return this.openingBubble(sel.id);
+    if (sel?.type === 'item') return this.itemBubble(sel.id);
     if (sel?.type === 'node') {
       this.heading(t('planCorner'), 'corner');
       this.small(t('planCornerHelp'));

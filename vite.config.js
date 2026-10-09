@@ -1,6 +1,35 @@
 import { defineConfig } from 'vite';
+import { createReadStream, statSync } from 'node:fs';
+import { join, normalize, extname, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * En dev, sert `/owlnest_frontend/…` depuis le dossier de l'intégration, comme
+ * Home Assistant le fait en production : maison de démo, meubles du catalogue.
+ */
+function integrationFiles() {
+  const root = join(dirname(fileURLToPath(import.meta.url)), 'custom_components', 'owlnest', 'frontend');
+  const types = { '.glb': 'model/gltf-binary', '.webp': 'image/webp', '.txt': 'text/plain' };
+  return {
+    name: 'owlnest-integration-files',
+    configureServer(server) {
+      server.middlewares.use('/owlnest_frontend', (req, res, next) => {
+        const file = normalize(join(root, decodeURIComponent((req.url ?? '').split('?')[0])));
+        if (!file.startsWith(root)) return next();
+        try {
+          if (!statSync(file).isFile()) return next();
+        } catch {
+          return next();
+        }
+        res.setHeader('Content-Type', types[extname(file)] ?? 'application/octet-stream');
+        createReadStream(file).pipe(res);
+      });
+    },
+  };
+}
 
 export default defineConfig({
+  plugins: [integrationFiles()],
   build: {
     lib: {
       entry: 'src/ha-3d-floorplan.ts',

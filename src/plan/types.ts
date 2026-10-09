@@ -75,6 +75,27 @@ export interface PlanOpening {
   color?: string;
 }
 
+/** Un meuble posé sur le plan. */
+export interface PlanItem {
+  id: string;
+  /** Identifiant du catalogue (`bedDouble`), ou adresse d'un modèle importé. */
+  model: string;
+  /** Centre de l'emprise au sol, en mètres. */
+  x: number;
+  y: number;
+  /** Rotation en degrés, dans le sens des aiguilles d'une montre vu de dessus. */
+  rotation: number;
+  /** Hauteur du bas du meuble ; absente, celle du catalogue (sol, mur, plafond). */
+  elevation?: number;
+  /** Agrandissement par rapport à la taille du catalogue. */
+  scale?: number;
+  /** Couleur par matière du modèle : `carpet` (tissu), `wood`… */
+  colors?: Record<string, string>;
+  /** Pour une lampe : l'entité qu'elle représente. */
+  entity?: string;
+  name?: string;
+}
+
 /** Image de plan posée sous le dessin, pour le calquer. */
 export interface PlanBackground {
   /** Image réduite, en data URL : elle voyage avec la scène. */
@@ -96,6 +117,8 @@ export interface PlanDoc {
   walls: PlanWall[];
   rooms: PlanRoom[];
   openings: PlanOpening[];
+  /** Les meubles, absents d'un plan qui n'en a jamais eu. */
+  items?: PlanItem[];
   background?: PlanBackground;
   /** Couleur des murs côté extérieur. */
   outside?: string;

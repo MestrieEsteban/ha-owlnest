@@ -35,7 +35,7 @@
   let scene = { version: 1, scene_id: 'plan', model_url: '', anchors: [], camera_views: [], cards: [], rules: [], parts: [], plan: EDITOR ? undefined : plan };
 
   const hass = {
-    states: {}, user: { is_admin: true }, callService() {},
+    states: { 'light.salon': { state: 'on', attributes: { friendly_name: 'Lampe du salon', brightness: 255 } } }, user: { is_admin: true }, callService() {},
     callWS: async (msg) => {
       if (msg.type === 'owlnest/load_scene') return scene;
       if (msg.type === 'owlnest/save_scene') { scene = msg.data; return { success: true }; }
