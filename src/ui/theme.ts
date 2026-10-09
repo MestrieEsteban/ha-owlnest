@@ -120,6 +120,21 @@ export const STYLES = `
 .ow-surface { background: var(--ow-chrome); border: 1px solid var(--ow-line); border-radius: 14px; box-shadow: var(--ow-shadow);
   backdrop-filter: var(--ow-blur); -webkit-backdrop-filter: var(--ow-blur); color: var(--ow-text); }
 
+/* La carte s'adapte à sa largeur : deux modules face à face se partagent la ligne. */
+.ow-ui { container-type: inline-size; }
+.ow-ui:has(> .ow-slot[data-slot="tr"]:not(:empty)) > .ow-slot[data-slot="tl"],
+.ow-ui:has(> .ow-slot[data-slot="tl"]:not(:empty)) > .ow-slot[data-slot="tr"] { max-width: calc(62% - 18px); }
+.ow-ui:has(> .ow-slot[data-slot="br"]:not(:empty)) > .ow-slot[data-slot="bl"],
+.ow-ui:has(> .ow-slot[data-slot="bl"]:not(:empty)) > .ow-slot[data-slot="br"] { max-width: calc(100% - 24px); }
+@container (max-width: 640px) {
+  .ow-status .ow-muted { display: none; }
+  .ow-status { gap: 6px; padding: 7px 10px; }
+  .ow-ui:has(> .ow-slot[data-slot="tr"]:not(:empty)) > .ow-slot[data-slot="tl"] { max-width: calc(100% - 128px); }
+  .ow-ui:has(> .ow-slot[data-slot="tl"]:not(:empty)) > .ow-slot[data-slot="tr"] { max-width: 110px; }
+  /* Les vues du bas passent au-dessus des coins plutôt que de les chevaucher. */
+  .ow-slot[data-slot="bc"] { bottom: 62px; max-width: calc(100% - 24px); }
+}
+
 /* Emplacements des modules */
 .ow-slot { position: absolute; z-index: 10; display: flex; gap: 8px; pointer-events: none; max-width: calc(100% - 24px); }
 .ow-slot > * { pointer-events: auto; }
