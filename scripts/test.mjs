@@ -45,6 +45,9 @@ const ENTRIES = [
   'src/plan/build.ts',
   'src/plan/graph.ts',
   'src/plan/migrate.ts',
+  'src/plan/footprint.ts',
+  'src/plan/geometry.ts',
+  'src/plan/templates.ts',
 ];
 
 /**

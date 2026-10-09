@@ -6,10 +6,15 @@
  * que soit l'angle : un L, un T, une étoile de murs. On le calcule coin par
  * coin : autour d'un coin, les murs sont triés par angle, et chaque bord d'un
  * mur s'arrête là où il rencontre le bord du mur voisin.
+ *
+ * Chaque extrémité passe aussi par le coin lui-même. Sans ce point, un T
+ * laissait un petit triangle vide : les deux morceaux du mur droit, coupés en
+ * biais vers le mur qui arrive, et ce mur, arrêté à leur bord, ne se
+ * touchaient pas au centre.
  */
 
 import type { PlanDoc } from './types';
-import { type Pt, sub, add, mul, norm, perp, dist, lineCross } from './geometry';
+import { type Pt, sub, add, mul, norm, perp, dist, lineCross, cross } from './geometry';
 import { thicknessOf } from './graph';
 
 interface End {
@@ -20,8 +25,8 @@ interface End {
 }
 
 /**
- * Pour chaque mur, sa semelle : `[a gauche, b gauche, b droite, a droite]`,
- * où gauche et droite se lisent en allant de `a` vers `b`.
+ * Pour chaque mur, sa semelle : `[a gauche, b gauche, (coin b), b droite,
+ * a droite, (coin a)]`, où gauche et droite se lisent en allant de `a` vers `b`.
  */
 export function wallFootprints(plan: PlanDoc): Map<string, Pt[]> {
   const pos = new Map(plan.nodes.map((n) => [n.id, n as Pt]));
@@ -34,8 +39,9 @@ export function wallFootprints(plan: PlanDoc): Map<string, Pt[]> {
     ends.set(w.b, [...(ends.get(w.b) ?? []), { wall: w.id, dir: norm(sub(a, b)), half }]);
   }
 
-  // Coins de chaque extrémité de mur : [gauche, droite] vus en partant du coin.
-  const corner = new Map<string, [Pt, Pt]>();
+  // Coins de chaque extrémité de mur : [gauche, droite] vus en partant du coin,
+  // et le coin lui-même quand il dépasse de la coupe.
+  const corner = new Map<string, [Pt, Pt, Pt?]>();
   for (const [nodeId, list] of ends) {
     const n = pos.get(nodeId)!;
     list.sort((p, q) => Math.atan2(p.dir.y, p.dir.x) - Math.atan2(q.dir.y, q.dir.x));
@@ -52,10 +58,11 @@ export function wallFootprints(plan: PlanDoc): Map<string, Pt[]> {
       const l = lineCross(left, e.dir, nextRight, next.dir);
       const r = lineCross(right, e.dir, prevLeft, prev.dir);
       // Murs alignés (pas d'intersection) ou angle très aigu : coupe droite.
-      corner.set(`${e.wall}@${nodeId}`, [
-        l && dist(l, n) < limit ? l : left,
-        r && dist(r, n) < limit ? r : right,
-      ]);
+      const cl = l && dist(l, n) < limit ? l : left;
+      const cr = r && dist(r, n) < limit ? r : right;
+      // Un coin aligné avec la coupe (angle en L) n'ajoute rien.
+      const hub = Math.abs(cross(sub(cl, n), sub(cr, n))) > 1e-9 ? n : undefined;
+      corner.set(`${e.wall}@${nodeId}`, [cl, cr, hub]);
     });
   }
 
@@ -64,7 +71,11 @@ export function wallFootprints(plan: PlanDoc): Map<string, Pt[]> {
     const ca = corner.get(`${w.id}@${w.a}`), cb = corner.get(`${w.id}@${w.b}`);
     if (!ca || !cb) continue;
     // En b, le mur part dans l'autre sens : sa gauche est notre droite.
-    out.set(w.id, [ca[0], cb[1], cb[0], ca[1]]);
+    const poly = [ca[0], cb[1]];
+    if (cb[2]) poly.push(cb[2]);
+    poly.push(cb[0], ca[1]);
+    if (ca[2]) poly.push(ca[2]);
+    out.set(w.id, poly);
   }
   return out;
 }
