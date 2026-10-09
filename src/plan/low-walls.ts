@@ -7,8 +7,9 @@
  * disparaissait, et des murs basculaient au mauvais moment. Tout venait de ce
  * que l'OBJ ne dit pas quel meuble est contre quel mur. Le plan, lui, le sait :
  *
- *  - **seuls les murs devant ce qu'on regarde** descendent, ceux du fond
- *    restent debout et donnent le volume des pièces. « Devant » se juge par
+ *  - **seuls les murs devant ce qu'on regarde, et qui font face à la
+ *    caméra**, descendent ; ceux du fond et ceux de côté restent debout et
+ *    donnent le volume des pièces. « Devant » se juge par
  *    rapport au point visé : en zoomant sur une pièce, ce sont ses murs
  *    côté caméra qui descendent ;
  *  - **ce qui est accroché à un mur qui descend** (tableau, miroir, meuble
@@ -44,6 +45,13 @@ export const LOW_RATIO = 0.18;
 const MAX_WALLS = 1024;
 /** Durée de la descente ou de la remontée, en secondes. */
 const TRANSITION = 0.3;
+/**
+ * Un mur descend s'il fait face à la caméra : regard à moins d'environ 50° de
+ * sa normale (cosinus 0,65). Il remonte au-delà de 60° environ (0,5) : entre
+ * les deux, il garde son état, pour ne pas clignoter en tournant.
+ */
+const FACING_DOWN = 0.65;
+const FACING_UP = 0.5;
 /** Un mur à moins de cette distance du point visé garde son état : pas de clignotement. */
 const MARGIN = 0.4;
 
@@ -83,8 +91,8 @@ function inLeaf(o: THREE.Object3D): boolean {
   return false;
 }
 
-/** Un mur vu de dessus, en coordonnées du plan. */
-interface WallInfo { mid: { x: number; y: number } }
+/** Un mur vu de dessus, en coordonnées du plan : son milieu et sa normale. */
+interface WallInfo { mid: { x: number; y: number }; normal: { x: number; y: number } }
 
 export class LowWalls {
   enabled = false;
@@ -112,7 +120,8 @@ export class LowWalls {
   setPlan(plan: PlanDoc, root: THREE.Object3D) {
     this.walls = plan.walls.slice(0, MAX_WALLS).map((w) => {
       const [a, b] = wallEnds(plan, w);
-      return { mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
+      const L = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+      return { mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, normal: { x: -(b.y - a.y) / L, y: (b.x - a.x) / L } };
     });
     this.cut.value = plan.wallHeight * LOW_RATIO;
     this.cutWorld.value = this.cut.value + root.position.y;
@@ -240,11 +249,13 @@ export class LowWalls {
       const fromAbove = len < 0.15 * Math.max(Math.abs(t.y - c.y), 1e-6);
       for (let i = 0; i < n; i++) {
         if (fromAbove) { this.goal[i] = 0; continue; }
-        const m = this.walls[i].mid;
+        const { mid: m, normal: nrm } = this.walls[i];
         // Distance du mur vers la caméra, depuis le point visé.
         const s = -((m.x - t.x) * vx + (m.y - t.z) * vz) / len;
-        if (s > MARGIN) this.goal[i] = 1;
-        else if (s < -MARGIN) this.goal[i] = 0;
+        // Un mur de côté, parallèle au regard, ne bouche rien : il reste debout.
+        const facing = Math.abs(nrm.x * vx + nrm.y * vz) / len;
+        if (s > MARGIN && facing > FACING_DOWN) this.goal[i] = 1;
+        else if (s < -MARGIN || facing < FACING_UP) this.goal[i] = 0;
       }
     } else {
       this.goal.fill(0, 0, n);

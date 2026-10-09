@@ -84,3 +84,15 @@ test('mode fantôme : un voile sur les murs seulement, affiché quand le mode es
   lw.instrument(root);
   assert.equal(wall.children.length, 1);
 });
+
+test('vu de biais depuis le sud, les murs de côté restent debout', () => {
+  const { plan, root, lw } = setup();
+  // Caméra au sud, un peu à l'ouest : le regard file vers le nord.
+  const cam = new THREE.PerspectiveCamera(); cam.position.set(-3, 6, 10);
+  settle(lw, cam, root);
+  const south = wallAt(plan, (a, b) => a.y === 4 && b.y === 4);
+  const west = wallAt(plan, (a, b) => a.x === 0 && b.x === 0), east = wallAt(plan, (a, b) => a.x === 6 && b.x === 6);
+  assert.equal(lw.factor[south], 1, 'le mur de face descend');
+  assert.equal(lw.factor[west], 0, 'le mur ouest, de côté, reste');
+  assert.equal(lw.factor[east], 0, 'le mur est, de côté, reste');
+});
