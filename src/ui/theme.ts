@@ -132,11 +132,12 @@ export const STYLES = `
 .ow-ui:has(> .ow-slot[data-slot="bl"]:not(:empty)) > .ow-slot[data-slot="br"] { max-width: calc(100% - 24px); }
 @container (max-width: 640px) {
   .ow-status .ow-muted { display: none; }
-  .ow-status { gap: 6px; padding: 7px 10px; }
+  .ow-ui .ow-status { gap: 6px; padding: 7px 10px; }
   .ow-ui:has(> .ow-slot[data-slot="tr"]:not(:empty)) > .ow-slot[data-slot="tl"] { max-width: calc(100% - 128px); }
   .ow-ui:has(> .ow-slot[data-slot="tl"]:not(:empty)) > .ow-slot[data-slot="tr"] { max-width: 110px; }
   /* Les vues du bas passent au-dessus des coins plutôt que de les chevaucher. */
-  .ow-slot[data-slot="bc"] { bottom: 62px; max-width: calc(100% - 24px); }
+  /* Préfixé : les règles de base des emplacements viennent plus bas et gagneraient sinon. */
+  .ow-ui > .ow-slot[data-slot="bc"] { bottom: 62px; max-width: calc(100% - 24px); }
 }
 
 /* Emplacements des modules */
@@ -223,6 +224,9 @@ export const STYLES = `
 /* Une bulle qui porte aussi .ow-ui ne doit pas être un conteneur : sa largeur
    viendrait plus de son contenu (22 px, texte écrasé). */
 .ow-ui.ow-pill { container-type: normal; }
+/* Rangée dans un emplacement, la bulle prend la largeur de l'emplacement : un
+   max-width en % se calculerait sur sa propre largeur et rognerait le texte. */
+.ow-slot > .ow-pill { max-width: none; }
 
 /* Boutons */
 .ow-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; font: 600 12.5px ${FONT}; padding: 8px 14px;
