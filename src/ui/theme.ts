@@ -185,6 +185,8 @@ export const STYLES = `
 .ow-rp-empty { font-size: 12.5px; color: var(--ow-muted); padding: 6px 4px; line-height: 1.45; }
 .ow-rooms { display: flex; gap: 2px; padding: 4px; max-width: min(620px, 100%); overflow-x: auto; scrollbar-width: none; }
 .ow-rooms::-webkit-scrollbar { display: none; }
+.ow-floors { display: flex; gap: 2px; padding-right: 4px; margin-right: 2px; border-right: 1px solid var(--ow-line); flex: none; }
+.ow-floor.ow-on { background: var(--ow-text); color: var(--ow-chrome); }
 
 /* État */
 .ow-status { display: flex; align-items: center; gap: 10px; padding: 7px 12px; font-size: 12px; white-space: nowrap; }

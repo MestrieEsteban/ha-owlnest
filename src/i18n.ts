@@ -1029,6 +1029,8 @@ const STRINGS = {
     partChangeSensor: 'Change',
     // Interface de la carte
     uiModRooms: 'Rooms',
+    uiFloors: 'Floors',
+    floorGround: 'Ground',
     uiRoomsHome: 'Whole house',
     tourRoomsTitle: 'Go into a room',
     tourRoomsText: 'Each room of your plan has its button, with the number of lights on. You can also tap a room twice in the 3D view.',
@@ -2109,6 +2111,8 @@ const STRINGS = {
     partChangeSensor: 'Changer',
     // Interface de la carte
     uiModRooms: 'Pièces',
+    uiFloors: 'Étages',
+    floorGround: 'RDC',
     uiRoomsHome: 'Toute la maison',
     tourRoomsTitle: 'Va dans une pièce',
     tourRoomsText: 'Chaque pièce de ton plan a son bouton, avec le nombre de lampes allumées. Tu peux aussi toucher deux fois une pièce dans la 3D.',

@@ -54,6 +54,8 @@ import { partIndexOf, partFrame, guessPart, verticalAxis } from './parts';
 import { separateCoplanarSlabs } from './coplanar';
 import { StaticBatch } from './batching';
 import { buildPlan } from './plan/build';
+import { buildHouse, floorGroup } from './plan/house';
+import { floorViews, floorDoc, allOpenings, floorOfHeight, type FloorView } from './plan/floors';
 import { LowWalls, WALL_VIEWS, type WallView } from './plan/low-walls';
 import { syncPlanParts } from './plan/parts';
 import { emptyPlan, type PlanDoc, type OpeningKind } from './plan/types';
@@ -487,22 +489,27 @@ export class Ha3dFloorplan extends HTMLElement {
     this._batch?.unmerge();
     this._highlight.clear();
     this._parts.dispose(root);
-    for (const c of [...root.children]) {
-      root.remove(c);
-      // Les meubles partagent la géométrie et les matières de leur modèle en
-      // cache : les jeter forcerait à tout renvoyer au GPU au prochain dessin.
-      if (c.name === 'plan_items') continue;
-      c.traverse((o) => {
-        const mesh = o as THREE.Mesh;
-        if (!mesh.isMesh) return;
+    // Les meubles partagent la géométrie et les matières de leur modèle en
+    // cache : les jeter forcerait à tout renvoyer au GPU au prochain dessin.
+    // Ils peuvent être dans un étage : on descend sans jamais entrer chez eux.
+    const dispose = (o: THREE.Object3D) => {
+      if (o.name === 'plan_items') return;
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh) {
         mesh.geometry.dispose();
         (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach((m) => m.dispose());
-      });
+      }
+      o.children.forEach(dispose);
+    };
+    for (const c of [...root.children]) {
+      root.remove(c);
+      dispose(c);
     }
     resetOrder(root);
-    const fresh = buildPlan(plan);
+    const fresh = buildHouse(plan, this._floorIndex()).root;
     for (const c of [...fresh.children]) root.add(c);
     root.updateMatrixWorld(true);
+    this._refreshFloorGroup(root);
     this._afterPlanBuilt(root);
     this._placeFurniture(root, plan);
   }
@@ -512,19 +519,25 @@ export class Ha3dFloorplan extends HTMLElement {
    * Une fois posés, les lampes reliées à Home Assistant deviennent des ancres.
    */
   private _placeFurniture(root: THREE.Object3D, plan: PlanDoc) {
-    if (!plan.items?.length) { this._syncLampAnchors(root, plan); return; }
-    void placeFurniture(plan, root, () => {
-      if (root !== this._modelRoot) return;
-      root.updateMatrixWorld(true);
-      // Les meubles arrivent après la fusion des objets immobiles : on la
-      // refait pour qu'ils en profitent, sinon chacun coûte ses propres appels.
-      this._batch?.unmerge();
-      this._lowWalls.attachItems(plan, root);
-      this._mergeStatic();
-      this._syncLampAnchors(root, plan);
-      this._requestShadowUpdate();
-      this._requestRender();
-    });
+    const levels = floorViews(plan).slice(0, this._floorIndex() + 1);
+    if (!levels.some((v) => v.doc.items?.length)) { this._syncLampAnchors(root, plan); return; }
+    for (const v of levels) {
+      if (!v.doc.items?.length) continue;
+      const group = floorGroup(root, plan, v.index);
+      if (!group) continue;
+      void placeFurniture(v.doc, group, () => {
+        if (root !== this._modelRoot) return;
+        root.updateMatrixWorld(true);
+        // Les meubles arrivent après la fusion des objets immobiles : on la
+        // refait pour qu'ils en profitent, sinon chacun coûte ses propres appels.
+        this._batch?.unmerge();
+        this._lowWalls.attachItems(this._activeDoc() ?? plan, this._activeGroup ?? root);
+        this._mergeStatic();
+        if (v.index === 0) this._syncLampAnchors(root, plan);
+        this._requestShadowUpdate();
+        this._requestRender();
+      });
+    }
   }
 
   /**
@@ -584,7 +597,7 @@ export class Ha3dFloorplan extends HTMLElement {
   /** Bornes, ouvrants, ombres et rendu, après une (re)construction du plan. */
   private _afterPlanBuilt(root: THREE.Object3D) {
     if (this._scene?.plan) {
-      this._lowWalls.setPlan(this._scene.plan, root);
+      this._lowWalls.setPlan(this._activeDoc() ?? this._scene.plan, this._activeGroup ?? root);
       this._lowWalls.instrument(root);
     }
     this._modelBox.setFromObject(root);
@@ -595,7 +608,7 @@ export class Ha3dFloorplan extends HTMLElement {
     if (this._scene?.plan) {
       this._scene = {
         ...this._scene,
-        parts: syncPlanParts(root, this._scene.plan, this._scene.parts ?? [], this._planPartLabel),
+        parts: syncPlanParts(root, allOpenings(this._scene.plan), this._scene.parts ?? [], this._planPartLabel),
       };
     }
     this._buildParts();
@@ -991,6 +1004,9 @@ export class Ha3dFloorplan extends HTMLElement {
         const v = normalizeViews(this._effectiveConfig.camera_views ?? []).find((x) => x.id === id);
         if (v) this._viewMgr?.flyTo(v);
       },
+      getFloors: () => this._floors().map((f) => ({ index: f.index, name: f.name })),
+      getActiveFloor: () => this._floorIndex(),
+      setFloor: (k) => this._setFloor(k),
       getRooms: () => this._hudRooms(),
       flyToRoom: (id) => this._flyToRoom(id),
       getRoomDevices: (id) => this._roomDevices(id),
@@ -1780,6 +1796,7 @@ export class Ha3dFloorplan extends HTMLElement {
     }
     this._ui?.refreshStatus();
     this._ui?.refreshRooms();
+    this._applyFloorLights();
     this._requestRender();
   }
 
@@ -1982,10 +1999,96 @@ export class Ha3dFloorplan extends HTMLElement {
     this._showToast(t('autoPlaceDone').replace('{n}', String(add.length)).replace('{rooms}', String(roomsUsed)));
   }
 
-  /** Les pièces du plan, recalculées seulement quand le plan change. */
+  // ── Étages ──────────────────────────────────────────────────────────────
+
+  /** L'étage montré (0 : le rez-de-chaussée), retenu par appareil et par scène. */
+  private _activeFloor = 0;
+  /** Le groupe 3D de l'étage montré, après chaque construction. */
+  private _activeGroup: THREE.Object3D | null = null;
+  private get _floorKey() { return `owlnest_floor_${this._getActiveSceneId() ?? ''}`; }
+
+  private _restoreFloor() {
+    try { this._activeFloor = Math.max(0, Number(localStorage.getItem(this._floorKey) ?? 0) || 0); } catch { this._activeFloor = 0; }
+  }
+
+  /** Les niveaux du logement (un seul pour une maison de plain-pied). */
+  private _floors(): FloorView[] {
+    const p = this._plan;
+    return p ? floorViews(p, t('floorGround')) : [];
+  }
+
+  /** L'étage montré, borné aux étages qui existent. */
+  private _floorIndex(): number {
+    return Math.min(this._activeFloor, Math.max(0, this._floors().length - 1));
+  }
+
+  /** Le plan de l'étage montré. */
+  private _activeDoc(): PlanDoc | null {
+    const p = this._plan;
+    return p ? floorDoc(p, this._floorIndex()) : null;
+  }
+
+  /** Hauteur du sol de l'étage montré au-dessus du rez-de-chaussée. */
+  private _floorLift(): number {
+    return this._floors()[this._floorIndex()]?.elevation ?? 0;
+  }
+
+  /** Le sol du rez-de-chaussée, dans la scène. */
+  private get _groundY(): number {
+    return this._modelBox.min.y + 0.02;
+  }
+
+  /** L'étage d'un point de la scène. */
+  private _floorOfY(y: number): number {
+    const p = this._plan;
+    return p && p.floors?.length ? floorOfHeight(p, y - this._groundY) : 0;
+  }
+
+  /** Après une construction : le groupe de l'étage montré, et l'éclairage des étages. */
+  private _refreshFloorGroup(root: THREE.Object3D) {
+    const plan = this._plan;
+    this._activeGroup = plan ? floorGroup(root, plan, this._floorIndex()) ?? root : root;
+    this._applyFloorLights();
+  }
+
+  /** Les lampes d'un étage masqué s'éteignent ; celles des étages montrés suivent leur état. */
+  private _applyFloorLights() {
+    const k = this._floorIndex();
+    this.anchors.forEach((a) => {
+      if (!a.light) return;
+      const off = this._floorOfY(a.worldPos.y) > k;
+      a.light.userData.owlnestFloorOff = off;
+      if (off) a.light.visible = false;
+    });
+  }
+
+  /** Change d'étage : la maison se reconstruit jusqu'à lui, la caméra monte ou descend avec. */
+  private _setFloor(index: number) {
+    const plan = this._plan;
+    if (!plan || !this._scene) return;
+    const before = this._floorLift();
+    this._activeFloor = Math.max(0, Math.min(index, this._floors().length - 1));
+    try { localStorage.setItem(this._floorKey, String(this._activeFloor)); } catch { /* stockage bloqué */ }
+    this._ui?.setActiveRoom(null);
+    this._roomsCache = null;
+    this.applyPlan(this._scene.plan!);
+    const dy = this._floorLift() - before;
+    if (dy && this.camera && this.controls) {
+      this._camAnimTo = {
+        pos: this.camera.position.clone().add(new THREE.Vector3(0, dy, 0)),
+        target: this.controls.target.clone().add(new THREE.Vector3(0, dy, 0)),
+      };
+    }
+    this._ui?.refreshFloors();
+    this._ui?.refreshRooms();
+    this._requestShadowUpdate();
+    this._requestRender();
+  }
+
+  /** Les pièces de l'étage montré, recalculées seulement quand son plan change. */
   private _roomsCache: { plan: PlanDoc; rooms: RoomView[] } | null = null;
   private _rooms(): RoomView[] {
-    const plan = this._plan;
+    const plan = this._activeDoc();
     if (!plan) return [];
     if (this._roomsCache?.plan !== plan) this._roomsCache = { plan, rooms: planRooms(plan) };
     return this._roomsCache.rooms;
@@ -1999,9 +2102,10 @@ export class Ha3dFloorplan extends HTMLElement {
     const origin = this._planOrigin(plan);
     const lit = new Map<string, number>();
     const hass = this._hass;
+    const k = this._floorIndex();
     if (hass) {
       this.anchors.forEach((a) => {
-        if (a.domain !== 'light' || hass.states[a.entityId]?.state !== 'on') return;
+        if (a.domain !== 'light' || hass.states[a.entityId]?.state !== 'on' || this._floorOfY(a.worldPos.y) !== k) return;
         const r = roomOfPoint(rooms, origin, a.worldPos.x, a.worldPos.z);
         if (r) lit.set(r.id, (lit.get(r.id) ?? 0) + 1);
       });
@@ -2010,7 +2114,7 @@ export class Ha3dFloorplan extends HTMLElement {
     const temps = new Map<string, number[]>();
     if (hass) {
       this.anchors.forEach((a) => {
-        if (a.domain !== 'sensor') return;
+        if (a.domain !== 'sensor' || this._floorOfY(a.worldPos.y) !== k) return;
         const st = hass.states[a.entityId];
         const v = Number(st?.state);
         const unit = String(st?.attributes?.unit_of_measurement ?? '');
@@ -2039,6 +2143,7 @@ export class Ha3dFloorplan extends HTMLElement {
     const out: HudDevice[] = [];
     this.anchors.forEach((a) => {
       if (!a.entityId || (a.kind ?? 'entity') !== 'entity' || a.hidden) return;
+      if (this._floorOfY(a.worldPos.y) !== this._floorIndex()) return;
       if (roomOfPoint(rooms, origin, a.worldPos.x, a.worldPos.z)?.id !== roomId) return;
       const st = hass.states[a.entityId];
       const desc = describeEntity(a.entityId);
@@ -2085,7 +2190,7 @@ export class Ha3dFloorplan extends HTMLElement {
     );
     const ray = new THREE.Raycaster();
     ray.setFromCamera(ndc, this.camera);
-    const floor = new THREE.Plane(new THREE.Vector3(0, 1, 0), -this._modelBox.min.y);
+    const floor = new THREE.Plane(new THREE.Vector3(0, 1, 0), -(this._groundY + this._floorLift()));
     const hit = new THREE.Vector3();
     const room = ray.ray.intersectPlane(floor, hit)
       ? roomOfPoint(this._rooms(), this._planOrigin(plan), hit.x, hit.z)
@@ -2104,8 +2209,11 @@ export class Ha3dFloorplan extends HTMLElement {
     const room = this._rooms().find((r) => r.id === id);
     if (!plan || !room || !this.camera) return;
     const visible = this.canvas?.clientWidth ? 1 - Math.abs(this._viewShift) / this.canvas.clientWidth : 1;
+    const doc = this._activeDoc() ?? plan;
     const pose = roomCamera(room, this._planOrigin(plan), {
-      fovDeg: this.camera.fov, aspect: this.camera.aspect, wallHeight: plan.wallHeight ?? 2.5, visible,
+      fovDeg: this.camera.fov, aspect: this.camera.aspect, wallHeight: doc.wallHeight ?? 2.5, visible,
+      // Le centre du rez-de-chaussée est à mi-hauteur de ses murs (y = 0) : les étages s'y ajoutent.
+      lift: this._floorLift(),
     });
     this._camAnimTo = { pos: new THREE.Vector3(...pose.pos), target: new THREE.Vector3(...pose.target) };
     this._requestRender();
@@ -2231,7 +2339,7 @@ export class Ha3dFloorplan extends HTMLElement {
       this._batch?.unmerge();
       root.traverse((o) => { if (o.name.startsWith('plan_item_')) { delete o.userData.owlnestWallItem; o.visible = true; } });
       if (!this._lowWalls.enabled) this._lowWalls.reset();
-      this._lowWalls.attachItems(plan, root);
+      this._lowWalls.attachItems(this._activeDoc() ?? plan, this._activeGroup ?? root);
       this._mergeStatic();
     }
     this._paintLowWallsBtn();
@@ -3332,7 +3440,7 @@ export class Ha3dFloorplan extends HTMLElement {
     if (moved) this._dirty = true;
     // Murs bas : ceux devant le point visé descendent, en douceur.
     if (this._plan && this._modelRoot && this.camera && this.controls
-      && this._lowWalls.update(this.camera, this.controls.target, this._modelRoot, dt)) {
+      && this._lowWalls.update(this.camera, this.controls.target, this._activeGroup ?? this._modelRoot, dt)) {
       this._dirty = true;
       this._requestShadowUpdate();
     }
@@ -3938,8 +4046,16 @@ export class Ha3dFloorplan extends HTMLElement {
     this.overlayContainer?.appendChild(loadingEl);
 
     let model: THREE.Group;
+    let groundBox: THREE.Box3 | null = null;
     try {
-      model = plan ? buildPlan(plan) : await loadGLTF(ec.model_url!);
+      if (plan) {
+        this._restoreFloor();
+        const house = buildHouse(plan, this._floorIndex());
+        model = house.root;
+        groundBox = house.groundBox;
+      } else {
+        model = await loadGLTF(ec.model_url!);
+      }
     } catch (err) {
       console.error('[Owlnest] model load failed:', err);
       // Le code HTTP dit s'il faut corriger le chemin ou regarder le serveur ;
@@ -3964,7 +4080,9 @@ export class Ha3dFloorplan extends HTMLElement {
     });
 
     const box = new THREE.Box3().setFromObject(model);
-    const centre = box.getCenter(new THREE.Vector3());
+    // Un plan se centre sur son rez-de-chaussée seul : monter d'un étage ne
+    // doit pas déplacer ce qui est déjà posé.
+    const centre = (groundBox ?? box).getCenter(new THREE.Vector3());
     if (plan) {
       // Un plan garde son origine : le recentrer à chaque retouche ferait
       // glisser les ancres déjà posées (voir PlanDoc.origin).
@@ -4009,7 +4127,8 @@ export class Ha3dFloorplan extends HTMLElement {
     this.scene.add(model);
     this._modelRoot = model;
     if (plan) {
-      this._lowWalls.setPlan(plan, model);
+      this._refreshFloorGroup(model);
+      this._lowWalls.setPlan(this._activeDoc() ?? plan, this._activeGroup ?? model);
       this._lowWalls.instrument(model);
     }
     this._paintLowWallsBtn();
@@ -4027,7 +4146,7 @@ export class Ha3dFloorplan extends HTMLElement {
       this._syncPlanPartsAfterLoad = false;
       this._scene = {
         ...this._scene,
-        parts: syncPlanParts(model, plan, this._scene.parts ?? [], this._planPartLabel),
+        parts: syncPlanParts(model, allOpenings(plan), this._scene.parts ?? [], this._planPartLabel),
       };
     }
     this._buildParts();
@@ -4183,11 +4302,15 @@ export class Ha3dFloorplan extends HTMLElement {
     // 3. Show/hide individual overlays
     // Distance de référence : celle du point visé, où une pastille garde sa taille.
     const refDist = Math.max(this.camera!.position.distanceTo(this.controls?.target ?? new THREE.Vector3()), 1e-4);
+    const multiFloor = !!this._plan?.floors?.length;
+    const activeFloor = this._floorIndex();
     this.anchors.forEach((_entry, name) => {
       const ov = this.overlays.get(name);
       if (!ov) return;
-      const hide = behind.has(name) || inCluster.has(name)
-        || this.anchors.get(name)?.hidden || ov.conditionHidden;
+      const entryF = this.anchors.get(name);
+      const otherFloor = !!entryF && multiFloor && this._floorOfY(entryF.worldPos.y) !== activeFloor;
+      const hide = behind.has(name) || inCluster.has(name) || otherFloor
+        || entryF?.hidden || ov.conditionHidden;
 
       // Une roue d'actions gère elle-même son positionnement et sa visibilité :
       // son menu ouvert doit rester en place.

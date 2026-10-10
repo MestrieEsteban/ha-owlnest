@@ -80,7 +80,7 @@ export interface CameraPose {
 export function roomCamera(
   room: RoomView,
   origin: Pt,
-  opts: { fovDeg: number; aspect: number; wallHeight: number; visible?: number },
+  opts: { fovDeg: number; aspect: number; wallHeight: number; visible?: number; lift?: number },
 ): CameraPose {
   const c = centroid(room.poly);
   // Rayon de la pièce vue du centre, hauteur des murs comprise.
@@ -93,11 +93,13 @@ export function roomCamera(
   const elevation = (50 * Math.PI) / 180;
   const azimuth = (25 * Math.PI) / 180;
   const tx = c.x - origin.x, tz = c.y - origin.y;
+  // `lift` : la hauteur de l'étage de la pièce.
+  const ty = opts.lift ?? 0;
   return {
-    target: [tx, 0, tz],
+    target: [tx, ty, tz],
     pos: [
       tx + Math.sin(azimuth) * Math.cos(elevation) * dist,
-      Math.sin(elevation) * dist,
+      ty + Math.sin(elevation) * dist,
       tz + Math.cos(azimuth) * Math.cos(elevation) * dist,
     ],
   };

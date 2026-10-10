@@ -104,12 +104,13 @@ export function stepTransitions(
     if (dI > 0.002 || dR > 0.002 || dG > 0.002 || dB > 0.002) {
       light.intensity = THREE.MathUtils.lerp(light.intensity, targetIntensity, alpha);
       light.color.lerp(targetColor, alpha);
-      light.visible = light.intensity > 0.01 || targetIntensity > 0;
+      // Une lampe d'un étage masqué reste éteinte : elle éclairerait l'étage du dessous.
+      light.visible = !light.userData.owlnestFloorOff && (light.intensity > 0.01 || targetIntensity > 0);
       active = true;
     } else {
       light.intensity = targetIntensity;
       light.color.copy(targetColor);
-      light.visible = targetIntensity > 0;
+      light.visible = !light.userData.owlnestFloorOff && targetIntensity > 0;
     }
   });
 

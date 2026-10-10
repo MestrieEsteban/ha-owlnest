@@ -85,7 +85,11 @@ export class CardHud {
     private opts: {
       getViews: () => HudView[];
       flyTo: (id: string) => void;
-      /** Les pièces du plan (vide sans plan). */
+      /** Les niveaux du logement (un seul : pas de choix d'étage). */
+      getFloors: () => { index: number; name: string }[];
+      getActiveFloor: () => number;
+      setFloor: (index: number) => void;
+      /** Les pièces de l'étage montré (vide sans plan). */
       getRooms: () => HudRoom[];
       /** Va dans une pièce ; `null` revient à toute la maison. */
       flyToRoom: (id: string | null) => void;
@@ -258,12 +262,18 @@ export class CardHud {
   /** Les pièces ou leurs lampes ont pu changer : ne repeint que si quelque chose a bougé. */
   refreshRooms() {
     const rooms = this.prefs.show.rooms ? this.opts.getRooms() : [];
-    const key = JSON.stringify(rooms);
+    const key = JSON.stringify([rooms, this.opts.getFloors(), this.opts.getActiveFloor()]);
     if (key !== this.lastRooms) {
       this.lastRooms = key;
       this.renderRooms(rooms);
     }
     this.renderRoomPanel();
+  }
+
+  /** L'étage a changé : la barre des pièces se repeint. */
+  refreshFloors() {
+    this.lastRooms = '';
+    this.refreshRooms();
   }
 
   get roomsModule() { return this.roomsEl; }
@@ -350,8 +360,9 @@ export class CardHud {
   }
 
   private renderRooms(rooms: HudRoom[]) {
-    // Une seule pièce : le bouton « Maison » suffit, le module ne sert à rien.
-    if (rooms.length < 2) { this.roomsEl?.remove(); this.roomsEl = null; return; }
+    const floors = this.prefs.show.rooms ? this.opts.getFloors() : [];
+    // Une seule pièce et un seul niveau : le bouton « Maison » suffit, le module ne sert à rien.
+    if (rooms.length < 2 && floors.length < 2) { this.roomsEl?.remove(); this.roomsEl = null; return; }
     if (!this.roomsEl) {
       const el = document.createElement('div');
       el.className = 'ow-surface ow-rooms';
@@ -361,6 +372,28 @@ export class CardHud {
       this.place('rooms', el);
     }
     this.roomsEl.innerHTML = '';
+    if (floors.length > 1) {
+      const active = this.opts.getActiveFloor();
+      const seg = document.createElement('div');
+      seg.className = 'ow-floors';
+      seg.setAttribute('role', 'group');
+      seg.setAttribute('aria-label', t('uiFloors'));
+      for (const f of floors) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'ow-chip ow-floor';
+        b.dataset.floor = String(f.index);
+        b.textContent = f.name;
+        b.classList.toggle('ow-on', f.index === active);
+        b.setAttribute('aria-pressed', String(f.index === active));
+        b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (f.index !== this.opts.getActiveFloor()) this.opts.setFloor(f.index);
+        });
+        seg.append(b);
+      }
+      this.roomsEl.append(seg);
+    }
     const chip = (id: string, label: string, lit: number, temp?: string) => {
       const b = document.createElement('button');
       b.type = 'button';
@@ -387,6 +420,7 @@ export class CardHud {
       });
       this.roomsEl!.append(b);
     };
+    if (rooms.length < 1) return;
     chip('', t('uiRoomsHome'), rooms.reduce((n, r) => n + r.lit, 0));
     for (const r of rooms) chip(r.id, r.name, r.lit, r.temp);
   }
