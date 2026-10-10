@@ -11,7 +11,7 @@
  */
 import type { PlanDoc } from './types';
 import { type Pt, add, mul, sub, dot, norm, area } from './geometry';
-import { faces, thicknessOf, isBoundary } from './graph';
+import { faces, thicknessOf, isBoundary, heightOf } from './graph';
 
 export type Quad = [Pt, Pt, Pt, Pt];
 /** Un pan : quatre coins (le dernier peut répéter le troisième), à deux hauteurs. */
@@ -46,6 +46,87 @@ function clean(poly: Pt[]): Pt[] {
     if (Math.hypot(a.x - b.x, a.y - b.y) < 1e-6) out.pop();
   }
   return area(out) < 0 ? out.reverse() : out;
+}
+
+/**
+ * Retire les pointes de largeur nulle : quand deux façades face à face se
+ * rejoignent (une aile qui se ferme en faîtage), leur sommet commun n'a plus
+ * de raison d'être. Le sommet d'avant reprend la façade qui suit.
+ */
+function prune(vs: V[]): V[] {
+  const out = [...vs];
+  for (let guard = 0; guard < 100 && out.length >= 3; guard++) {
+    const m = out.length;
+    const i = out.findIndex((v, k) => {
+      const prev = out[(k - 1 + m) % m];
+      const close = Math.hypot(prev.p.x - v.p.x, prev.p.y - v.p.y) < 1e-7;
+      return close || dot(prev.n, v.n) < -1 + 1e-6;
+    });
+    if (i < 0) break;
+    const prev = (i - 1 + m) % m;
+    out[prev] = { p: out[prev].p, n: out[i].n };
+    out.splice(i, 1);
+  }
+  return out;
+}
+
+/** Coupe le contour au sommet `r`, posé sur la façade `e` (qui part du sommet `e`). */
+function cut(vs: V[], r: number, e: number): [V[], V[]] {
+  const m = vs.length, f = (e + 1) % m, p = vs[r].p;
+  const one: V[] = [], two: V[] = [];
+  // De r vers e : r (repart par sa façade), …, e (repart par la façade coupée, jusqu'à r).
+  for (let i = r; ; i = (i + 1) % m) {
+    one.push(i === r ? { p, n: vs[r].n } : vs[i]);
+    if (i === e) break;
+  }
+  // De f vers r : f, …, le sommet avant r, puis r (repart par la façade coupée, vers f).
+  for (let i = f; ; i = (i + 1) % m) {
+    if (i === r) { two.push({ p, n: vs[e].n }); break; }
+    two.push(vs[i]);
+  }
+  return [one, two];
+}
+
+/** Distance d'un point à un segment. */
+function toSegment(p: Pt, a: Pt, b: Pt): number {
+  const ab = sub(b, a), l2 = dot(ab, ab);
+  const s = l2 < 1e-18 ? 0 : Math.max(0, Math.min(1, dot(sub(p, a), ab) / l2));
+  const q = add(a, mul(ab, s));
+  return Math.hypot(p.x - q.x, p.y - q.y);
+}
+
+/**
+ * Après un évènement, plusieurs choses ont pu arriver en même temps (deux
+ * façades parallèles qui se superposent, un sommet qui en touche un autre) :
+ * tout sommet posé sur une façade qui n'est pas la sienne coupe le contour à
+ * cet endroit. Il ne reste que des contours propres, qui ont une aire.
+ */
+function settle(start: V[]): V[][] {
+  const done: V[][] = [];
+  const todo = [prune(start)];
+  for (let guard = 0; guard < 200 && todo.length; guard++) {
+    const vs = todo.pop()!;
+    if (vs.length < 3 || Math.abs(area(vs.map((v) => v.p))) < 1e-9) continue;
+    const m = vs.length;
+    let hit: [number, number] | null = null;
+    for (let r = 0; r < m && !hit; r++) {
+      for (let e = 0; e < m; e++) {
+        if (e === r || e === (r - 1 + m) % m) continue;
+        if (toSegment(vs[r].p, vs[e].p, vs[(e + 1) % m].p) < 1e-6) { hit = [r, e]; break; }
+      }
+    }
+    if (!hit) {
+      // Une façade garde sa direction en reculant : sa normale se relit sur
+      // la géométrie, ce qui corrige celles qu'une coupe aurait mal attribuées.
+      done.push(vs.map((v, i) => {
+        const q = vs[(i + 1) % m].p;
+        return Math.hypot(q.x - v.p.x, q.y - v.p.y) > 1e-6 ? { p: v.p, n: inward(v.p, q) } : v;
+      }));
+      continue;
+    }
+    for (const part of cut(vs, hit[0], hit[1])) todo.push(prune(part));
+  }
+  return done;
 }
 
 /**
@@ -124,25 +205,10 @@ export function hipRoof(outline: Pt[], slope: number): RoofStrip[] {
       const next = moved.filter((_, i) => i !== at && i !== j);
       next.splice(at < j ? at : next.length, 0, merged);
       // Un contour sans aire (deux façades face à face) est fini.
-      if (next.length >= 3 && Math.abs(area(next.map((v) => v.p))) > 1e-9) work.push({ vs: next, t: t1 });
+      for (const part of settle(next)) work.push({ vs: part, t: t1 });
     } else {
       // L'angle `at` touche la façade `other` : le contour se coupe en deux.
-      const r = at, e = other, f = (e + 1) % m;
-      const p = moved[r].p;
-      const one: V[] = [], two: V[] = [];
-      // De r vers e : r (repart par sa façade), …, e (repart par la façade coupée, jusqu'à r).
-      for (let i = r; ; i = (i + 1) % m) {
-        one.push(i === r ? { p, n: moved[r].n } : moved[i]);
-        if (i === e) break;
-      }
-      // De f vers r : f, …, le sommet avant r, puis r (repart par la façade coupée, vers f).
-      for (let i = f; ; i = (i + 1) % m) {
-        if (i === r) { two.push({ p, n: moved[e].n }); break; }
-        two.push(moved[i]);
-      }
-      for (const part of [one, two]) {
-        if (part.length >= 3 && Math.abs(area(part.map((v) => v.p))) > 1e-9) work.push({ vs: part, t: t1 });
-      }
+      for (const half of cut(moved, at, other)) for (const part of settle(half)) work.push({ vs: part, t: t1 });
     }
   }
   return strips;
@@ -154,7 +220,25 @@ export function hipRoof(outline: Pt[], slope: number): RoofStrip[] {
  * intérieures), au nu extérieur des murs.
  */
 export function planOutline(plan: PlanDoc): Pt[] {
-  const fs = faces(plan);
+  // Seules les pièces fermées ont un toit : un balcon ou une terrasse (murs
+  // bas sur la plus grande partie du tour) reste à ciel ouvert.
+  const pos0 = new Map(plan.nodes.map((n) => [n.id, n]));
+  const wallOf = (a: string, b: string) => plan.walls.find((w) => (w.a === a && w.b === b) || (w.a === b && w.b === a));
+  const closed = (nodes: string[]) => {
+    let full = 0, all = 0;
+    nodes.forEach((a, i) => {
+      const b = nodes[(i + 1) % nodes.length];
+      const pa = pos0.get(a), pb = pos0.get(b);
+      if (!pa || !pb) return;
+      const len = Math.hypot(pb.x - pa.x, pb.y - pa.y);
+      all += len;
+      const w = wallOf(a, b);
+      // Une limite de pièce (espace ouvert) compte comme fermée : l'autre pièce la couvre.
+      if (w && (isBoundary(plan, w) || heightOf(plan, w) >= (plan.wallHeight ?? 2.5) - 0.3)) full += len;
+    });
+    return all > 0 && full / all >= 0.5;
+  };
+  const fs = faces(plan).filter((f) => closed(f.nodes));
   const count = new Map<string, number>();
   const key = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
   for (const f of fs) f.nodes.forEach((a, i) => { const k = key(a, f.nodes[(i + 1) % f.nodes.length]); count.set(k, (count.get(k) ?? 0) + 1); });

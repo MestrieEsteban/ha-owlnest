@@ -38,8 +38,17 @@ export function buildRoof(doc: PlanDoc, color = '#8f4a36'): THREE.Group | null {
   const outline = planOutline(doc);
   if (outline.length < 3) return null;
   const base = (doc.wallHeight ?? 2.5) - ROOF_EAVE * ROOF_SLOPE;
-  const strips = hipRoof(offset(outline, ROOF_EAVE), ROOF_SLOPE);
+  const eave = offset(outline, ROOF_EAVE);
+  const strips = hipRoof(eave, ROOF_SLOPE);
   if (!strips.length) return null;
+  // Garde-fou : les pans doivent couvrir le contour, ni plus ni moins. Sinon
+  // (un contour que le calcul ne sait pas traiter), pas de toit plutôt que des pics.
+  const shoelace = (p: Pt[]) => Math.abs(p.reduce((s, q, i) => { const r = p[(i + 1) % p.length]; return s + (q.x * r.y - r.x * q.y) / 2; }, 0));
+  const covered = strips.reduce((s, x) => s + shoelace(x.pts), 0);
+  if (Math.abs(covered - shoelace(eave)) > 0.01 * shoelace(eave)) {
+    console.warn('[Owlnest] roof skipped: outline not handled');
+    return null;
+  }
   const pos: number[] = [];
   const col: number[] = [];
   const tint = new THREE.Color(color);
