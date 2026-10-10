@@ -36,11 +36,12 @@ Owlnest 1.x montrait la maison. Owlnest 2.0 doit **servir tous les jours sur une
 - [x] **Poser les appareils de chaque pièce** : une pièce du plan qui porte le nom (ou un alias) d'une pièce de Home Assistant reçoit ses lampes, capteurs et prises, répartis dans son contour (`plan/auto-place.ts`, testé). Une seule annulation retire tout.
 - [x] **Import à plusieurs niveaux** : le fichier demande lequel importer.
 - [x] **Parcours de contrôle** : un script parcourt tous les écrans du banc sans une erreur de console.
+- [x] **Les étages** (10 octobre) : plusieurs niveaux dans le plan, empilés en 3D, un choix d'étage sur la carte et dans l'éditeur de plan, import Sweet Home 3D de tous les niveaux. Voir [[Etages]].
 
 ## La suite, dans l'ordre
 
 1. Relire tout le parcours sur le vrai Home Assistant d'Esteban (rien n'y a encore été essayé).
-2. Les vrais étages (plusieurs niveaux dans le plan, un sélecteur sur la carte). En attendant, l'import d'un fichier à plusieurs niveaux demande lequel importer (`levelChoices`).
+2. Étages, la suite : escaliers, trémie dans la dalle, choix d'étage dans l'éditeur de la maison (les appareils se posent aujourd'hui sur l'étage montré par la carte).
 
 ## Plus tard
 

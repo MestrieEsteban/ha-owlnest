@@ -58,4 +58,4 @@ Voir [[Chantiers ouverts]] : les murs bas mis de côté attendaient justement ce
 
 ## Plusieurs niveaux (10 octobre 2026)
 
-L'éditeur n'a pas d'étages : un seul niveau est importé. Depuis le 10 octobre, un fichier à plusieurs niveaux **demande lequel** (`levelChoices` liste ceux qui ont des murs, `homeToPlan(home, names, levelId)` importe le choisi). Réimporter le fichier permet de passer à un autre niveau. Voir [[Owlnest 2.0]].
+Depuis le 10 octobre (soir), **tous les niveaux qui ont des murs** sont importés : `homeToHouse` appelle `homeToPlan(home, names, levelId)` pour chacun, le plus bas devient le rez-de-chaussée, les autres des étages à `(élévation du niveau − celle du plus bas) × 0,01` m. Sweet Home 3D met tous les niveaux dans le même repère : ils tombent pile les uns sur les autres. Chaque meuble garde son niveau (`PendingItem.floor`, puis `FurnitureImport.floors`). La question « quel niveau importer ? » a disparu. Voir [[Etages]].
