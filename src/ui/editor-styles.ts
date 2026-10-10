@@ -20,7 +20,7 @@ export const EDITOR_STYLES = `
 /* La barre cède la place peu à peu : le titre d'abord, puis les libellés des onglets. */
 .ow-edbar { container-type: inline-size; }
 @container (max-width: 1320px) { .ow-edtitle span { display: none; } }
-@container (max-width: 1080px) { .ow-tab span, .ow-steps span { display: none; } .ow-tab { padding: 7px 9px; } }
+@container (max-width: 1080px) { .ow-tab span, .ow-steps span { display: none; } .ow-edbar .ow-tab { padding: 7px 9px; } }
 .ow-edtitle { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; color: #7dd3fc; white-space: nowrap; flex-shrink: 0; }
 .ow-tabs { display: flex; gap: 2px; padding: 3px; border-radius: 11px; background: var(--ow-chrome2); border: 1px solid var(--ow-line);
   overflow-x: auto; scrollbar-width: none; min-width: 0; margin-inline: auto; }
