@@ -48,12 +48,17 @@ class Palette {
     return this.get(`paint:${color}:${roughness}:${metalness}`, () => new THREE.MeshStandardMaterial({ color, roughness, metalness }));
   }
 
+  /** La peinture d'un mur : elle lit l'ombre douce de son pied (couleurs par sommet). */
+  wall(color: string) {
+    return this.get(`wall:${color}`, () => new THREE.MeshStandardMaterial({ color, roughness: 0.92, metalness: 0, vertexColors: true }));
+  }
+
   /** Une façade : sa couleur, et le motif de sa matière (crépi, brique…). */
   facade(color: string, kind: FacadeMaterial | undefined) {
     const map = facadeTexture(kind);
-    if (!map) return this.paint(color, 0.92);
+    if (!map) return this.wall(color);
     return this.get(`facade:${color}:${kind}`, () => new THREE.MeshStandardMaterial({
-      color, map, roughness: kind === 'wood' ? 0.75 : 0.95,
+      color, map, roughness: kind === 'wood' ? 0.75 : 0.95, vertexColors: true,
     }));
   }
 
@@ -81,17 +86,29 @@ class Palette {
  * verticale posée sur l'arête i ; le dessus et le dessous sont le groupe 0.
  * Le contour peut être concave (pièce en L).
  */
-function prismFaces(poly: readonly Pt[], y0: number, y1: number, side: (p: Pt, q: Pt) => number = () => 0, uvMeters = 0) {
+/**
+ * L'ombre douce au pied d'un mur (une occlusion ambiante calculée une fois) :
+ * 1 en hauteur, jusqu'à `AO_DEPTH` plus sombre au ras du sol, sur `AO_HEIGHT`.
+ */
+const AO_DEPTH = 0.35;
+const AO_HEIGHT = 1.2;
+const aoAt = (y: number) => {
+  const t = Math.min(1, Math.max(0, y / AO_HEIGHT));
+  return 1 - AO_DEPTH * (1 - t) * (1 - t);
+};
+
+function prismFaces(poly: readonly Pt[], y0: number, y1: number, side: (p: Pt, q: Pt) => number = () => 0, uvMeters = 0, ao = false) {
   const pts = area(poly) < 0 ? [...poly].reverse() : [...poly];
-  const groups = new Map<number, { pos: number[]; uv: number[] }>();
+  const groups = new Map<number, { pos: number[]; uv: number[]; col: number[] }>();
   const bucket = (g: number) => {
     let b = groups.get(g);
-    if (!b) { b = { pos: [], uv: [] }; groups.set(g, b); }
+    if (!b) { b = { pos: [], uv: [], col: [] }; groups.set(g, b); }
     return b;
   };
-  const push = (b: { pos: number[]; uv: number[] }, p: Pt, y: number, u = p.x, v = p.y) => {
+  const push = (b: { pos: number[]; uv: number[]; col: number[] }, p: Pt, y: number, u = p.x, v = p.y) => {
     b.pos.push(p.x, y, p.y);
     if (uvMeters) b.uv.push(u / uvMeters, v / uvMeters);
+    if (ao) { const k = aoAt(y); b.col.push(k, k, k); }
   };
   const caps = bucket(0);
   const tris = THREE.ShapeUtils.triangulateShape(pts.map((p) => new THREE.Vector2(p.x, p.y)), []);
@@ -115,6 +132,7 @@ function prismFaces(poly: readonly Pt[], y0: number, y1: number, side: (p: Pt, q
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3));
     if (uvMeters) geo.setAttribute('uv', new THREE.Float32BufferAttribute(b.uv, 2));
+    if (ao) geo.setAttribute('color', new THREE.Float32BufferAttribute(b.col, 3));
     geo.computeVertexNormals();
     out.set(g, geo);
   }
@@ -171,8 +189,8 @@ function buildWall(
   // Le dessus et les chants : la couleur d'une pièce plutôt que celle du dehors.
   const core = roomLeft || !roomRight ? left : right;
   // Côté dehors, la matière de la façade ; côté pièce, la peinture.
-  const face = (color: string, room: PlanRoom | null) => (room ? pal.paint(color, 0.92) : pal.facade(color, plan.facade));
-  const mats = [pal.paint(core, 0.92), face(left, roomLeft), face(right, roomRight)];
+  const face = (color: string, room: PlanRoom | null) => (room ? pal.wall(color) : pal.facade(color, plan.facade));
+  const mats = [pal.wall(core), face(left, roomLeft), face(right, roomRight)];
   const uvMeters = plan.facade && plan.facade !== 'smooth' ? FACADE_METERS[plan.facade] : 0;
   const side = (p: Pt, q: Pt) => {
     const s = dot(sub(mul(add(p, q), 0.5), a), n);
@@ -209,7 +227,7 @@ function buildWall(
       const poly = clipAlong(foot, a, dir, cuts[seg], cuts[seg + 1]);
       if (poly.length < 3 || Math.abs(area(poly)) < 1e-6) continue;
       const corner = stopA > 1e-3 && cuts[seg + 1] <= stopA + 1e-3 ? 1 : stopB < L - 1e-3 && cuts[seg] >= stopB - 1e-3 ? 2 : 0;
-      for (const [g, geo] of prismFaces(poly, p.y0, p.y1, split, uvMeters)) {
+      for (const [g, geo] of prismFaces(poly, p.y0, p.y1, split, uvMeters, true)) {
         tagWall(geo, index, false, corner);
         group.add(mesh(`wall_${index}_${k}${g ? `_${g}` : ''}${seg ? `.${seg}` : ''}`, geo, mats[g]));
       }
