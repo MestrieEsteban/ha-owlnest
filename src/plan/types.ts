@@ -48,6 +48,8 @@ export interface PlanRoom {
 export type OpeningKind = 'door' | 'window' | 'slider' | 'passage';
 
 export type FloorMaterial = 'plain' | 'wood' | 'tiles' | 'concrete' | 'carpet';
+/** Les matières de façade : enduit lisse, crépi, brique, bardage bois, pierre. */
+export type FacadeMaterial = 'smooth' | 'render' | 'brick' | 'wood' | 'stone';
 
 /** Modèles de porte et de fenêtre. */
 export type DoorStyle = 'plain' | 'panels' | 'glazed' | 'entry';
@@ -130,6 +132,10 @@ export interface PlanDoc {
   background?: PlanBackground;
   /** Couleur des murs côté extérieur. */
   outside?: string;
+  /** Matière des façades (enduit lisse par défaut). */
+  facade?: FacadeMaterial;
+  /** Une bande plus sombre au pied des façades. */
+  plinth?: boolean;
   /**
    * Point du plan placé au centre de la scène 3D. Fixé au premier dessin et
    * plus jamais recalculé : les ancres sont posées en coordonnées de la scène,

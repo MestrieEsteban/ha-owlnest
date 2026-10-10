@@ -254,7 +254,8 @@ export function buildHouse(plan: PlanDoc, active: number): BuiltHouse {
   if (top > 0) stripWallTags(root);
   const groups: THREE.Object3D[] = [root];
   for (const v of views.slice(1, top + 1)) {
-    const g = buildPlan(v.doc);
+    // La façade est celle de la maison : un étage la reprend, sauf la sienne.
+    const g = buildPlan({ ...v.doc, outside: v.doc.outside ?? plan.outside, facade: v.doc.facade ?? plan.facade, plinth: false });
     g.name = `${FLOOR_PREFIX}${v.id}`;
     g.position.y = v.elevation;
     g.userData.owlnestFloor = v.index;

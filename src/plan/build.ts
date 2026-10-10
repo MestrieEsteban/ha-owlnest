@@ -14,13 +14,13 @@
  */
 
 import * as THREE from 'three';
-import type { PlanDoc, PlanOpening, PlanWall, PlanRoom } from './types';
+import type { PlanDoc, PlanOpening, PlanWall, PlanRoom, FacadeMaterial } from './types';
 import { PLAN_COLORS } from './types';
 import { type Pt, sub, add, mul, dot, norm, perp, clipAlong, area, pointInPolygon } from './geometry';
 import { wallEnds, heightOf, thicknessOf, openingFits, faces, wallLength, isBoundary, type Face } from './graph';
 import { wallFootprints, cornerStops } from './footprint';
 import { tagWall } from './low-walls';
-import { floorTexture, TEXTURE_METERS } from './textures';
+import { floorTexture, TEXTURE_METERS, facadeTexture, FACADE_METERS } from './textures';
 
 /** Préfixe des vantaux construits depuis le plan : `plan_leaf_<ouverture>_<n>`. */
 export const PLAN_LEAF = 'plan_leaf_';
@@ -30,6 +30,8 @@ export function leafName(openingId: string, n: number): string {
 }
 
 const FRAME = 0.05;   // largeur du cadre
+const PLINTH_H = 0.35;    // hauteur du soubassement
+const PLINTH_OUT = 0.015; // sa saillie sur la façade
 const LEAF = 0.04;    // épaisseur d'un vantail
 
 /** Matières partagées, une par teinte : autant de maillages fusionnables. */
@@ -44,6 +46,15 @@ class Palette {
 
   paint(color: string, roughness = 0.9, metalness = 0) {
     return this.get(`paint:${color}:${roughness}:${metalness}`, () => new THREE.MeshStandardMaterial({ color, roughness, metalness }));
+  }
+
+  /** Une façade : sa couleur, et le motif de sa matière (crépi, brique…). */
+  facade(color: string, kind: FacadeMaterial | undefined) {
+    const map = facadeTexture(kind);
+    if (!map) return this.paint(color, 0.92);
+    return this.get(`facade:${color}:${kind}`, () => new THREE.MeshStandardMaterial({
+      color, map, roughness: kind === 'wood' ? 0.75 : 0.95,
+    }));
   }
 
   glass() {
@@ -92,8 +103,12 @@ function prismFaces(poly: readonly Pt[], y0: number, y1: number, side: (p: Pt, q
   for (let i = 0; i < pts.length; i++) {
     const p = pts[i], q = pts[(i + 1) % pts.length];
     const b = bucket(side(p, q));
-    push(b, p, y0); push(b, p, y1); push(b, q, y1);
-    push(b, p, y0); push(b, q, y1); push(b, q, y0);
+    // Sur une face verticale, le motif court le long du mur (u) et monte (v) :
+    // deux morceaux d'un même mur se raccordent, puisque u se mesure dans la scène.
+    const e = norm(sub(q, p));
+    const up = dot(p, e), uq = dot(q, e);
+    push(b, p, y0, up, y0); push(b, p, y1, up, y1); push(b, q, y1, uq, y1);
+    push(b, p, y0, up, y0); push(b, q, y1, uq, y1); push(b, q, y0, uq, y0);
   }
   const out = new Map<number, THREE.BufferGeometry>();
   for (const [g, b] of groups) {
@@ -155,7 +170,10 @@ function buildWall(
   const right = roomRight ? roomRight.wall ?? PLAN_COLORS.wall : outside;
   // Le dessus et les chants : la couleur d'une pièce plutôt que celle du dehors.
   const core = roomLeft || !roomRight ? left : right;
-  const mats = [pal.paint(core, 0.92), pal.paint(left, 0.92), pal.paint(right, 0.92)];
+  // Côté dehors, la matière de la façade ; côté pièce, la peinture.
+  const face = (color: string, room: PlanRoom | null) => (room ? pal.paint(color, 0.92) : pal.facade(color, plan.facade));
+  const mats = [pal.paint(core, 0.92), face(left, roomLeft), face(right, roomRight)];
+  const uvMeters = plan.facade && plan.facade !== 'smooth' ? FACADE_METERS[plan.facade] : 0;
   const side = (p: Pt, q: Pt) => {
     const s = dot(sub(mul(add(p, q), 0.5), a), n);
     return s > half * 0.5 ? 1 : s < -half * 0.5 ? 2 : 0;
@@ -191,9 +209,23 @@ function buildWall(
       const poly = clipAlong(foot, a, dir, cuts[seg], cuts[seg + 1]);
       if (poly.length < 3 || Math.abs(area(poly)) < 1e-6) continue;
       const corner = stopA > 1e-3 && cuts[seg + 1] <= stopA + 1e-3 ? 1 : stopB < L - 1e-3 && cuts[seg] >= stopB - 1e-3 ? 2 : 0;
-      for (const [g, geo] of prismFaces(poly, p.y0, p.y1, split)) {
+      for (const [g, geo] of prismFaces(poly, p.y0, p.y1, split, uvMeters)) {
         tagWall(geo, index, false, corner);
         group.add(mesh(`wall_${index}_${k}${g ? `_${g}` : ''}${seg ? `.${seg}` : ''}`, geo, mats[g]));
+      }
+      // Le soubassement : au pied de chaque morceau qui touche le sol, côté dehors.
+      if (plan.plinth && p.y0 < 1e-3) {
+        for (const [out, sign] of [[!roomLeft, 1], [!roomRight, -1]] as const) {
+          if (!out) continue;
+          const us = poly.map((q) => dot(sub(q, a), dir));
+          const u0 = Math.min(...us) - PLINTH_OUT, u1 = Math.max(...us) + PLINTH_OUT;
+          const nOut = mul(n, sign);
+          const at = (u: number, d: number) => add(add(a, mul(dir, u)), mul(nOut, d));
+          const strip = [at(u0, half - 0.002), at(u1, half - 0.002), at(u1, half + PLINTH_OUT), at(u0, half + PLINTH_OUT)];
+          const geo = prism(strip, 0, Math.min(PLINTH_H, p.y1));
+          tagWall(geo, index, false, corner);
+          group.add(mesh(`wall_${index}_${k}_plinth${seg ? `.${seg}` : ''}`, geo, pal.paint(plinthColor(plan.outside ?? PLAN_COLORS.outside), 0.95)));
+        }
       }
     }
   });
@@ -260,6 +292,15 @@ function doorLeaf(leaf: THREE.Group, o: PlanOpening, pal: Palette, x0: number, w
 }
 
 /** Éclaircit (k > 0) ou assombrit (k < 0) une couleur. */
+/** Le soubassement : la façade plus sombre et moins vive, sans jamais tomber au noir. */
+function plinthColor(hex: string): string {
+  const c = new THREE.Color(hex);
+  const hsl = { h: 0, s: 0, l: 0 };
+  c.getHSL(hsl);
+  c.setHSL(hsl.h, hsl.s * 0.45, Math.max(0.3, hsl.l - 0.16));
+  return `#${c.getHexString()}`;
+}
+
 function shade(hex: string, k: number): string {
   const c = new THREE.Color(hex);
   const hsl = { h: 0, s: 0, l: 0 };
