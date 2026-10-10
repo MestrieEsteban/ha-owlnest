@@ -870,7 +870,10 @@ export class EnvironmentController {
     // Deux écarts sous le plancher : il faut laisser la place au disque du
     // podium, qui vient se glisser entre les deux. Un seul écart le ramènerait
     // exactement au niveau du plancher, donc au scintillement de départ.
-    const groundY = -size.y / 2 - gap * 2;
+    // Sous le point le plus bas du modèle, et non à la moitié de sa hauteur :
+    // une maison à étages n'est pas centrée verticalement sur l'origine (elle
+    // l'est sur son rez-de-chaussée), et flottait au-dessus du sol.
+    const groundY = (Number.isFinite(originalBox.min.y) ? originalBox.min.y : -size.y / 2) - gap * 2;
     const groundHex = config?.rendering?.ground_color
       ? parseInt(config.rendering.ground_color.replace('#', ''), 16)
       : 0x4a6741;
