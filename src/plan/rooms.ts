@@ -27,6 +27,15 @@ export const ROOM_TYPES: Record<RoomType, { label: StringKey; floor: string; mat
 };
 
 /** Couleurs de murs : blancs cassés, pastels, et quelques teintes franches. */
+/** Teintes de façade : enduits, terre cuite, bois, pierre, gris. */
+export const FACADE_COLORS = [
+  '#f2ede3', '#e8dcc5', '#d9c7a6', '#c9a27a', '#b5653f', '#9c5a3c',
+  '#8a6a4f', '#5e4636', '#cfc6b4', '#a9a49a', '#6f7478', '#3f4549',
+];
+
+/** Teintes de sol : pelouses, gravier, béton, sombre, clair. */
+export const GROUND_COLORS = ['#4a6741', '#5d7b3f', '#3d5a36', '#b9a98a', '#8c8c86', '#2b2f36', '#e6e2d8'];
+
 export const WALL_COLORS = [
   '#ece8e1', '#ffffff', '#f3ead8', '#e8dccb', '#d9e3e8', '#dfe8dc',
   '#f1dede', '#c9d4de', '#8fa3b5', '#a3b18a', '#d8a48f', '#4a5560',

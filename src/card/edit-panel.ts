@@ -17,6 +17,8 @@ import { PARTS_ENABLED } from '../parts';
 import type { SceneSummary } from '../scene';
 import { describeEntity, knownStates, stateLabel } from '../entities/descriptors';
 import { stateText } from '../entities/format';
+import { FACADE_COLORS, GROUND_COLORS } from '../plan/rooms';
+import type { FacadeMaterial } from '../plan/types';
 import { openFraction, hasOpenSemantics, type ExtendInfo } from '../parts-runtime';
 import type { ClipInfo } from '../parts-clips';
 import { detectionLabel, resolveLevel } from '../quality';
@@ -214,7 +216,8 @@ function createHelpBadge(text: string): HTMLElement {
     'background:rgba(255,255,255,0.08)', 'color:#64748b',
     'border:1px solid rgba(255,255,255,0.1)',
     'transition:background .15s,color .15s',
-    'flex-shrink:0', 'margin-left:4px',
+    // Ni étiré ni écrasé, même dans une ligne où les textes prennent la place.
+    'flex:0 0 14px', 'margin-left:4px',
   ].join(';');
 
   let popup: HTMLDivElement | null = null;
@@ -325,6 +328,10 @@ export class EditPanel {
    * (`null` sinon), et l'étage à montrer avant d'ouvrir sa fiche.
    */
   partFloor?: (part: OwlnestPart) => string | null;
+  /** L'apparence de la maison dessinée (façade), lue et changée sur le plan ; `null` sans plan. */
+  getPlanLook?: () => { outside?: string; facade?: FacadeMaterial; plinth?: boolean } | null;
+  setPlanLook?: (patch: { outside?: string; facade?: FacadeMaterial; plinth?: boolean }) => void;
+
   /** Les niveaux du logement, l'étage regardé, et en changer (vide : pas d'étages). */
   floors?: { list: () => string[]; active: () => number; set: (k: number) => void };
   private _floorsEl: HTMLDivElement | null = null;
@@ -1552,8 +1559,10 @@ export class EditPanel {
           const hit = !q
             || (child.textContent ?? '').toLowerCase().includes(q)
             || label.toLowerCase().includes(q);
-          child.style.display = hit ? '' : 'none';
-          if (hit) matches++;
+          // Un champ masqué exprès (la couverture d'un toit ouvert) le reste.
+          const off = child.dataset.off === '1';
+          child.style.display = hit && !off ? '' : 'none';
+          if (hit && !off) matches++;
         }
         box.style.display = matches ? '' : 'none';
         // Une recherche ouvre ce qu'elle trouve ; l'effacer rend la main au
@@ -1875,8 +1884,245 @@ export class EditPanel {
       root.appendChild(newWrap);
     }
 
+    // ── Petits contrôles de l'apparence ─────────────────────────────────
+    /** Un interrupteur, à la place des cases à cocher. */
+    const switchField = (labelText: string, helpText: string | null, on: boolean, onChange: (v: boolean) => void) => {
+      const row = document.createElement('div');
+      row.className = 'ow-row-opt';
+      row.style.cssText = 'margin-bottom:10px;';
+      const lbl = document.createElement('span');
+      lbl.style.cssText = 'display:flex;align-items:center;font-size:13px;color:var(--ow-text);';
+      lbl.textContent = labelText;
+      if (helpText) lbl.appendChild(helpBadge(helpText));
+      const sw = document.createElement('button');
+      sw.type = 'button';
+      sw.className = `ow-switch${on ? ' ow-on' : ''}`;
+      sw.setAttribute('role', 'switch');
+      sw.setAttribute('aria-checked', String(on));
+      sw.setAttribute('aria-label', labelText);
+      sw.addEventListener('click', () => {
+        const v = !sw.classList.contains('ow-on');
+        sw.classList.toggle('ow-on', v);
+        sw.setAttribute('aria-checked', String(v));
+        onChange(v);
+      });
+      row.append(lbl, sw);
+      root.appendChild(row);
+    };
+
+    /** Un choix parmi quelques-uns, en boutons côte à côte. */
+    const segField = (labelText: string, helpText: string | null, options: [string, string][], current: string, onChange: (v: string) => void) => {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'margin-bottom:12px;';
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;margin-bottom:6px;';
+      const lbl = document.createElement('span');
+      lbl.style.cssText = 'font-size:12px;color:var(--ow-muted);font-weight:600;';
+      lbl.textContent = labelText;
+      row.appendChild(lbl);
+      if (helpText) row.appendChild(helpBadge(helpText));
+      const seg = document.createElement('div');
+      seg.className = `ow-seg${options.length > 3 ? ' ow-seg-wrap' : ''}`;
+      seg.setAttribute('role', 'radiogroup');
+      seg.setAttribute('aria-label', labelText);
+      for (const [val, text] of options) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = text;
+        b.setAttribute('role', 'radio');
+        const paint = (v: string) => { b.classList.toggle('ow-on', v === val); b.setAttribute('aria-checked', String(v === val)); };
+        paint(current);
+        b.addEventListener('click', () => {
+          seg.querySelectorAll('button').forEach((x) => { x.classList.remove('ow-on'); x.setAttribute('aria-checked', 'false'); });
+          paint(val);
+          onChange(val);
+        });
+        seg.appendChild(b);
+      }
+      wrap.append(row, seg);
+      root.appendChild(wrap);
+      return wrap;
+    };
+
+    /** Des pastilles de couleur, et une dernière pour choisir la sienne. */
+    const swatchField = (labelText: string, colors: readonly string[], current: string, onChange: (c: string) => void) => {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'margin-bottom:12px;';
+      const lbl = document.createElement('div');
+      lbl.style.cssText = 'font-size:12px;color:var(--ow-muted);font-weight:600;margin-bottom:6px;';
+      lbl.textContent = labelText;
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;';
+      const all: HTMLElement[] = [];
+      const mark = (c: string) => all.forEach((el) => {
+        const on = (el.dataset.color ?? '').toLowerCase() === c.toLowerCase();
+        el.style.boxShadow = on ? '0 0 0 2px var(--ow-chrome), 0 0 0 4px var(--ow-acc)' : 'inset 0 0 0 1px rgba(0,0,0,0.25)';
+      });
+      for (const c of colors) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.dataset.color = c;
+        b.title = c;
+        b.setAttribute('aria-label', c);
+        b.style.cssText = `width:26px;height:26px;border-radius:50%;border:none;cursor:pointer;background:${c};`;
+        b.addEventListener('click', () => { mark(c); onChange(c); });
+        row.appendChild(b);
+        all.push(b);
+      }
+      // La sienne : un sélecteur de couleur habillé en pastille arc-en-ciel.
+      const custom = document.createElement('label');
+      custom.title = t('cfgCustomColor');
+      custom.style.cssText = 'position:relative;width:26px;height:26px;border-radius:50%;cursor:pointer;overflow:hidden;background:conic-gradient(#f87171,#fbbf24,#34d399,#38bdf8,#a78bfa,#f87171);box-shadow:inset 0 0 0 1px rgba(0,0,0,0.25);';
+      const input = document.createElement('input');
+      input.type = 'color';
+      input.value = /^#[0-9a-f]{6}$/i.test(current) ? current : '#888888';
+      input.style.cssText = 'position:absolute;inset:0;opacity:0;cursor:pointer;';
+      input.addEventListener('input', () => { mark(input.value); onChange(input.value); });
+      custom.appendChild(input);
+      row.appendChild(custom);
+      mark(current);
+      wrap.append(lbl, row);
+      root.appendChild(wrap);
+    };
+
     // ══════════════════════════════════════════════════════════════════════
-    // 0b) PERFORMANCE — quality preset
+    // 1) APPARENCE — façade, toit, jardin, sol, fond
+    // ══════════════════════════════════════════════════════════════════════
+    sec(t('cfgLook'));
+
+    // La façade appartient au plan dessiné (elle vaut pour tous les étages).
+    const look = this.getPlanLook?.();
+    if (look) {
+      swatchField(t('cfgFacadeColor'), FACADE_COLORS, look.outside ?? '#e4ddd0', (c) => this.setPlanLook?.({ outside: c }));
+      segField(t('cfgFacade'), null, [
+        ['smooth', t('cfgFacadeSmooth')],
+        ['render', t('cfgFacadeRender')],
+        ['brick', t('cfgFacadeBrick')],
+        ['wood', t('cfgFacadeWood')],
+        ['stone', t('cfgFacadeStone')],
+      ], look.facade ?? 'smooth', (v) => this.setPlanLook?.({ facade: v as FacadeMaterial }));
+      switchField(t('cfgPlinth'), t('helpPlinth'), !!look.plinth, (v) => this.setPlanLook?.({ plinth: v }));
+
+      let coverWrap: HTMLElement | null = null;
+      segField(t('cfgRoof'), t('helpRoof'), [
+        ['flat', t('cfgRoofFlat')],
+        ['hip', t('cfgRoofHip')],
+      ], rendering.roof ?? 'flat', (v) => {
+        if (coverWrap) { coverWrap.dataset.off = v === 'hip' ? '' : '1'; coverWrap.style.display = v === 'hip' ? '' : 'none'; }
+        this.onSceneSettingsChange?.({ rendering: { roof: v as 'flat' | 'hip' } });
+      });
+      coverWrap = segField(t('cfgRoofColor'), null, [
+        ['tile', t('cfgRoofTile')],
+        ['slate', t('cfgRoofSlate')],
+        ['zinc', t('cfgRoofZinc')],
+      ], rendering.roof_color ?? 'tile', (v) => {
+        this.onSceneSettingsChange?.({ rendering: { roof_color: v as 'tile' | 'slate' | 'zinc' } });
+      });
+      if ((rendering.roof ?? 'flat') !== 'hip') { coverWrap.dataset.off = '1'; coverWrap.style.display = 'none'; }
+    }
+
+    segField(t('cfgGarden'), t('helpGarden'), [
+      ['none', t('cfgGardenNone')],
+      ['some', t('cfgGardenSome')],
+      ['lush', t('cfgGardenLush')],
+    ], rendering.garden ?? 'none', (v) => {
+      this.onSceneSettingsChange?.({ rendering: { garden: v as 'none' | 'some' | 'lush' } });
+    });
+
+    selectField(t('cfgGroundStyle'), t('helpGroundStyle'), [
+      ['square', t('cfgGroundSquare')],
+      ['disc', t('cfgGroundDisc')],
+      ['podium', t('cfgGroundPodium')],
+      ['infinite', t('cfgGroundInfinite')],
+      ['none', t('cfgGroundNone')],
+    ], rendering.ground_style ?? 'square', (v) => {
+      this.onSceneSettingsChange?.({ rendering: { ground_style: v as 'square' | 'disc' | 'infinite' | 'podium' | 'none' } });
+    });
+
+    swatchField(t('cfgGroundColor'), GROUND_COLORS, rendering.ground_color ?? '#4a6741',
+      (c) => this.onSceneSettingsChange?.({ rendering: { ground_color: c } }));
+
+    {
+      const currentStyle = rendering.ground_style ?? 'square';
+      if (currentStyle !== 'infinite' && currentStyle !== 'none') {
+        sliderWithHelp(t('cfgGroundScale'), t('helpGroundScale'), 0.5, 3, 0.1, rendering.ground_scale ?? 1.0,
+          (v) => '\u00d7' + v.toFixed(1), (v) => this.onSceneSettingsChange?.({ rendering: { ground_scale: v } }));
+      }
+    }
+
+    switchField(t('cfgTransparent'), t('helpTransparent'), rendering.transparent_background === true, (v) => {
+      this.onSceneSettingsChange?.({ rendering: { transparent_background: v } });
+    });
+
+    // ══════════════════════════════════════════════════════════════════════
+    // 2) LUMIÈRE — soleil, ambiance, luminosité, ombres
+    // ══════════════════════════════════════════════════════════════════════
+    sec(t('cfgLight'));
+
+    sliderWithHelp(t('cfgSunIntensity'), t('helpSunIntensity'), 0, 3, 0.05, rendering.sun_intensity ?? 0.8,
+      (v) => `${Math.round(v * 100)} %`, (v) => this.onSceneSettingsChange?.({ rendering: { sun_intensity: v } }));
+
+    sliderWithHelp(t('cfgAmbientIntensity'), t('helpAmbientIntensity'), 0, 2, 0.05, rendering.ambient_intensity ?? 0.7,
+      (v) => `${Math.round(v * 100)} %`, (v) => this.onSceneSettingsChange?.({ rendering: { ambient_intensity: v } }));
+
+    sliderWithHelp(t('cfgExposure'), t('helpExposure'), 0.5, 2, 0.05, rendering.exposure ?? 1.4,
+      (v) => `${Math.round(v * 100)} %`, (v) => this.onSceneSettingsChange?.({ rendering: { exposure: v } }));
+
+    switchField(t('cfgShadows'), t('helpShadows'), rendering.shadows !== false, (v) => {
+      this.onSceneSettingsChange?.({ rendering: { shadows: v } });
+    });
+
+    switchField(t('cfgLightOcclusion'), t('helpLightOcclusion'), rendering.light_occlusion === 'top', (v) => {
+      this.onSceneSettingsChange?.({ rendering: { light_occlusion: v ? 'top' : 'none' } });
+    });
+
+    // ══════════════════════════════════════════════════════════════════════
+    // 3) CAMÉRA ET PASTILLES — zoom, inclinaison, voir à travers, regroupement
+    // ══════════════════════════════════════════════════════════════════════
+    sec(t('cfgCamPins'));
+    const orbit = settings.orbit ?? {};
+
+    /**
+     * Distances d'orbite, exprimées en multiples de l'envergure du modèle.
+     *
+     * La valeur enregistrée reste une distance absolue : c'est le modèle de
+     * données qui compte, pas l'unité d'affichage.
+     */
+    const span = this.getModelSpan?.() ?? 0;
+    const relative = span > 0;
+    const unit = relative ? span : 1;
+
+    sliderWithHelp(
+      t('cfgMinDist'), t('helpMinDist'),
+      relative ? 0.01 : 0, relative ? 0.5 : 20, relative ? 0.01 : 0.5,
+      (orbit.min_distance ?? (relative ? span * 0.05 : 1)) / unit,
+      (v) => (relative ? `${v.toFixed(2)}×` : v.toFixed(1)),
+      (v) => this.onSceneSettingsChange?.({ orbit: { min_distance: v * unit } }),
+    );
+
+    sliderWithHelp(
+      t('cfgMaxDist'), t('helpMaxDist'),
+      relative ? 0.5 : 1, relative ? 6 : 200, relative ? 0.1 : 1,
+      (orbit.max_distance ?? (relative ? span * 3 : 100)) / unit,
+      (v) => (relative ? `${v.toFixed(1)}×` : String(Math.round(v))),
+      (v) => this.onSceneSettingsChange?.({ orbit: { max_distance: v * unit } }),
+    );
+
+    // Enregistré en fraction de demi-tour (0,5 = à l'horizontale) ; affiché en degrés.
+    sliderWithHelp(t('cfgMaxPolar'), t('helpMaxPolar'), 0.1, 0.55, 0.01, orbit.max_polar_angle ?? 0.48,
+      (v) => `${Math.round(v * 180)}°`, (v) => this.onSceneSettingsChange?.({ orbit: { max_polar_angle: v } }));
+
+    // 0 = inactif. Il suit le point de vue, là où la coupe horizontale est fixe.
+    sliderWithHelp(t('cfgXray'), t('helpXray'), 0, 1, 0.05, rendering.xray ?? 0,
+      (v) => (v <= 0 ? t('cutawayOff') : `${Math.round(v * 100)} %`),
+      (v) => this.onSceneSettingsChange?.({ rendering: { xray: v } }));
+
+    sliderWithHelp(t('cfgClusterThreshold'), t('helpCluster'), 0, 60, 5, settings.cluster_threshold ?? 0,
+      (v) => (v <= 0 ? t('cutawayOff') : `${Math.round(v)} px`),
+      (v) => this.onSceneSettingsChange?.({ cluster_threshold: v }));
+
+    // ══════════════════════════════════════════════════════════════════════
+    // 5) PERFORMANCE — quality preset
     // ══════════════════════════════════════════════════════════════════════
     sec(t('cfgPerf'));
 
@@ -1893,7 +2139,7 @@ export class EditPanel {
         ],
         current,
         (v) => {
-          this.onSceneSettingsChange?.({ rendering: { ...rendering, quality: v as QualityLevel } });
+          this.onSceneSettingsChange?.({ rendering: { quality: v as QualityLevel } });
           // Le libellé du matériel dépend du niveau retenu — on le rafraîchit.
           detail.textContent = describe(v as QualityLevel);
         },
@@ -1906,223 +2152,22 @@ export class EditPanel {
           ? `${t('cfgQualityDetected')} : ${detectionLabel()} → ${resolveLevel('auto')}`
           : `${t('cfgQualityDetected')} : ${detectionLabel()}`;
 
+      const more = document.createElement('details');
+      more.style.cssText = 'margin:-4px 0 8px;';
+      const moreH = document.createElement('summary');
+      moreH.style.cssText = 'font-size:11.5px;color:var(--ow-muted);cursor:pointer;';
+      moreH.textContent = t('cfgQualityDetails');
       const detail = document.createElement('div');
-      detail.style.cssText = 'font-size:11.5px;color:var(--ow-muted);margin:-4px 0 8px;line-height:1.5;';
+      detail.style.cssText = 'font-size:11.5px;color:var(--ow-muted);margin-top:4px;line-height:1.5;';
       detail.textContent = describe(current as QualityLevel);
-      root.appendChild(detail);
+      more.append(moreH, detail);
+      root.appendChild(more);
 
       const reloadNote = document.createElement('div');
       reloadNote.style.cssText = 'font-size:11.5px;color:var(--ow-muted);margin:0 0 8px;line-height:1.5;';
       reloadNote.textContent = t('cfgQualityReload');
       root.appendChild(reloadNote);
     }
-
-    // ══════════════════════════════════════════════════════════════════════
-    // 1) SCENE PRESENTATION — sun mode, orientation, occlusion
-    // ══════════════════════════════════════════════════════════════════════
-    sec(t('cfgPresentation'));
-
-    selectField(t('cfgSunMode'), t('helpSunMode'), [
-      ['showcase', t('cfgSunModeShowcase')],
-      ['realistic', t('cfgSunModeRealistic')],
-    ], rendering.sun_mode ?? 'showcase', (v) => {
-      this.onSceneSettingsChange?.({ rendering: { ...rendering, sun_mode: v as 'showcase' | 'realistic' } });
-    });
-
-    // House orientation — compass slider
-    {
-      const currentOrientation = rendering.house_orientation ?? 0;
-      const wrap = document.createElement('div');
-      wrap.style.cssText = 'margin-bottom:12px;';
-      const hdr = document.createElement('div');
-      hdr.style.cssText = 'display:flex;align-items:center;margin-bottom:6px;';
-      const lbl = document.createElement('span');
-      lbl.style.cssText = 'font-size:12px;color:var(--ow-muted);font-weight:600;';
-      lbl.textContent = t('cfgHouseOrientation');
-      hdr.appendChild(lbl);
-      hdr.appendChild(helpBadge(t('helpHouseOrientation')));
-      const spacer = document.createElement('span');
-      spacer.style.cssText = 'flex:1;';
-      hdr.appendChild(spacer);
-      const val = document.createElement('span');
-      val.style.cssText = 'font-size:12px;color:var(--ow-text);font-weight:600;font-variant-numeric:tabular-nums;';
-      const cardinals = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-      const toCardinal = (deg: number) => {
-        const idx = Math.round(((deg % 360) + 360) % 360 / 45) % 8;
-        return `${Math.round(deg)}° ${cardinals[idx]}`;
-      };
-      val.textContent = toCardinal(currentOrientation);
-      hdr.appendChild(val);
-      const sl = document.createElement('input');
-      sl.type = 'range'; sl.min = '0'; sl.max = '359'; sl.step = '5'; sl.value = String(currentOrientation);
-      sl.style.cssText = 'width:100%;cursor:pointer;margin:0;accent-color:var(--ow-acc);';
-      sl.addEventListener('input', () => {
-        const v = parseFloat(sl.value);
-        val.textContent = toCardinal(v);
-        this.onSceneSettingsChange?.({ rendering: { ...rendering, house_orientation: v } });
-      });
-      wrap.appendChild(hdr); wrap.appendChild(sl);
-      root.appendChild(wrap);
-    }
-
-    selectField(t('cfgRoof'), t('helpRoof'), [
-      ['flat', t('cfgRoofFlat')],
-      ['hip', t('cfgRoofHip')],
-    ], rendering.roof ?? 'flat', (v) => {
-      this.onSceneSettingsChange?.({ rendering: { ...rendering, roof: v as 'flat' | 'hip' } });
-    });
-
-    selectField(t('cfgRoofColor'), t('helpRoofColor'), [
-      ['tile', t('cfgRoofTile')],
-      ['slate', t('cfgRoofSlate')],
-      ['zinc', t('cfgRoofZinc')],
-    ], rendering.roof_color ?? 'tile', (v) => {
-      this.onSceneSettingsChange?.({ rendering: { ...rendering, roof_color: v as 'tile' | 'slate' | 'zinc' } });
-    });
-
-    selectField(t('cfgLightOcclusion'), t('helpLightOcclusion'), [
-      ['none', t('cfgOcclusionNone')],
-      ['top', t('cfgOcclusionTop')],
-    ], rendering.light_occlusion ?? 'none', (v) => {
-      this.onSceneSettingsChange?.({ rendering: { ...rendering, light_occlusion: v as 'none' | 'top' } });
-    });
-
-    // ══════════════════════════════════════════════════════════════════════
-    // 2) GROUND — style, color, scale
-    // ══════════════════════════════════════════════════════════════════════
-    sec(t('cfgGroundStyle'));
-
-    selectField(t('cfgGroundStyle'), t('helpGroundStyle'), [
-      ['square', t('cfgGroundSquare')],
-      ['disc', t('cfgGroundDisc')],
-      ['podium', t('cfgGroundPodium')],
-      ['infinite', t('cfgGroundInfinite')],
-      ['none', t('cfgGroundNone')],
-    ], rendering.ground_style ?? 'square', (v) => {
-      this.onSceneSettingsChange?.({ rendering: { ...rendering, ground_style: v as 'square' | 'disc' | 'infinite' | 'podium' | 'none' } });
-    });
-
-    // Ground color
-    {
-      const colorWrap = document.createElement('div');
-      colorWrap.style.cssText = 'margin-bottom:8px;display:flex;align-items:center;gap:8px;';
-      const colorLbl = document.createElement('div');
-      colorLbl.style.cssText = 'font-size:12px;color:var(--ow-muted);font-weight:600;flex:1;';
-      colorLbl.textContent = t('cfgGroundColor');
-      colorLbl.appendChild(helpBadge(t('helpGroundColor')));
-      const colorInput = document.createElement('input');
-      colorInput.type = 'color';
-      colorInput.value = rendering.ground_color ?? '#1a1a2e';
-      colorInput.style.cssText = 'width:36px;height:24px;border:none;border-radius:6px;cursor:pointer;padding:0;background:none;';
-      colorInput.addEventListener('input', () => this.onSceneSettingsChange?.({ rendering: { ...rendering, ground_color: colorInput.value } }));
-      colorWrap.appendChild(colorLbl); colorWrap.appendChild(colorInput);
-      root.appendChild(colorWrap);
-    }
-
-    // Ground scale (visible for disc, podium, square — not infinite/none)
-    {
-      const currentStyle = rendering.ground_style ?? 'square';
-      if (currentStyle !== 'infinite' && currentStyle !== 'none') {
-        sliderWithHelp(t('cfgGroundScale'), t('helpGroundScale'), 0.5, 3, 0.1, rendering.ground_scale ?? 1.0,
-          (v) => '\u00d7' + v.toFixed(1), (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, ground_scale: v } }));
-      }
-    }
-
-    // ══════════════════════════════════════════════════════════════════════
-    // 3) LIGHTING — sun, ambient, exposure, shadows
-    // ══════════════════════════════════════════════════════════════════════
-    sec(t('cfgRender'));
-
-    sliderWithHelp(t('cfgSunIntensity'), t('helpSunIntensity'), 0, 3, 0.05, rendering.sun_intensity ?? 0.8,
-      (v) => v.toFixed(2), (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, sun_intensity: v } }));
-
-    sliderWithHelp(t('cfgAmbientIntensity'), t('helpAmbientIntensity'), 0, 2, 0.05, rendering.ambient_intensity ?? 0.7,
-      (v) => v.toFixed(2), (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, ambient_intensity: v } }));
-
-    sliderWithHelp(t('cfgExposure'), t('helpExposure'), 0.5, 2, 0.05, rendering.exposure ?? 1.4,
-      (v) => v.toFixed(2), (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, exposure: v } }));
-
-    toggleWithHelp(t('cfgShadows'), t('helpShadows'), rendering.shadows !== false, (v) => {
-      this.onSceneSettingsChange?.({ rendering: { ...rendering, shadows: v } });
-    });
-
-    // ══════════════════════════════════════════════════════════════════════
-    // 4) ATMOSPHERE — fog, transparent
-    // ══════════════════════════════════════════════════════════════════════
-    sec(t('cfgAtmosphere'));
-
-    sliderWithHelp(t('cfgFogDensity'), t('helpFogDensity'), 0, 0.05, 0.001, rendering.fog_density ?? 0.018,
-      (v) => v.toFixed(3), (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, fog_density: v } }));
-
-    // 0 = inactif. C'est le réglage à recommander : il suit le point de vue,
-    // là où la coupe horizontale est fixe.
-    sliderWithHelp(t('cfgXray'), t('helpXray'), 0, 1, 0.05, rendering.xray ?? 0,
-      (v) => (v <= 0 ? t('cutawayOff') : `${Math.round(v * 100)} %`),
-      (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, xray: v } }));
-
-    toggleWithHelp(t('cfgTransparent'), t('helpTransparent'), rendering.transparent_background === true, (v) => {
-      this.onSceneSettingsChange?.({ rendering: { ...rendering, transparent_background: v } });
-    });
-
-    // ── Camera limits ─────────────────────────────────────────────────────
-    sec(t('cfgOrbit'));
-    const orbit = settings.orbit ?? {};
-
-    /**
-     * Distances d'orbite, exprimées en multiples de l'envergure du modèle.
-     *
-     * Les bornes affichées étaient fixes — 0 à 20, puis 1 à 200 — et supposaient
-     * un modèle en mètres. Sur un export en centimètres, où la maison mesure 618
-     * unités, toucher le curseur ramenait la caméra à un mètre du centre : on ne
-     * voyait plus qu'un mur. La carte déduit désormais ces bornes de l'envergure,
-     * et le curseur doit parler la même langue.
-     *
-     * La valeur enregistrée reste une distance absolue : c'est le modèle de
-     * données qui compte, pas l'unité d'affichage.
-     */
-    const span = this.getModelSpan?.() ?? 0;
-    const relative = span > 0;
-    const unit = relative ? span : 1;
-
-    sliderWithHelp(
-      t('cfgMinDist'), t('helpMinDist'),
-      relative ? 0.01 : 0, relative ? 0.5 : 20, relative ? 0.01 : 0.5,
-      (orbit.min_distance ?? (relative ? span * 0.05 : 1)) / unit,
-      // Affiché en multiples de la taille du logement, non en unités de modèle :
-      // « 9 » ou « 556 » ne veulent rien dire quand une unité vaut trois
-      // centimètres, alors que « 0,05 × » se comprend tout de suite.
-      (v) => (relative ? `${v.toFixed(2)}×` : v.toFixed(1)),
-      (v) => this.onSceneSettingsChange?.({ orbit: { ...orbit, min_distance: v * unit } }),
-    );
-
-    sliderWithHelp(
-      t('cfgMaxDist'), t('helpMaxDist'),
-      relative ? 0.5 : 1, relative ? 6 : 200, relative ? 0.1 : 1,
-      (orbit.max_distance ?? (relative ? span * 3 : 100)) / unit,
-      (v) => (relative ? `${v.toFixed(1)}×` : String(Math.round(v))),
-      (v) => this.onSceneSettingsChange?.({ orbit: { ...orbit, max_distance: v * unit } }),
-    );
-
-    sliderWithHelp(t('cfgMaxPolar'), t('helpMaxPolar'), 0, 1, 0.05, orbit.max_polar_angle ?? 0.5,
-      (v) => (v).toFixed(2) + '\u00d7\u03c0', (v) => this.onSceneSettingsChange?.({ orbit: { ...orbit, max_polar_angle: v } }));
-
-    // ── Clustering ────────────────────────────────────────────────────────
-    sec(t('cfgCluster'));
-    const clusterWrap = document.createElement('div');
-    clusterWrap.style.cssText = 'margin-bottom:8px;';
-    const clusterLbl = document.createElement('div');
-    clusterLbl.style.cssText = 'font-size:12px;color:var(--ow-muted);font-weight:600;margin-bottom:3px;';
-    clusterLbl.textContent = t('cfgClusterThreshold');
-    clusterLbl.appendChild(helpBadge(t('helpCluster')));
-    const clusterInput = document.createElement('input');
-    clusterInput.type = 'number'; clusterInput.min = '0'; clusterInput.step = '5';
-    clusterInput.value = String(settings.cluster_threshold ?? 0);
-    clusterInput.style.cssText = inputStyle;
-    clusterInput.addEventListener('change', () => {
-      this.onSceneSettingsChange?.({ cluster_threshold: parseFloat(clusterInput.value) || 0 });
-    });
-    clusterWrap.appendChild(clusterLbl); clusterWrap.appendChild(clusterInput);
-    root.appendChild(clusterWrap);
 
     // ── Language ──────────────────────────────────────────────────────
     sec(t('cfgLang'));
@@ -2228,15 +2273,75 @@ export class EditPanel {
       return wrap;
     };
 
+    // Le soleil réel : son mode et l'orientation de la maison n'ont de sens
+    // qu'avec une entité soleil, ils apparaissent donc avec elle.
+    const sunExtras = document.createElement('div');
+    const rendering = settings.rendering ?? {};
+    const paintSunExtras = (entity: string) => { sunExtras.style.display = entity ? '' : 'none'; };
     field(t('cfgSunEntity'), entityAutocomplete(
       settings.sun_entity ?? this.getConfig?.()?.sun_entity ?? '', t('cfgSunEntityPh'), 'sun.',
-      (v) => { this.onSceneSettingsChange?.({ sun_entity: v }); },
+      (v) => { paintSunExtras(v); this.onSceneSettingsChange?.({ sun_entity: v }); },
     ), t('helpSunEntity'));
+    {
+      const modeSel = document.createElement('select');
+      modeSel.style.cssText = inputStyle + SELECT_STYLE;
+      for (const [val, label] of [['showcase', t('cfgSunModeShowcase')], ['realistic', t('cfgSunModeRealistic')]] as const) {
+        const o = styleOption(document.createElement('option'));
+        o.value = val; o.textContent = label;
+        if ((rendering.sun_mode ?? 'showcase') === val) o.selected = true;
+        modeSel.appendChild(o);
+      }
+      modeSel.addEventListener('change', () => this.onSceneSettingsChange?.({ rendering: { sun_mode: modeSel.value as 'showcase' | 'realistic' } }));
+      const orient = document.createElement('div');
+      const cardinals = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+      const toCardinal = (deg: number) => `${Math.round(deg)}° ${cardinals[Math.round(((deg % 360) + 360) % 360 / 45) % 8]}`;
+      const val = document.createElement('div');
+      val.style.cssText = 'font-size:12px;color:var(--ow-text);font-weight:600;font-variant-numeric:tabular-nums;margin-bottom:4px;';
+      val.textContent = toCardinal(rendering.house_orientation ?? 0);
+      const sl = document.createElement('input');
+      sl.type = 'range'; sl.min = '0'; sl.max = '359'; sl.step = '5'; sl.value = String(rendering.house_orientation ?? 0);
+      sl.style.cssText = 'width:100%;cursor:pointer;margin:0;accent-color:var(--ow-acc);';
+      sl.addEventListener('input', () => {
+        val.textContent = toCardinal(parseFloat(sl.value));
+        this.onSceneSettingsChange?.({ rendering: { house_orientation: parseFloat(sl.value) } });
+      });
+      orient.append(val, sl);
+      const inner = root;
+      root.appendChild(sunExtras);
+      // `field` dépose dans `root` : on l'oriente un instant vers le bloc du soleil.
+      const fieldInto = (label: string, el: HTMLElement, help: string) => {
+        const before = sunExtras.childElementCount;
+        field(label, el, help);
+        const added = inner.lastElementChild;
+        if (added && sunExtras.childElementCount === before) sunExtras.appendChild(added);
+      };
+      fieldInto(t('cfgSunMode'), modeSel, t('helpSunMode'));
+      fieldInto(t('cfgHouseOrientation'), orient, t('helpHouseOrientation'));
+      paintSunExtras(settings.sun_entity ?? this.getConfig?.()?.sun_entity ?? '');
+    }
 
     field(t('cfgWeatherEntity'), entityAutocomplete(
       settings.weather_entity ?? this.getConfig?.()?.weather_entity ?? '', t('cfgWeatherEntityPh'), 'weather.',
       (v) => { this.onSceneSettingsChange?.({ weather_entity: v }); },
     ), t('helpWeatherEntity'));
+
+    // La brume : une affaire d'ambiance, plus de réglage général.
+    {
+      const fogWrap = document.createElement('div');
+      const fogVal = document.createElement('div');
+      fogVal.style.cssText = 'font-size:12px;color:var(--ow-text);font-weight:600;font-variant-numeric:tabular-nums;margin-bottom:4px;';
+      const fmtFog = (v: number) => (v <= 0 ? t('cutawayOff') : `${Math.round((v / 0.05) * 100)} %`);
+      fogVal.textContent = fmtFog(rendering.fog_density ?? 0.018);
+      const fog = document.createElement('input');
+      fog.type = 'range'; fog.min = '0'; fog.max = '0.05'; fog.step = '0.001'; fog.value = String(rendering.fog_density ?? 0.018);
+      fog.style.cssText = 'width:100%;cursor:pointer;margin:0;accent-color:var(--ow-acc);';
+      fog.addEventListener('input', () => {
+        fogVal.textContent = fmtFog(parseFloat(fog.value));
+        this.onSceneSettingsChange?.({ rendering: { fog_density: parseFloat(fog.value) } });
+      });
+      fogWrap.append(fogVal, fog);
+      field(t('cfgFogDensityShort'), fogWrap, t('helpFogDensity'));
+    }
 
     // ── Simulation ────────────────────────────────────────────────────
     sec(t('cfgSim'));

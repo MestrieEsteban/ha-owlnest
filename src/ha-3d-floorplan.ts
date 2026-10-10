@@ -2756,7 +2756,19 @@ export class Ha3dFloorplan extends HTMLElement {
           model_url: this._config?.model_url ?? '',
           anchors: [], camera_views: [], cards: [], rules: [],
         };
-        this._scene = { ...this._scene, settings: { ...this._scene.settings, ...s } };
+        // Le menu n'envoie que ce qui change : rendu et caméra se fusionnent
+        // avec l'existant (une copie entière, figée à l'ouverture du menu,
+        // annulait les réglages faits entre-temps).
+        const cur = this._scene.settings ?? {};
+        this._scene = {
+          ...this._scene,
+          settings: {
+            ...cur,
+            ...s,
+            ...(s.rendering ? { rendering: { ...(cur.rendering ?? {}), ...s.rendering } } : {}),
+            ...(s.orbit ? { orbit: { ...(cur.orbit ?? {}), ...s.orbit } } : {}),
+          },
+        };
         if (s.language) {
           this._langFromScene = true;
           setLang(s.language);
@@ -2815,6 +2827,21 @@ export class Ha3dFloorplan extends HTMLElement {
     this._editPanel.getSetupSteps = () => this._setupSteps();
     if (this._plan) this._editPanel.onAutoPlace = () => this._autoPlace();
     if (this._plan) {
+      // L'apparence de la façade : sur le plan, pour tous les étages.
+      this._editPanel.getPlanLook = () => {
+        const p = this._scene?.plan;
+        return p ? { outside: p.outside, facade: p.facade, plinth: p.plinth } : null;
+      };
+      this._editPanel.setPlanLook = (patch) => {
+        const p = this._scene?.plan;
+        if (!p) return;
+        // Une couleur choisie ici vaut pour toute la maison : les étages la reprennent.
+        const floors = patch.outside !== undefined || patch.facade !== undefined
+          ? p.floors?.map((f) => ({ ...f, doc: { ...f.doc, outside: undefined, facade: undefined } }))
+          : p.floors;
+        this.applyPlan({ ...p, ...patch, ...(floors ? { floors } : {}) });
+        this._schedulePlanSave(400);
+      };
       this._editPanel.partFloor = (part) => {
         const k = this._partFloorIndex(part);
         return k !== null && k !== this._floorIndex() ? this._floors()[k]?.name ?? null : null;
