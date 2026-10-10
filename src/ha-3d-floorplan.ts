@@ -3388,6 +3388,11 @@ export class Ha3dFloorplan extends HTMLElement {
         : Math.PI * 0.48;
 
     this.controls.addEventListener('change', () => this._requestRender());
+    // Toucher la caméra (doigt, souris, molette, clavier) prend la main : un
+    // vol en cours vers une vue s'arrête là où il en est.
+    this.controls.addEventListener('start', () => {
+      this._camAnimTo = null;
+    });
     this.controls.addEventListener('end', () => this._saveView());
 
     // Hemisphere — warm sky, dark ground so entity point lights stand out
