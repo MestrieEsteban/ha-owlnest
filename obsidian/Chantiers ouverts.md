@@ -13,13 +13,13 @@ tags: [backlog]
 
 ~~**Les étiquettes sont invisibles au toucher.**~~ **Refermé le 10 octobre 2026** : toucher une pastille montre son nom 2,5 s, et « Personnaliser » propose de toujours afficher les noms. L'appui long ouvrait déjà les détails. Voir [[Interface]].
 
-**`scene_id` en `localStorage`.** Comportement bancal au changement de scène.
+~~**`scene_id` en `localStorage`.**~~ **Refermé le 8 octobre 2026** (`355f03b`) : le choix de scène est rangé par carte (clé `owlnest_scene_id@<scène du YAML>`), puis écrit dans la configuration de la carte elle-même (`assignScene`) ; une carte neuve n'ouvre plus la maison d'une autre.
 
 ## Améliorations identifiées
 
 - ~~**Taille et opacité des overlays selon la distance.**~~ **Fait le 10 octobre 2026** : racine du rapport entre la distance du point visé et celle de la pastille, bornée entre 0,72 et 1,15 ; l'opacité descend jusqu'à 0,62 au fond. Propriété CSS `scale` (elle se compose avec le `transform` du survol).
 - Regroupement par pièce, ce qui permettrait de **retirer `cluster_threshold`**.
-- Le même message « aucune vue enregistrée » pour l'action `go_to_view` que celui fait pour `highlight_anchor`. Voir [[Regles]].
+- ~~Le même message « aucune vue enregistrée » pour l'action `go_to_view` que celui fait pour `highlight_anchor`.~~ **Fait le 10 octobre 2026** (`ruleNoViews`). Voir [[Regles]].
 
 ## En attente
 
