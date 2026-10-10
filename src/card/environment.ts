@@ -118,6 +118,9 @@ export class EnvironmentController {
    * la météo assombrit ensuite. `null` sans entité soleil : réglages seuls.
    */
   private _cycle: { hemi: number; sun: number } | null = null;
+  private _night = false;
+  /** Fait-il nuit (soleil réel ou simulé sous l'horizon) ? Faux sans soleil. */
+  get isNight() { return this._night; }
 
   private _resetLights(): { hemi: number; sun: number } {
     const rl = this.getConfig()?.rendering ?? {};
@@ -188,6 +191,7 @@ export class EnvironmentController {
       // Sans soleil réel, l'éclairage suit les réglages (intensités) : ils
       // doivent agir tout de suite, et la météo en cours reste appliquée.
       this._cycle = null;
+      this._night = false;
       this._applyAtmosphere(this._weatherType);
       this.requestRender();
     }
@@ -220,22 +224,24 @@ export class EnvironmentController {
 
     const t = Math.max(0, Math.min(1, (elevation + 10) / 30));
     const isNight = elevation < -2;
+    this._night = isNight;
 
     // ── Hemisphere (ambient) light ──────────────────────────────────────
     // The cycle computes a 0..1 factor, then multiplied by user intensity.
     let ambientFactor: number;
     if (isRealistic) {
       // Realistic: lower ambient ratio → darker shadows, more contrast
-      ambientFactor = isNight ? 0.5 : THREE.MathUtils.lerp(0.15, 0.65, t);
+      // La nuit reste lisible : un tableau de bord se regarde aussi le soir.
+      ambientFactor = isNight ? 0.85 : THREE.MathUtils.lerp(0.15, 0.65, t);
     } else {
       // Showcase: generous ambient for a flattering, soft look
-      ambientFactor = isNight ? 0.65 : THREE.MathUtils.lerp(0.2, 1.0, t);
+      ambientFactor = isNight ? 1.1 : THREE.MathUtils.lerp(0.2, 1.0, t);
     }
     this.hemiLight.intensity = ambientFactor * userAmbientIntensity;
 
     // Color interpolation: night blue → golden hour → day white
     if (isNight) {
-      this.hemiLight.color.setHex(0x3a5080);
+      this.hemiLight.color.setHex(0x5a6f9e);
     } else if (isRealistic) {
       const goldenHour = new THREE.Color(0xeec090);
       const dayWhite   = new THREE.Color(0xf0ece4);
@@ -256,7 +262,7 @@ export class EnvironmentController {
       }
     }
 
-    this.hemiLight.groundColor.setHex(isNight ? 0x0d1a2e : (t > 0.5 ? 0x1a1a2e : 0x0d1020));
+    this.hemiLight.groundColor.setHex(isNight ? 0x1c2740 : (t > 0.5 ? 0x1a1a2e : 0x0d1020));
 
     // ── Directional (sun) light ─────────────────────────────────────────
     // Cycle computes a 0..1 factor, then multiplied by user sun intensity.

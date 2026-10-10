@@ -335,13 +335,19 @@ function shade(hex: string, k: number): string {
  * axes de leur support : le moteur d'ouvrants y lit largeur, épaisseur et
  * gonds sans calcul.
  */
-function buildOpening(plan: PlanDoc, o: PlanOpening, pal: Palette, group: THREE.Group) {
+function buildOpening(plan: PlanDoc, o: PlanOpening, pal: Palette, group: THREE.Group, rooms: { room: PlanRoom; face: Face }[] = []) {
   const w = plan.walls.find((q) => q.id === o.wall)!;
   const [a, b] = wallEnds(plan, w);
   const dir = norm(sub(b, a));
   const t = thicknessOf(plan, w);
   const frame = new THREE.Group();
   frame.name = `plan_opening_${o.id}`;
+  // Les pièces de part et d'autre : le soir, la vitre s'éclaire si l'une d'elles l'est.
+  {
+    const c = add(a, mul(dir, o.offset)), nrm = perp(dir), probe = t / 2 + 0.1;
+    frame.userData.owlnestRooms = [roomAt(rooms, add(c, mul(nrm, probe))), roomAt(rooms, add(c, mul(nrm, -probe)))]
+      .filter((r): r is PlanRoom => !!r).map((r) => r.id);
+  }
   frame.position.set(a.x + dir.x * o.offset, 0, a.y + dir.y * o.offset);
   // x local suit le mur, de a vers b : « début » et « fin » gardent leur sens.
   frame.rotation.y = -Math.atan2(dir.y, dir.x);
@@ -423,7 +429,7 @@ export function buildPlan(plan: PlanDoc): THREE.Group {
     const i = plan.walls.findIndex((q) => q.id === o.wall);
     const w = plan.walls[i];
     if (!w || isBoundary(plan, w) || !openingFits(plan, o)) continue;
-    buildOpening(plan, o, pal, root);
+    buildOpening(plan, o, pal, root, rooms);
     // Les portes et fenêtres d'un mur qui s'abaisse sont coupées avec lui (voir low-walls.ts).
     root.getObjectByName(`plan_opening_${o.id}`)?.traverse((m) => {
       if ((m as THREE.Mesh).isMesh) tagWall((m as THREE.Mesh).geometry, i, true);

@@ -98,6 +98,14 @@ function _formatSensorValue(raw: string, precision: number | undefined, entityId
   return formatSensor(raw, getLang(), precision ?? haPrecision(hass, entityId));
 }
 
+let litGlassMat: THREE.MeshStandardMaterial | null = null;
+/** La vitre d'une pièce éclairée, la nuit : une lueur chaude, partagée par toutes. */
+function litGlass(): THREE.MeshStandardMaterial {
+  return litGlassMat ??= new THREE.MeshStandardMaterial({
+    color: '#ffe2b0', emissive: '#ffb45a', emissiveIntensity: 1.1, roughness: 0.3, transparent: true, opacity: 0.85,
+  });
+}
+
 /**
  * Estampille de build, lisible depuis la console du navigateur :
  * `document.querySelector('ha-3d-floorplan').constructor.OWLNEST_BUILD`
@@ -411,6 +419,7 @@ export class Ha3dFloorplan extends HTMLElement {
       this._evaluatePassiveConditions();
       this._ui?.refreshStatus();
       this._ui?.refreshRooms();
+      this._updateWindowGlow();
       this._requestRender();
     }
   }
@@ -618,6 +627,7 @@ export class Ha3dFloorplan extends HTMLElement {
       };
     }
     this._buildParts();
+    this._updateWindowGlow();
     // Pendant le dessin, la 3D ne se recadre que si la maison déborde de ce
     // qu'on voyait : une retouche ne doit pas défaire le point de vue choisi.
     if (this._planEditor) this._frameIfOutgrown();
@@ -2230,6 +2240,52 @@ export class Ha3dFloorplan extends HTMLElement {
     this._requestRender();
   }
 
+  // ── La maison habitée, le soir ──────────────────────────────────────────
+
+  private _glowKey = '';
+
+  /**
+   * La nuit, les vitres d'une pièce dont une lampe est allumée prennent une
+   * lueur chaude : de dehors, on voit que la maison vit. Ne retouche les
+   * vitres que si quelque chose a changé (nuit, lampes, maison reconstruite).
+   */
+  private _updateWindowGlow() {
+    const root = this._modelRoot, plan = this._plan, hass = this._hass;
+    if (!root || !plan) return;
+    const night = !!this._env?.isNight;
+    const lit = new Set<string>();
+    if (night && hass) {
+      const origin = this._planOrigin(plan);
+      const roomsOf = new Map<number, RoomView[]>();
+      this.anchors.forEach((a) => {
+        if (a.domain !== 'light' || hass.states[a.entityId]?.state !== 'on') return;
+        const k = this._floorOfY(a.worldPos.y);
+        if (!roomsOf.has(k)) roomsOf.set(k, planRooms(floorDoc(plan, k)));
+        const r = roomOfPoint(roomsOf.get(k)!, origin, a.worldPos.x, a.worldPos.z);
+        if (r) lit.add(`${k}:${r.id}`);
+      });
+    }
+    const key = `${root.uuid}|${root.children.length}|${night}|${[...lit].sort().join(',')}`;
+    if (key === this._glowKey) return;
+    this._glowKey = key;
+    root.traverse((o) => {
+      if (!o.name.startsWith('plan_opening_')) return;
+      let floor = 0;
+      for (let q: THREE.Object3D | null = o; q && q !== root; q = q.parent) {
+        if (typeof q.userData.owlnestFloor === 'number') { floor = q.userData.owlnestFloor; break; }
+      }
+      const ids = (o.userData.owlnestRooms as string[] | undefined) ?? [];
+      const on = night && ids.some((id) => lit.has(`${floor}:${id}`));
+      o.traverse((m) => {
+        const mesh = m as THREE.Mesh;
+        if (!mesh.isMesh || !mesh.name.endsWith('_pane')) return;
+        if (!mesh.userData.owlnestGlass) mesh.userData.owlnestGlass = mesh.material;
+        mesh.material = on ? litGlass() : mesh.userData.owlnestGlass;
+      });
+    });
+    this._requestRender();
+  }
+
   /** Les pièces de l'étage montré, recalculées seulement quand son plan change. */
   private _roomsCache: { plan: PlanDoc; rooms: RoomView[] } | null = null;
   private _rooms(): RoomView[] {
@@ -3577,7 +3633,7 @@ export class Ha3dFloorplan extends HTMLElement {
       () => this._requestRender(),
     );
 
-    this._env.onSunMoved = () => this._requestShadowUpdate();
+    this._env.onSunMoved = () => { this._requestShadowUpdate(); this._updateWindowGlow(); };
 
     // Set initial sky position
     if (useSky) {
