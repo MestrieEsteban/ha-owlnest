@@ -2211,6 +2211,7 @@ export class Ha3dFloorplan extends HTMLElement {
       // Les étiquettes d'étage des listes changent avec l'étage regardé.
       this._editPanel?.updateAnchorList();
       this._editPanel?.refreshPartsList();
+      this._editPanel?.refreshFloors();
     }
     this._requestShadowUpdate();
     this._requestRender();
@@ -2798,6 +2799,11 @@ export class Ha3dFloorplan extends HTMLElement {
       this._editPanel.partFloor = (part) => {
         const k = this._partFloorIndex(part);
         return k !== null && k !== this._floorIndex() ? this._floors()[k]?.name ?? null : null;
+      };
+      this._editPanel.floors = {
+        list: () => this._floors().map((f) => f.name),
+        active: () => this._floorIndex(),
+        set: (k) => this._setFloor(k),
       };
       this._editPanel.anchorFloor = (a) => {
         if (!this._plan?.floors?.length) return null;

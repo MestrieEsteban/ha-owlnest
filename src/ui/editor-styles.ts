@@ -58,6 +58,10 @@ export const EDITOR_STYLES = `
 .ow-edbar.ow-phone .ow-edtitle { display: none; }
 .ow-edbar.ow-phone .ow-tabs { order: -1; flex: 1 0 100%; justify-content: space-between; }
 .ow-edbar.ow-phone .ow-edact { margin-left: auto; }
+.ow-ed-floors { position: absolute; left: 12px; top: calc(var(--ow-bar-h, ${BAR_H}px) + 12px); z-index: 14; pointer-events: auto; display: flex; gap: 2px;
+  padding: 3px; border-radius: 11px; background: var(--ow-chrome); border: 1px solid var(--ow-line); box-shadow: var(--ow-shadow);
+  max-width: calc(100% - var(--ow-dock, 0px) - 24px); overflow-x: auto; scrollbar-width: none; }
+.ow-ed-floors .ow-tab { white-space: nowrap; }
 .ow-floor-tag { margin-left: 6px; padding: 1px 6px; border-radius: 999px; font-size: 10.5px; font-weight: 600; vertical-align: 1px;
   background: var(--ow-chrome2); border: 1px solid var(--ow-line); color: var(--ow-muted); }
 .ow-edpanel.ow-phone { top: ${BAR_H_PHONE}px; width: 100%; }

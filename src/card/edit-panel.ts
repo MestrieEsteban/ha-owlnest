@@ -324,6 +324,42 @@ export class EditPanel {
    * (`null` sinon), et l'étage à montrer avant d'ouvrir sa fiche.
    */
   partFloor?: (part: OwlnestPart) => string | null;
+  /** Les niveaux du logement, l'étage regardé, et en changer (vide : pas d'étages). */
+  floors?: { list: () => string[]; active: () => number; set: (k: number) => void };
+  private _floorsEl: HTMLDivElement | null = null;
+
+  /**
+   * Le choix d'étage pendant l'édition, en haut à gauche de la 3D : la barre
+   * des pièces de la carte est cachée, et l'on doit pouvoir poser un
+   * appareil à l'étage sans passer par la liste.
+   */
+  refreshFloors() {
+    const names = this.floors?.list() ?? [];
+    if (names.length < 2 || !this._bar) { this._floorsEl?.remove(); this._floorsEl = null; return; }
+    if (!this._floorsEl) {
+      const el = document.createElement('div');
+      el.className = 'ow-ed ow-ed-floors';
+      el.setAttribute('role', 'tablist');
+      el.setAttribute('aria-label', t('uiFloors'));
+      this.overlayContainer.appendChild(el);
+      this._floorsEl = el;
+    }
+    const el = this._floorsEl;
+    el.innerHTML = '';
+    const active = this.floors!.active();
+    names.forEach((name, k) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = `ow-tab${k === active ? ' ow-on' : ''}`;
+      b.setAttribute('role', 'tab');
+      b.setAttribute('aria-selected', String(k === active));
+      b.dataset.floor = String(k);
+      b.textContent = name;
+      b.addEventListener('click', () => { if (k !== this.floors!.active()) this.floors!.set(k); });
+      el.appendChild(b);
+    });
+  }
+
   /** Le nom de l'étage d'un appareil quand il n'est pas celui qu'on regarde. */
   anchorFloor?: (a: EditableAnchor) => string | null;
   showPartFloor?: (part: OwlnestPart) => void;
@@ -479,6 +515,7 @@ export class EditPanel {
       this.overlayContainer.appendChild(st);
     }
     this._buildBar();
+    this.refreshFloors();
 
     const editor = this.getEditor();
     if (editor) {
@@ -772,10 +809,11 @@ export class EditPanel {
     if (seen) return;
     const pill = document.createElement('div');
     pill.className = 'ow-ui ow-surface ow-pill ow-ed';
-    // Sur une carte étroite le panneau recouvre le haut : l'invitation passe en bas.
+    // En bas de la 3D : le haut accueille le choix d'étage, et sur une carte
+    // étroite le panneau le recouvre.
     pill.style.cssText = this._narrow
       ? 'bottom:16px;left:12px;right:12px;transform:none;justify-content:space-between;z-index:30;'
-      : `top:${BAR_H + 12}px;left:calc(50% - var(--ow-dock, 0px) / 2);z-index:30;`;
+      : 'bottom:16px;left:calc(50% - var(--ow-dock, 0px) / 2);z-index:30;';
     const text = document.createElement('span');
     text.textContent = t('edHello');
     if (this._narrow) text.style.cssText = 'white-space:normal;line-height:1.3;';
@@ -860,6 +898,8 @@ export class EditPanel {
     this._panel = null;
     this._bar?.remove();
     this._bar = null;
+    this._floorsEl?.remove();
+    this._floorsEl = null;
     this.cardContainer.style.removeProperty('--ow-dock');
     this.onDock?.(0);
     this.hud.querySelector('#editor-hint-bar')?.remove();
