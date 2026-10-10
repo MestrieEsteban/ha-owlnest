@@ -4397,8 +4397,13 @@ export class Ha3dFloorplan extends HTMLElement {
     const behind = new Set<string>();
     // Ancres exclues du regroupement automatique (natures non-entité).
     const noCluster = new Set<string>();
+    const multiFloor = !!this._plan?.floors?.length;
+    const activeFloor = this._floorIndex();
 
     this.anchors.forEach((entry, name) => {
+      // Une pastille d'un autre étage est cachée, et n'entre dans aucun
+      // regroupement (sinon un « 2 » du rez-de-chaussée flotterait à l'étage).
+      if (multiFloor && this._floorOfY(entry.worldPos.y) !== activeFloor) { behind.add(name); return; }
       // Vecteur de travail réutilisé : un clone par ancre et par image finissait
       // par peser en collecte mémoire sur les scènes chargées.
       const p = this._projScratch.copy(entry.worldPos).project(this.camera!);
@@ -4471,8 +4476,6 @@ export class Ha3dFloorplan extends HTMLElement {
     // 3. Show/hide individual overlays
     // Distance de référence : celle du point visé, où une pastille garde sa taille.
     const refDist = Math.max(this.camera!.position.distanceTo(this.controls?.target ?? new THREE.Vector3()), 1e-4);
-    const multiFloor = !!this._plan?.floors?.length;
-    const activeFloor = this._floorIndex();
     this.anchors.forEach((_entry, name) => {
       const ov = this.overlays.get(name);
       if (!ov) return;
