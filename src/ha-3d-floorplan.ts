@@ -25,6 +25,7 @@ import { setLang, getLang, langFromLocale, t, type StringKey } from './i18n';
 import { demoModelUrl, isPlaceholder, seedDemoAnchors, type DemoAnchorId } from './demo';
 import { openEntityPicker } from './entities/picker';
 import { cachedRegistry, loadRegistry, areaOf, displayName, isTechnical } from './entities/registry';
+import { formatSensor } from './entities/format';
 import { matchRooms, placeable, spreadPoints } from './plan/auto-place';
 import { publishHass } from './entities/live';
 
@@ -89,12 +90,16 @@ type AnyOverlay = AnchorOverlay | SensorOverlay | LabelOverlay | ClusterOverlay 
  */
 const CAMERA_WIDTH_RATIO = 0.18;
 
-/** Format a sensor state string respecting optional decimal precision. */
-function _formatSensorValue(raw: string, precision?: number): string {
-  if (precision === undefined) return raw;
-  const num = parseFloat(raw);
-  if (isNaN(num)) return raw;
-  return num.toFixed(precision);
+/**
+ * La valeur d'un capteur : décimales réglées sur l'appareil, sinon celles de
+ * Home Assistant (registre), sinon un arrondi lisible ; virgule à la française.
+ */
+function _formatSensorValue(raw: string, precision: number | undefined, entityId: string, hass?: Hass | null): string {
+  // `hass.entities` (le registre que le frontend tient prêt) d'abord : il est là
+  // dès le premier affichage ; le registre lu par Owlnest arrive plus tard.
+  const fromHass = (hass?.entities?.[entityId] as { display_precision?: unknown } | undefined)?.display_precision;
+  const ha = typeof fromHass === 'number' ? fromHass : cachedRegistry().entities.get(entityId)?.precision;
+  return formatSensor(raw, getLang(), precision ?? ha);
 }
 
 /**
@@ -2285,7 +2290,7 @@ export class Ha3dFloorplan extends HTMLElement {
       let state = desc.stateText(st);
       const unit = st?.attributes?.unit_of_measurement;
       if (typeof unit === 'string' && unit && /^-?[\d.,]+$/.test(state)) {
-        state = `${Number(state).toLocaleString(getLang() === 'fr' ? 'fr-FR' : 'en-GB')} ${unit}`;
+        state = `${_formatSensorValue(state, a.precision, a.entityId, this._hass)} ${unit}`;
       }
       out.push({ id: a.entityId, name: a.label || a.entityId, state, on, icon: entityIconName(a.entityId), toggle });
     });
@@ -4669,7 +4674,7 @@ export class Ha3dFloorplan extends HTMLElement {
       const broken = !st || st.state === 'unavailable' || st.state === 'unknown';
       const unit = (st?.attributes?.unit_of_measurement as string) ?? '';
       const value = showsValue
-        ? desc!.stateText(st) + (unit && !broken ? ` ${unit}` : '')
+        ? (broken ? desc!.stateText(st) : _formatSensorValue(desc!.stateText(st), undefined, target!, this._hass)) + (unit && !broken ? ` ${unit}` : '')
         : undefined;
 
       return {
@@ -4965,7 +4970,7 @@ export class Ha3dFloorplan extends HTMLElement {
       if (overlay instanceof SensorOverlay) {
         const rawValue = stateObj?.state ?? '\u2014';
         const unit = (stateObj?.attributes.unit_of_measurement as string) ?? '';
-        const value = _formatSensorValue(rawValue, entry.precision);
+        const value = _formatSensorValue(rawValue, entry.precision, entry.entityId, this._hass);
         overlay.updateValue(value, unit, `${entry.label}: ${value}${unit}`);
         return;
       }

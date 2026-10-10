@@ -47,6 +47,8 @@ export interface EntityInfo {
   hidden: boolean;
   disabled: boolean;
   labels?: string[];
+  /** Décimales d'un capteur : celles choisies dans HA, sinon celles que l'intégration suggère. */
+  precision?: number;
 }
 
 export interface Registry {
@@ -92,7 +94,15 @@ function toEntity(raw: Record<string, unknown>): EntityInfo | null {
     hidden: raw.hidden === true || raw.hidden_by != null,
     disabled: raw.disabled === true || raw.disabled_by != null,
     labels: Array.isArray(raw.labels) ? (raw.labels as string[]) : undefined,
+    precision: sensorPrecision(raw.options),
   };
+}
+
+/** `options.sensor.display_precision`, à défaut `suggested_display_precision`. */
+function sensorPrecision(options: unknown): number | undefined {
+  const sensor = (options as { sensor?: Record<string, unknown> } | undefined)?.sensor;
+  const p = sensor?.display_precision ?? sensor?.suggested_display_precision;
+  return typeof p === 'number' && Number.isFinite(p) && p >= 0 ? Math.min(Math.round(p), 6) : undefined;
 }
 
 function toDevice(raw: Record<string, unknown>): DeviceInfo | null {

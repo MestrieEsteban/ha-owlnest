@@ -58,6 +58,7 @@ const ENTRIES = [
   'src/plan/auto-place.ts',
   'src/plan/floors.ts',
   'src/plan/roof.ts',
+  'src/entities/format.ts',
 ];
 
 /**
