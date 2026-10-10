@@ -185,9 +185,15 @@ export const STYLES = `
 .ow-rp-nm b { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ow-rp-nm span { font-size: 11.5px; color: var(--ow-muted); }
 .ow-rp-empty { font-size: 12.5px; color: var(--ow-muted); padding: 6px 4px; line-height: 1.45; }
-.ow-rooms { display: flex; gap: 2px; padding: 4px; max-width: min(620px, 100%); overflow-x: auto; scrollbar-width: none; }
-.ow-rooms::-webkit-scrollbar { display: none; }
-.ow-floors { display: flex; gap: 2px; padding-right: 4px; margin-right: 2px; border-right: 1px solid var(--ow-line); flex: none; }
+.ow-rooms { display: flex; align-items: center; padding: 4px; max-width: min(620px, 100%); min-width: 0; }
+.ow-rooms-track { display: flex; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.ow-rooms-track::-webkit-scrollbar { display: none; }
+.ow-floors { display: flex; gap: 2px; padding-right: 4px; margin-right: 4px; border-right: 1px solid var(--ow-line); flex: none; }
+.ow-rooms-track { --fl: 0px; --fr: 0px;
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--fl), #000 calc(100% - var(--fr)), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 var(--fl), #000 calc(100% - var(--fr)), transparent); }
+.ow-rooms-track.ow-more { --fr: 36px; }
+.ow-rooms-track.ow-less { --fl: 28px; }
 .ow-floor.ow-on { background: var(--ow-text); color: var(--ow-chrome); }
 .ow-rooms .ow-sep { flex: none; width: 1px; margin: 4px 3px; background: var(--ow-line); }
 .ow-chip.ow-view { display: inline-flex; align-items: center; gap: 5px; }

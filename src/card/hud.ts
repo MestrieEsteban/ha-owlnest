@@ -285,6 +285,7 @@ export class CardHud {
     this.activeView = id;
     if (id) this.setActiveRoom(null);
     this.roomsEl?.querySelectorAll<HTMLButtonElement>('.ow-chip[data-view]').forEach((b) => b.classList.toggle('ow-on', b.dataset.view === id));
+    if (id) this.revealActiveChip();
     if (!id) this.setActiveRoom(this.activeRoom);
   }
 
@@ -396,6 +397,12 @@ export class CardHud {
       }
       this.roomsEl.append(seg);
     }
+    // Les pièces et les vues défilent seules ; le choix d'étage reste en place.
+    // Sur une carte étroite, un fondu dit qu'il y a la suite.
+    const track = document.createElement('div');
+    track.className = 'ow-rooms-track';
+    track.addEventListener('scroll', () => this.paintRoomsMore(), { passive: true });
+    this.roomsEl.append(track);
     const chip = (id: string, label: string, lit: number, temp?: string) => {
       const b = document.createElement('button');
       b.type = 'button';
@@ -421,7 +428,7 @@ export class CardHud {
         this.setActiveRoom(id || null);
         this.opts.flyToRoom(id || null);
       });
-      this.roomsEl!.append(b);
+      track.append(b);
     };
     if (rooms.length) {
       chip('', t('uiRoomsHome'), rooms.reduce((n, r) => n + r.lit, 0));
@@ -431,7 +438,7 @@ export class CardHud {
     if (views.length && (rooms.length || floors.length > 1)) {
       const sep = document.createElement('span');
       sep.className = 'ow-sep';
-      this.roomsEl.append(sep);
+      track.append(sep);
     }
     for (const v of views) {
       const b = document.createElement('button');
@@ -442,8 +449,28 @@ export class CardHud {
       b.append(icon('camera', 14), document.createTextNode(v.label));
       b.classList.toggle('ow-on', v.id === this.activeView);
       b.addEventListener('click', (e) => { e.stopPropagation(); this.setActiveView(v.id); this.opts.flyTo(v.id); });
-      this.roomsEl.append(b);
+      track.append(b);
     }
+    requestAnimationFrame(() => { this.paintRoomsMore(); this.revealActiveChip(); });
+  }
+
+  /** Le fondu du bord droit, tant que la barre a encore des choix cachés. */
+  private paintRoomsMore() {
+    const el = this.roomsEl?.querySelector<HTMLElement>('.ow-rooms-track');
+    if (!el) return;
+    el.classList.toggle('ow-more', el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
+    el.classList.toggle('ow-less', el.scrollLeft > 4);
+  }
+
+  /** La puce choisie (pièce ou vue) amenée dans la partie visible de la barre. */
+  private revealActiveChip() {
+    const el = this.roomsEl?.querySelector<HTMLElement>('.ow-rooms-track');
+    const on = el?.querySelector<HTMLElement>('.ow-chip.ow-on');
+    if (!el || !on || el.scrollWidth <= el.clientWidth) return;
+    const x = on.offsetLeft - el.offsetLeft;
+    const left = x - 8, right = x + on.offsetWidth - el.clientWidth + 8;
+    if (el.scrollLeft > left) el.scrollTo({ left, behavior: 'smooth' });
+    else if (el.scrollLeft < right) el.scrollTo({ left: right, behavior: 'smooth' });
   }
 
   private renderStatus() {
