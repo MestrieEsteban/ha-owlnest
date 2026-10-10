@@ -25,7 +25,7 @@ import { setLang, getLang, langFromLocale, t, type StringKey } from './i18n';
 import { demoModelUrl, isPlaceholder, seedDemoAnchors, type DemoAnchorId } from './demo';
 import { openEntityPicker } from './entities/picker';
 import { cachedRegistry, loadRegistry, areaOf, displayName, isTechnical } from './entities/registry';
-import { formatSensor } from './entities/format';
+import { formatSensor, haPrecision } from './entities/format';
 import { matchRooms, placeable, spreadPoints } from './plan/auto-place';
 import { publishHass } from './entities/live';
 
@@ -95,11 +95,7 @@ const CAMERA_WIDTH_RATIO = 0.18;
  * Home Assistant (registre), sinon un arrondi lisible ; virgule à la française.
  */
 function _formatSensorValue(raw: string, precision: number | undefined, entityId: string, hass?: Hass | null): string {
-  // `hass.entities` (le registre que le frontend tient prêt) d'abord : il est là
-  // dès le premier affichage ; le registre lu par Owlnest arrive plus tard.
-  const fromHass = (hass?.entities?.[entityId] as { display_precision?: unknown } | undefined)?.display_precision;
-  const ha = typeof fromHass === 'number' ? fromHass : cachedRegistry().entities.get(entityId)?.precision;
-  return formatSensor(raw, getLang(), precision ?? ha);
+  return formatSensor(raw, getLang(), precision ?? haPrecision(hass, entityId));
 }
 
 /**

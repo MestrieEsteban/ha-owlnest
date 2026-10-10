@@ -16,6 +16,7 @@ import { deleteScene, summarizeScenes } from '../scene';
 import { PARTS_ENABLED } from '../parts';
 import type { SceneSummary } from '../scene';
 import { describeEntity, knownStates, stateLabel } from '../entities/descriptors';
+import { stateText } from '../entities/format';
 import { openFraction, hasOpenSemantics, type ExtendInfo } from '../parts-runtime';
 import type { ClipInfo } from '../parts-clips';
 import { detectionLabel, resolveLevel } from '../quality';
@@ -1390,14 +1391,14 @@ export class EditPanel {
       name.append(tag);
     }
     const sub = document.createElement('span');
-    sub.textContent = st ? stateLabel(a.entity, st.state, st.attributes ?? {}) : anchorSubtitle(a);
+    sub.textContent = st ? stateText(this.getHass(), a.entity, st.state, st.attributes ?? {}, a.precision) : anchorSubtitle(a);
     sub.title = a.entity;
     col.append(name, sub);
     if (a.entity) {
       this._liveRows.set(key, () => {
         const s2 = this.getHass()?.states[a.entity];
         tile.classList.toggle('ow-lit', domain === 'light' && s2?.state === 'on');
-        sub.textContent = s2 ? stateLabel(a.entity, s2.state, s2.attributes ?? {}) : anchorSubtitle(a);
+        sub.textContent = s2 ? stateText(this.getHass(), a.entity, s2.state, s2.attributes ?? {}, a.precision) : anchorSubtitle(a);
       });
     }
     const btns = document.createElement('span');
