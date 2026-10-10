@@ -1852,6 +1852,7 @@ export class Ha3dFloorplan extends HTMLElement {
       if (entry.lightTarget) this.scene?.remove(entry.lightTarget);
     });
     this.anchors = detectAnchors(this._modelRoot, this.scene, this._effectiveConfig, this._modelSpan);
+    this._ovPosPool.clear();
     this._createOverlays();
     if (this._hass) {
       syncLights(this.anchors, this._hass, this._effectiveConfig, this._modelSpan);
@@ -4352,6 +4353,7 @@ export class Ha3dFloorplan extends HTMLElement {
     this._buildParts();
 
     this.anchors = detectAnchors(model, this.scene, ec, this._modelSpan);
+    this._ovPosPool.clear();
     this._createOverlays();
 
     this._overlaysVisible = !(ec.tap_to_toggle ?? false);
@@ -4429,13 +4431,31 @@ export class Ha3dFloorplan extends HTMLElement {
 
   // ── Overlay positioning + clustering ──────────────────────────────────
 
+  /**
+   * Collections de travail du placement des pastilles, vidées à chaque image
+   * plutôt que recréées : sur une tablette, cinq collections et un objet par
+   * pastille à chaque image finissaient en à-coups du ramasse-miettes.
+   */
+  private _ovPos = new Map<string, { x: number; y: number }>();
+  private _ovPosPool = new Map<string, { x: number; y: number }>();
+  private _ovBehind = new Set<string>();
+  private _ovNoCluster = new Set<string>();
+  private _ovInCluster = new Set<string>();
+  private _ovActive = new Set<string>();
+
   private _updateOverlayPositions(w: number, h: number) {
     if (this._editMode && !this._previewingRule) return;
     // 1. Compute 2D screen positions
-    const pos2d = new Map<string, { x: number; y: number }>();
-    const behind = new Set<string>();
+    const pos2d = this._ovPos; pos2d.clear();
+    const behind = this._ovBehind; behind.clear();
     // Ancres exclues du regroupement automatique (natures non-entité).
-    const noCluster = new Set<string>();
+    const noCluster = this._ovNoCluster; noCluster.clear();
+    const at = (name: string, x: number, y: number) => {
+      let q = this._ovPosPool.get(name);
+      if (!q) { q = { x: 0, y: 0 }; this._ovPosPool.set(name, q); }
+      q.x = x; q.y = y;
+      pos2d.set(name, q);
+    };
     const multiFloor = !!this._plan?.floors?.length;
     const activeFloor = this._floorIndex();
 
@@ -4449,20 +4469,14 @@ export class Ha3dFloorplan extends HTMLElement {
       if (p.z >= 1) { behind.add(name); return; }
       // Seules les ancres d'entité entrent dans un regroupement : une étiquette
       // ou une roue n'a rien à faire dans un menu radial de voisinage.
-      if ((entry.kind ?? 'entity') !== 'entity') { pos2d.set(name, {
-        x: ((p.x + 1) / 2) * w,
-        y: ((-p.y + 1) / 2) * h,
-      }); noCluster.add(name); return; }
-      pos2d.set(name, {
-        x: ((p.x + 1) / 2) * w,
-        y: ((-p.y + 1) / 2) * h,
-      });
+      if ((entry.kind ?? 'entity') !== 'entity') { at(name, ((p.x + 1) / 2) * w, ((-p.y + 1) / 2) * h); noCluster.add(name); return; }
+      at(name, ((p.x + 1) / 2) * w, ((-p.y + 1) / 2) * h);
     });
 
     // 2. Cluster visible anchors (opt-in via cluster_threshold)
     const threshold = this._effectiveConfig?.cluster_threshold ?? 0;
-    const inCluster = new Set<string>();
-    const activeIds = new Set<string>();
+    const inCluster = this._ovInCluster; inCluster.clear();
+    const activeIds = this._ovActive; activeIds.clear();
 
     // Sans regroupement, inutile de construire un tableau par ancre à chaque
     // image : aucun groupe ne peut dépasser un élément.
