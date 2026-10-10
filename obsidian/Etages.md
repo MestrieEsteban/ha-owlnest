@@ -14,6 +14,7 @@ Ajoutés le 10 octobre 2026. Voir [[Owlnest 2.0]], [[Import sh3d]], [[Vues des m
 - `buildHouse(plan, actif)` construit le rez-de-chaussée et les étages **jusqu'à l'étage montré** : ceux du dessus ne sont pas construits, on voit dans l'étage comme dans un plain-pied.
 - Chaque étage est un groupe `plan_floor_<id>` à `y = elevation`.
 - Seul l'étage montré garde le marquage des murs bas : les numéros de mur sont propres à chaque plan, ceux d'un autre niveau désigneraient de mauvais murs.
+- **Dalles** : chaque niveau sous l'étage montré est fermé par une dalle (`plan_slab_<id>`, pièces et murs, du haut de ses murs jusqu'à 2,5 cm sous le sol du niveau suivant). Là où l'étage est plus petit, on voit un toit plat gris béton au lieu de pièces à ciel ouvert (retour d'Esteban : « c'est pas très beau »). Les sols d'un étage ont l'épaisseur d'une dalle (`plan_under_<id>`), un balcon a l'air porté.
 - La maison est **centrée sur le rez-de-chaussée seul** (`groundBox`) : changer d'étage ne déplace rien de ce qui est posé.
 - Les meubles sont posés par niveau, dans le groupe de leur étage. La libération de la mémoire ne descend jamais dans un `plan_items` (les meubles partagent les modèles en cache), quelle que soit sa profondeur.
 
