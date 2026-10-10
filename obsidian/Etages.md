@@ -27,6 +27,23 @@ Ajoutés le 10 octobre 2026. Voir [[Owlnest 2.0]], [[Import sh3d]], [[Vues des m
 - Pièces, panneau de pièce, lampes allumées et température : seulement l'étage montré. Une pastille d'un autre étage est masquée ; une lampe d'un étage masqué reste éteinte (`light.userData.owlnestFloorOff`, respecté par `stepTransitions` dans `lights.ts`), sinon elle éclairerait l'étage du dessous.
 - L'étage d'un appareil se déduit de sa hauteur (`floorOfHeight`) : rien à enregistrer de plus dans les ancres.
 
+## L'éditeur de la maison (Appareils, Ouvrants…)
+
+- Un **choix d'étage flottant** en haut à gauche de la 3D (`EditPanel.refreshFloors`, `floors` fourni par la carte), puisque la barre des pièces est cachée en édition.
+- Seuls les **repères de l'étage regardé** sont montrés (`AnchorEditor.setMarkerFilter`) ; un repère caché sort des calques et n'arrête plus les clics. L'appareil sélectionné reste toujours visible.
+- Les listes portent une **étiquette d'étage** sur ce qui est à un autre niveau (`partFloor`, `anchorFloor`) ; choisir un appareil ou ouvrir un ouvrant d'un autre étage y amène la 3D.
+- La pose automatique pose à la hauteur de l'étage regardé (son sol, sa hauteur sous plafond).
+
+## Garanties vérifiées (10 octobre, audit du week-end)
+
+- Les **ouvrants d'un étage non construit sont gardés** tels quels, capteur compris (`syncPlanParts` ne garde que ce qu'il trouve dans la 3D : il les perdait au retour au rez-de-chaussée). Ils ne sont pas montés (`_mountParts` les écarte, sans avertissement).
+- Les **lampes posées comme meubles** à l'étage ont leur pastille, même quand l'étage n'est pas construit (`_syncLampAnchors` parcourt tous les niveaux).
+- Une **vue enregistrée à un autre étage** y fait monter avant le vol (étage déduit de la cible de la vue).
+- **Effacer tout le rez-de-chaussée** ne fait pas disparaître les étages (`hasWalls`).
+- Changer la **hauteur des murs** d'un niveau fait monter ou descendre les étages du dessus (`withFloorDoc`).
+- Le toit caché n'arrête pas les clics (calques désactivés).
+- Les hauteurs des niveaux sont gardées en cache pour les recherches par pastille et par image (`_floorOfY`).
+
 ## L'éditeur de plan
 
 - Il dessine **un niveau à la fois**. La barre des niveaux est en haut à gauche du dessin : toucher un autre niveau y passe, toucher le niveau actif le renomme, « + » ajoute un étage, la corbeille retire l'étage actif (jamais le rez-de-chaussée).
