@@ -2433,7 +2433,9 @@ export class Ha3dFloorplan extends HTMLElement {
       const label = document.createElement('strong');
       label.textContent = t(WALL_VIEW_LABELS[view]);
       const hint = document.createElement('small');
-      hint.textContent = t(WALL_VIEW_HINTS[view]);
+      // Le toit en pente se montre murs debout : on le dit là.
+      const roofed = view === 'up' && !!this._plan && this._effectiveConfig?.rendering?.roof === 'hip';
+      hint.textContent = t(roofed ? 'wallViewUpRoofHint' : WALL_VIEW_HINTS[view]);
       text.append(label, hint);
       item.append(uiIcon(WALL_VIEW_ICONS[view], 20), text);
       item.addEventListener('click', (e) => { e.stopPropagation(); this._closeWallMenu(); this._setWallView(view); });
