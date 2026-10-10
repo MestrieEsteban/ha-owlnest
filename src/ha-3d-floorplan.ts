@@ -497,7 +497,8 @@ export class Ha3dFloorplan extends HTMLElement {
     const dispose = (o: THREE.Object3D) => {
       if (o.name === 'plan_items') return;
       const mesh = o as THREE.Mesh;
-      if (mesh.isMesh) {
+      // Maillages, mais aussi les traits (arêtes du toit) : tout ce qui a une géométrie.
+      if (mesh.geometry && (mesh.isMesh || (o as THREE.LineSegments).isLineSegments)) {
         mesh.geometry.dispose();
         (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach((m) => m.dispose());
       }
@@ -2141,7 +2142,13 @@ export class Ha3dFloorplan extends HTMLElement {
     const old = root.getObjectByName(ROOF_NAME);
     if (old) {
       old.removeFromParent();
-      old.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) { m.geometry.dispose(); (m.material as THREE.Material).dispose(); } });
+      // Maillage et trait des arêtes : tout ce qui porte une géométrie.
+      old.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (!m.geometry) return;
+        m.geometry.dispose();
+        (Array.isArray(m.material) ? m.material : [m.material]).forEach((x) => x?.dispose());
+      });
     }
     const plan = this._plan;
     const want = this._effectiveConfig?.rendering?.roof === 'hip';
