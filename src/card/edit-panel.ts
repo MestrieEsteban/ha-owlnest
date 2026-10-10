@@ -902,6 +902,7 @@ export class EditPanel {
     this._floorsEl?.remove();
     this._floorsEl = null;
     this.cardContainer.style.removeProperty('--ow-dock');
+    this.cardContainer.style.removeProperty('--ow-bar-h');
     this.onDock?.(0);
     this.hud.querySelector('#editor-hint-bar')?.remove();
     // Restore HUD to normal camera view + action buttons

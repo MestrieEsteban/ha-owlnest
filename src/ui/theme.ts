@@ -216,7 +216,7 @@ export const STYLES = `
 .ow-menu-item.ow-on { background: color-mix(in srgb, var(--ow-acc) 18%, transparent); }
 .ow-menu-item strong { display: block; font-size: 13px; }
 .ow-menu-item small { display: block; color: var(--ow-muted); font-size: 11px; line-height: 1.3; }
-.ow-toast { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 200; padding: 7px 16px; border-radius: 999px;
+.ow-toast { position: absolute; top: calc(var(--ow-bar-h, 0px) + 12px); left: calc(50% - var(--ow-dock, 0px) / 2); transform: translateX(-50%); z-index: 200; padding: 7px 16px; border-radius: 999px;
   font: 600 12px ${FONT}; color: #fff; pointer-events: none; transition: opacity .3s ease; backdrop-filter: blur(8px); white-space: nowrap; }
 .ow-pill { position: absolute; left: 50%; transform: translateX(-50%); z-index: 40; display: flex; align-items: center; gap: 10px;
   padding: 6px 6px 6px 14px; border-radius: 999px; font-size: 12.5px; pointer-events: auto; max-width: calc(100% - 24px); }
