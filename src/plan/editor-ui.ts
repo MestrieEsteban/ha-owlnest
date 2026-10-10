@@ -259,7 +259,7 @@ export class PlanEditor {
       this.floorBar = el('div', [
         'position:absolute', 'left:12px', 'top:12px', 'display:flex', 'gap:2px', 'align-items:center', 'padding:3px',
         `background:${C.chrome}`, `border:1px solid ${C.line}`, 'border-radius:11px', 'box-shadow:0 6px 18px rgba(0,0,0,0.25)',
-        'max-width:calc(100% - 290px)', 'overflow-x:auto', 'scrollbar-width:none', 'z-index:2',
+        'overflow-x:auto', 'scrollbar-width:none', 'z-index:2',
       ].join(';'));
       this.floorBar.setAttribute('role', 'tablist');
       this.floorBar.setAttribute('aria-label', t('uiFloors'));
@@ -267,6 +267,7 @@ export class PlanEditor {
       this.stage.append(this.floorBar);
     }
     const bar = this.floorBar;
+    this.placeFloorBar();
     bar.innerHTML = '';
     const active = api.active();
     const chip = (label: string, on: boolean, title: string, onClick: (b: HTMLButtonElement) => void) => {
@@ -307,6 +308,18 @@ export class PlanEditor {
       del.append(icon('trash', 14));
       del.style.color = C.danger;
     }
+  }
+
+  /**
+   * À côté des réglages sur un écran large ; dessous, sur toute la largeur,
+   * sur un téléphone (sinon elle serait écrasée par eux).
+   */
+  private placeFloorBar() {
+    const bar = this.floorBar;
+    if (!bar) return;
+    const narrow = this.stage.getBoundingClientRect().width < 560;
+    bar.style.top = narrow ? '62px' : '12px';
+    bar.style.maxWidth = narrow ? 'calc(100% - 24px)' : 'calc(100% - 290px)';
   }
 
   /** Un autre niveau à dessiner : son plan, et un historique neuf (annuler ne traverse pas les étages). */
@@ -374,7 +387,9 @@ export class PlanEditor {
         title.append(b);
       }
       const st = document.createElement('style');
-      st.textContent = '@container (max-width: 980px) { .owp-top [role=tablist] span { display: none; } } @container (max-width: 640px) { .owp-top .owp-modes span { display: none; } }';
+      st.textContent = '@container (max-width: 980px) { .owp-top [role=tablist] span { display: none; } } @container (max-width: 640px) { .owp-top .owp-modes span { display: none; } }'
+        // Sur un téléphone, les onglets prennent toute une ligne au-dessus des actions.
+        + ' @container (max-width: 560px) { .owp-top { flex-wrap: wrap; row-gap: 8px; } .owp-top [role=tablist] { order: -1; flex: 1 0 100%; justify-content: space-between; } }';
       top.append(st);
     }
     this.modeBar = el('div', `display:flex;background:${C.chrome2};border:1px solid ${C.line};border-radius:10px;padding:3px;gap:2px;flex-shrink:0;`);
@@ -435,6 +450,7 @@ export class PlanEditor {
       if (!fitted) { fitted = true; this.fit(); }
       this.render();
       this.layout();
+      this.placeFloorBar();
     });
     this.resize.observe(this.root);
     this.setMode(this.plan.walls.length ? 'split' : 'plan');
