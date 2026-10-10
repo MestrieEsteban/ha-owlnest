@@ -131,6 +131,8 @@ export interface FurnitureImport {
   library: { url: string; name: string }[];
   /** Meubles dont le modèle n'a pas pu être converti ou envoyé. */
   failed: number;
+  /** Le niveau de chaque meuble de `items`, dans le même ordre. */
+  floors: number[];
 }
 
 /**
@@ -166,15 +168,17 @@ export async function importSh3dFurniture(
     options.onProgress?.(++done / variants.size);
   }
   const items: PlanItem[] = [];
+  const floors: number[] = [];
   let failed = 0;
   for (const it of pending) {
     const url = urls.get(variantKey(it.piece));
     if (!url) { failed++; continue; }
+    floors.push(it.floor ?? 0);
     items.push({
       id: newId('i'), model: url, x: it.x, y: it.y, rotation: it.rotation,
       size: it.size, elevation: it.elevation,
       ...(it.piece.name ? { name: it.piece.name } : {}),
     });
   }
-  return { items, library, failed };
+  return { items, library, failed, floors };
 }

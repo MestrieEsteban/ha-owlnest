@@ -13,7 +13,7 @@ import { AnchorEditor } from './editor';
 import { loadScene, saveScene, listScenes, sceneToEffectiveConfig, buildSceneFromEditor, normalizeViews, emptyScene, sceneUnreachable, forgetSceneFailure } from './scene';
 import { importModel, ImportError } from './import/drop';
 import { unzipSync, strFromU8 } from 'fflate';
-import { readHome, homeToPlan, levelChoices, type Sh3dHome } from './import/sh3d-home';
+import { readHome, homeToHouse, type Sh3dHome } from './import/sh3d-home';
 import { importSh3dFurniture } from './import/sh3d-furniture';
 import { fitSh3d, makeMover, matchNearest, type Box as FitBox, type Vec3 } from './import/sh3d-migrate';
 import { makeSimplifier } from './import/lighten';
@@ -1585,19 +1585,12 @@ export class Ha3dFloorplan extends HTMLElement {
       const zip = unzipSync(new Uint8Array(await file.arrayBuffer()));
       if (!zip['Home.xml']) throw new Error(t('sh3dFileOld'));
       const home = readHome(strFromU8(zip['Home.xml']));
-      // Plusieurs niveaux : l'utilisateur choisit celui qu'il importe.
-      const choices = levelChoices(home);
-      let levelId: string | undefined;
-      if (choices.length > 1) {
-        const picked = await progress.askLevel(choices);
-        if (picked === null) { progress.done(); return; }
-        levelId = picked;
-      }
+      // Chaque niveau qui a des murs devient un étage.
       let n = 0;
-      const conv = homeToPlan(home, {
+      const conv = homeToHouse(home, {
         room: () => `${t('planRoom')} ${++n}`,
         floor: () => '#d8c3a5',
-      }, levelId);
+      });
       if (!conv.plan.walls.length) throw new Error(t('sh3dFileEmpty'));
 
       progress.stage('uploading', 0);
@@ -1605,12 +1598,19 @@ export class Ha3dFloorplan extends HTMLElement {
       const furniture = await importSh3dFurniture(this._hass as unknown as UploadHass, zip, conv.items, {
         simplify, onProgress: (f) => progress.stage('uploading', f),
       });
-      const plan: PlanDoc = { ...conv.plan, items: furniture.items, library: furniture.library };
+      // Chaque meuble rejoint le plan de son niveau.
+      const onFloor = (k: number) => furniture.items.filter((_, i) => furniture.floors[i] === k);
+      const plan: PlanDoc = {
+        ...conv.plan,
+        items: onFloor(0),
+        library: furniture.library,
+        ...(conv.plan.floors ? { floors: conv.plan.floors.map((f, i) => ({ ...f, doc: { ...f.doc, items: onFloor(i + 1) } })) } : {}),
+      };
       progress.stage('loading');
 
       // Ce qui était posé sur l'ancien modèle suit le logement.
       const base = this._scene ?? emptyScene(sceneId);
-      const moved = this._isDemo ? null : this._sh3dMigration(home, conv.level?.id, plan, base);
+      const moved = this._isDemo ? null : this._sh3dMigration(home, conv.ground?.id, plan, base);
       const orbit = base.settings?.orbit;
       const settings = base.settings && {
         ...base.settings,
@@ -1622,20 +1622,25 @@ export class Ha3dFloorplan extends HTMLElement {
       await saveScene(this._hass, sceneId, scene);
       this._scene = scene;
       try { localStorage.removeItem(this._storageKey); } catch { /* stockage bloqué */ }
+      // Une maison neuve s'ouvre au rez-de-chaussée.
+      try { localStorage.removeItem(this._floorKey); } catch { /* stockage bloqué */ }
+      this._activeFloor = 0;
       this._syncPlanPartsAfterLoad = true;
       progress.done();
       await this._loadModel();
 
       const notes: string[] = [];
-      if (conv.levels > 1) notes.push(t('sh3dOneLevel').replace('{name}', conv.level?.name ?? ''));
+      if (conv.levels > 1) notes.push(t('sh3dLevels').replace('{n}', String(conv.levels)));
       if (furniture.failed) notes.push(t('sh3dFurnitureFailed').replace('{n}', String(furniture.failed)));
       if (conv.skipped.openings) notes.push(t('sh3dOpeningsSkipped').replace('{n}', String(conv.skipped.openings)));
       if (moved?.lost) notes.push(t('sh3dPartsLost').replace('{n}', String(moved.lost)));
       if (moved === null && !this._isDemo && (base.anchors?.length ?? 0) && !base.plan) notes.push(t('sh3dAnchorsUnmoved'));
+      const levels = floorViews(plan);
+      const total = (f: (d: PlanDoc) => number) => levels.reduce((s, v) => s + f(v.doc), 0);
       this._showToast([t('sh3dImported')
-        .replace('{walls}', String(plan.walls.length))
-        .replace('{openings}', String(plan.openings.length))
-        .replace('{items}', String(plan.items?.length ?? 0)), ...notes].join(' '), notes.length > 0);
+        .replace('{walls}', String(total((d) => d.walls.length)))
+        .replace('{openings}', String(total((d) => d.openings.length)))
+        .replace('{items}', String(total((d) => d.items?.length ?? 0))), ...notes].join(' '), notes.length > 0);
       if (reopen) this.openPlanEditor();
     } catch (err) {
       console.error('[Owlnest] Sweet Home 3D import failed:', err);

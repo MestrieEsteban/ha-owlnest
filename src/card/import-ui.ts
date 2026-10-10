@@ -221,53 +221,6 @@ export class ImportProgress {
     });
   }
 
-  /**
-   * Une maison à plusieurs niveaux : lequel importer ? L'éditeur n'a pas encore
-   * d'étages, on en prend un, mais c'est à l'utilisateur de dire lequel.
-   * `null` : il a renoncé.
-   */
-  askLevel(levels: { id: string; name: string; walls: number }[]): Promise<string | null> {
-    const box = document.createElement('div');
-    box.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
-    const title = document.createElement('div');
-    title.style.cssText = 'font-size:14px;font-weight:700;color:#e2e8f0;';
-    title.textContent = t('sh3dLevelTitle');
-    const hint = document.createElement('div');
-    hint.style.cssText = 'font-size:12px;color:#94a3b8;line-height:1.45;margin-bottom:4px;';
-    hint.textContent = t('sh3dLevelHint');
-    box.append(title, hint);
-    this.label.style.display = 'none';
-    this.bar.parentElement!.style.display = 'none';
-    this.el.appendChild(box);
-    return new Promise((resolve) => {
-      const finish = (id: string | null) => {
-        box.remove();
-        this.label.style.display = '';
-        this.bar.parentElement!.style.display = '';
-        resolve(id);
-      };
-      for (const l of levels) {
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;padding:10px 12px;border-radius:10px;border:1px solid rgba(125,211,252,0.3);background:rgba(125,211,252,0.1);color:#e2e8f0;font:600 13px inherit;cursor:pointer;text-align:left;';
-        const name = document.createElement('span');
-        name.textContent = l.name || t('sh3dLevelUnnamed');
-        const n = document.createElement('span');
-        n.style.cssText = 'font-size:11.5px;font-weight:500;color:#94a3b8;';
-        n.textContent = t('sh3dLevelWalls').replace('{n}', String(l.walls));
-        b.append(name, n);
-        b.addEventListener('click', () => finish(l.id));
-        box.appendChild(b);
-      }
-      const cancel = document.createElement('button');
-      cancel.type = 'button';
-      cancel.style.cssText = 'margin-top:4px;align-self:flex-end;background:none;border:none;color:#94a3b8;font:600 12px inherit;cursor:pointer;padding:6px 8px;';
-      cancel.textContent = t('cancel');
-      cancel.addEventListener('click', () => finish(null));
-      box.appendChild(cancel);
-    });
-  }
-
   /** Garde l'erreur affichée jusqu'à ce qu'on la ferme : on doit pouvoir la lire. */
   fail(message: string): void {
     this.label.style.color = '#fca5a5';

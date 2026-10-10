@@ -221,7 +221,7 @@ const STRINGS = {
     sh3dImported: 'Home imported: {walls} walls, {openings} doors and windows, {items} pieces of furniture. Edit it in "Draw my home".',
     sh3dFileOld: 'This Sweet Home 3D file is too old to be read. Open it in Sweet Home 3D 5.3 or later, save it, and drop it again.',
     sh3dFileEmpty: 'This Sweet Home 3D file has no walls.',
-    sh3dOneLevel: 'Level "{name}" imported. Import the file again to switch to another level.',
+    sh3dLevels: '{n} levels imported, one per floor.',
     sh3dFurnitureFailed: '{n} piece(s) of furniture could not be imported.',
     sh3dOpeningsSkipped: '{n} door(s) or window(s) are not on a wall and were left out.',
     sh3dPartsLost: '{n} door(s) or window(s) linked before were not found in the new plan: link them again.',
@@ -1087,10 +1087,6 @@ const STRINGS = {
     setupCustom: 'Your card',
     setupCustomHint: 'Pick a theme and place the modules',
     // Interface de la carte
-    sh3dLevelTitle: 'Which level do you import?',
-    sh3dLevelHint: 'This home has several levels. Floors are not supported yet: pick the one you want on the card. You can import the file again for another one.',
-    sh3dLevelUnnamed: 'Unnamed level',
-    sh3dLevelWalls: '{n} walls',
     // Interface de la carte
     ruleSummaryAt: 'at',
     ruleSummaryHighlight: 'highlight',
@@ -1324,7 +1320,7 @@ const STRINGS = {
     sh3dImported: 'Logement importé : {walls} murs, {openings} portes et fenêtres, {items} meubles. Modifie-le dans « Dessiner mon logement ».',
     sh3dFileOld: 'Ce fichier Sweet Home 3D est trop ancien pour être lu. Ouvre-le dans Sweet Home 3D 5.3 ou plus récent, enregistre-le, puis dépose-le à nouveau.',
     sh3dFileEmpty: 'Ce fichier Sweet Home 3D ne contient aucun mur.',
-    sh3dOneLevel: 'Niveau « {name} » importé. Réimporte le fichier pour passer à un autre niveau.',
+    sh3dLevels: '{n} niveaux importés, un par étage.',
     sh3dFurnitureFailed: '{n} meuble(s) n’ont pas pu être importés.',
     sh3dOpeningsSkipped: '{n} porte(s) ou fenêtre(s) hors d’un mur ont été laissées de côté.',
     sh3dPartsLost: '{n} porte(s) ou fenêtre(s) reliées avant n’ont pas été retrouvées dans le nouveau plan : relie-les à nouveau.',
@@ -2175,10 +2171,6 @@ const STRINGS = {
     setupCustom: 'Ta carte',
     setupCustomHint: 'Choisis un thème et place les modules',
     // Interface de la carte
-    sh3dLevelTitle: 'Quel niveau importer ?',
-    sh3dLevelHint: 'Cette maison a plusieurs niveaux. Les étages ne sont pas encore gérés : choisis celui que tu veux sur la carte. Tu pourras réimporter le fichier pour un autre.',
-    sh3dLevelUnnamed: 'Niveau sans nom',
-    sh3dLevelWalls: '{n} murs',
     // Interface de la carte
     ruleSummaryAt: 'à',
     ruleSummaryHighlight: 'mettre en avant',

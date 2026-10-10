@@ -222,6 +222,8 @@ export interface PendingItem {
   rotation: number;
   size: [number, number, number];
   elevation: number;
+  /** Le niveau du logement où il se pose (0 : le rez-de-chaussée). */
+  floor?: number;
 }
 
 export interface Sh3dConversion {
@@ -299,9 +301,8 @@ export function levelChoices(home: Sh3dHome): { id: string; name: string; walls:
 /**
  * Le plan d'une maison Sweet Home 3D, et ses meubles à poser.
  *
- * Une maison à plusieurs niveaux n'est importée que pour un niveau :
- * `levelId` s'il est donné, sinon le plus bas qui ait des murs. L'éditeur n'a
- * pas encore d'étages.
+ * Un seul niveau : `levelId` s'il est donné, sinon le plus bas qui ait des
+ * murs. Pour toute la maison, voir `homeToHouse`.
  */
 export function homeToPlan(home: Sh3dHome, names: { room: () => string; floor: () => string }, levelId?: string): Sh3dConversion {
   const levels = [...home.levels].sort((a, b) => a.elevation - b.elevation || a.elevationIndex - b.elevationIndex);
@@ -407,6 +408,52 @@ export function homeToPlan(home: Sh3dHome, names: { room: () => string; floor: (
     }));
 
   return { plan, items, level, levels: home.levels.length, skipped, gaps, boundaries };
+}
+
+export interface Sh3dHouse {
+  /** Le rez-de-chaussée, ses étages dans `floors`. */
+  plan: PlanDoc;
+  /** Les meubles de tous les niveaux, chacun avec son niveau. */
+  items: PendingItem[];
+  /** Le niveau devenu rez-de-chaussée. */
+  ground?: Sh3dLevel;
+  /** Les niveaux importés (ceux qui ont des murs). */
+  levels: number;
+  skipped: Sh3dConversion['skipped'];
+}
+
+/**
+ * Toute la maison : chaque niveau qui a des murs devient un étage, à sa
+ * hauteur au-dessus du plus bas. Sweet Home 3D place tous les niveaux dans le
+ * même repère : les étages tombent pile au-dessus les uns des autres.
+ */
+export function homeToHouse(home: Sh3dHome, names: { room: () => string; floor: () => string }): Sh3dHouse {
+  const choices = levelChoices(home);
+  if (choices.length < 2) {
+    const conv = homeToPlan(home, names, choices[0]?.id);
+    return { plan: conv.plan, items: conv.items, ground: conv.level, levels: 1, skipped: conv.skipped };
+  }
+  const convs = choices.map((c) => homeToPlan(home, names, c.id));
+  const [ground, ...ups] = convs;
+  const base = ground.level?.elevation ?? 0;
+  const skipped = { curvedWalls: 0, slopedWalls: 0, openings: 0 };
+  for (const c of convs) {
+    skipped.curvedWalls += c.skipped.curvedWalls;
+    skipped.slopedWalls += c.skipped.slopedWalls;
+    skipped.openings += c.skipped.openings;
+  }
+  const plan: PlanDoc = {
+    ...ground.plan,
+    ...(ground.level?.name ? { groundName: ground.level.name } : {}),
+    floors: ups.map((c, i) => ({
+      id: newId('f'),
+      name: c.level?.name || `${i + 1}`,
+      elevation: round3(((c.level?.elevation ?? 0) - base) * CM),
+      doc: c.plan,
+    })),
+  };
+  const items = convs.flatMap((c, k) => c.items.map((it) => ({ ...it, floor: k })));
+  return { plan, items, ground: ground.level, levels: convs.length, skipped };
 }
 
 /**
