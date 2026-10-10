@@ -413,7 +413,7 @@ export class CardHud {
         badge.title = lit > 1 ? `${lit} ${t('uiLightsOnMany')}` : `${lit} ${t('uiLightsOn')}`;
         b.append(badge);
       }
-      b.classList.toggle('ow-on', (id || null) === this.activeRoom);
+      b.classList.toggle('ow-on', !this.activeView && (id || null) === this.activeRoom);
       b.addEventListener('click', (e) => {
         e.stopPropagation();
         this.activeView = null;

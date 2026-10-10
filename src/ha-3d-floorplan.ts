@@ -4315,7 +4315,15 @@ export class Ha3dFloorplan extends HTMLElement {
       () => this._scene,
       (scene) => { this._scene = scene; this._ui?.refreshViews(); },
       (msg, err) => this._showToast(msg, err),
-      (pos, target) => { this._camAnimTo = { pos, target }; },
+      (pos, target) => {
+        // Une vue prise à un autre étage : on y monte (ou descend) d'abord,
+        // sinon la caméra irait dans un étage qui n'est pas construit.
+        if (this._plan?.floors?.length && !this._editMode && !this._planEditor) {
+          const k = this._floorOfY(target.y);
+          if (k !== this._floorIndex()) this._setFloor(k);
+        }
+        this._camAnimTo = { pos, target };
+      },
       () => this._hudRight,
     );
 
