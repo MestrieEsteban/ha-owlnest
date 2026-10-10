@@ -2256,6 +2256,8 @@ export class Ha3dFloorplan extends HTMLElement {
     }
     // Température d'une pièce : la moyenne des capteurs de température qui y sont posés.
     const temps = new Map<string, number[]>();
+    // Les décimales que HA montre pour ces capteurs : la moyenne s'affiche pareil.
+    const places = new Map<string, number>();
     if (hass) {
       this.anchors.forEach((a) => {
         if (a.domain !== 'sensor' || this._floorOfY(a.worldPos.y) !== k) return;
@@ -2264,16 +2266,19 @@ export class Ha3dFloorplan extends HTMLElement {
         const unit = String(st?.attributes?.unit_of_measurement ?? '');
         if (!Number.isFinite(v) || (st?.attributes?.device_class !== 'temperature' && !unit.includes('°'))) return;
         const r = roomOfPoint(rooms, origin, a.worldPos.x, a.worldPos.z);
-        if (r) temps.set(r.id, [...(temps.get(r.id) ?? []), v]);
+        if (!r) return;
+        temps.set(r.id, [...(temps.get(r.id) ?? []), v]);
+        const p = a.precision ?? haPrecision(hass, a.entityId) ?? 1;
+        places.set(r.id, Math.max(places.get(r.id) ?? 0, p));
       });
     }
-    const fmt = (vs: number[]) => {
+    const fmt = (vs: number[], p: number) => {
       const avg = vs.reduce((s, v) => s + v, 0) / vs.length;
-      return `${(Math.round(avg * 10) / 10).toLocaleString(getLang() === 'fr' ? 'fr-FR' : 'en-GB')}°`;
+      return `${formatSensor(String(avg), getLang(), p)}°`;
     };
     return rooms.map((r) => ({
       id: r.id, name: r.name, lit: lit.get(r.id) ?? 0,
-      ...(temps.has(r.id) ? { temp: fmt(temps.get(r.id)!) } : {}),
+      ...(temps.has(r.id) ? { temp: fmt(temps.get(r.id)!, places.get(r.id) ?? 1) } : {}),
     }));
   }
 
