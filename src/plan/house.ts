@@ -14,11 +14,16 @@
  */
 import * as THREE from 'three';
 import type { PlanDoc } from './types';
+import { PLAN_COLORS } from './types';
 import { buildPlan, prism } from './build';
 import { floorViews, SLAB } from './floors';
 import { WALL_ATTR } from './low-walls';
-import { faces, isBoundary } from './graph';
+import { faces, isBoundary, wallEnds, wallLength, thicknessOf } from './graph';
 import { wallFootprints } from './footprint';
+import { type Pt, add, mul, norm, perp, sub, clipAlong, pointInPolygon } from './geometry';
+
+/** Hauteur du muret qui borde un toit plat (l'acrotère). */
+export const PARAPET = 0.35;
 
 export const FLOOR_PREFIX = 'plan_floor_';
 
@@ -57,22 +62,101 @@ function slabMesh(name: string, geos: THREE.BufferGeometry[], mat: THREE.Materia
   return g;
 }
 
-/**
- * La dalle qui ferme un niveau par-dessus : ses pièces et ses murs, du haut
- * des murs jusque sous le sol du niveau suivant (`top`, en hauteur locale).
- */
-function roofSlab(doc: PlanDoc, top: number, id: string): THREE.Group | null {
-  const y0 = doc.wallHeight ?? 2.5;
-  // Un peu sous le sol de l'étage, pour que les deux surfaces ne se battent pas.
-  const y1 = Math.max(top - 0.025, y0 + 0.05);
+/** L'emprise d'un niveau au sol : ses pièces et ses murs. */
+function footprintOf(doc: PlanDoc): Pt[][] {
   const polys = faces(doc).map((f) => f.poly);
   const feet = wallFootprints(doc);
   for (const w of doc.walls) {
     const foot = feet.get(w.id);
     if (foot && foot.length >= 3 && !isBoundary(doc, w)) polys.push(foot);
   }
+  return polys;
+}
+
+/**
+ * Le muret autour d'un toit plat : sur les murs de façade du niveau, là où
+ * l'étage du dessus ne se pose pas (`above` : son emprise). Sans lui, un toit
+ * plat ressemble à une boîte coupée.
+ */
+/** Un mur de façade : une pièce d'un seul côté. */
+function isFacade(doc: PlanDoc, rooms: Pt[][], w: PlanDoc['walls'][number]): boolean {
+  const [a, b] = wallEnds(doc, w);
+  const dir = norm(sub(b, a)), n = perp(dir);
+  const off = thicknessOf(doc, w) / 2 + 0.05;
+  const mid = add(a, mul(dir, wallLength(doc, w) / 2));
+  const inside = (p: Pt) => rooms.some((r) => pointInPolygon(p, r));
+  return inside(add(mid, mul(n, off))) !== inside(sub(mid, mul(n, off)));
+}
+
+function parapets(doc: PlanDoc, above: Pt[][], y0: number): THREE.BufferGeometry[] {
+  const rooms = faces(doc).map((f) => f.poly);
+  const covered = (p: Pt) => above.some((r) => pointInPolygon(p, r));
+  const feet = wallFootprints(doc);
+  const out: THREE.BufferGeometry[] = [];
+  const STEP = 0.1;
+  for (const w of doc.walls) {
+    const foot = feet.get(w.id);
+    if (!foot || foot.length < 3 || isBoundary(doc, w)) continue;
+    const [a, b] = wallEnds(doc, w);
+    const L = wallLength(doc, w);
+    if (L < 1e-3) continue;
+    const dir = norm(sub(b, a));
+    if (!isFacade(doc, rooms, w)) continue;
+    // Les tronçons hors de l'étage du dessus, le long du mur.
+    const steps = Math.max(1, Math.ceil(L / STEP));
+    let start: number | null = null;
+    for (let i = 0; i <= steps; i++) {
+      const u = (i / steps) * L;
+      const free = i < steps && !covered(add(a, mul(dir, Math.min(u + L / steps / 2, L))));
+      if (free && start === null) start = u;
+      if (!free && start !== null) {
+        // Aux bouts du mur, le tronçon garde ses coins (onglets des angles).
+        const piece = clipAlong(foot, a, dir, start <= 0 ? -1e3 : start, u >= L ? 1e3 : u);
+        if (piece.length >= 3) out.push(prism(piece, y0, y0 + PARAPET));
+        start = null;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * La dalle qui ferme un niveau par-dessus : ses pièces et ses murs, du haut
+ * des murs jusque sous le sol du niveau suivant (`top`, en hauteur locale),
+ * bordée d'un muret là où l'étage ne la couvre pas.
+ */
+function roofSlab(doc: PlanDoc, top: number, id: string, above: Pt[][]): THREE.Group | null {
+  const y0 = doc.wallHeight ?? 2.5;
+  // Un peu sous le sol de l'étage, pour que les deux surfaces ne se battent pas.
+  const y1 = Math.max(top - 0.025, y0 + 0.05);
+  const polys = faces(doc).map((f) => f.poly);
   if (!polys.length) return null;
-  return slabMesh(`plan_slab_${id}`, polys.map((p) => prism(p, y0, y1)), slabMaterial());
+  // Le dessus du toit en gris ; au-dessus des murs, la façade continue
+  // jusqu'au muret, sans bande de dalle entre les deux.
+  const g = slabMesh(`plan_slab_${id}`, polys.map((p) => prism(p, y0, y1)), slabMaterial());
+  const wallMat = new THREE.MeshStandardMaterial({ color: doc.outside ?? PLAN_COLORS.outside, roughness: 0.9, metalness: 0 });
+  const feet = wallFootprints(doc);
+  const slabMat = (g.children[0] as THREE.Mesh).material as THREE.Material;
+  doc.walls.forEach((w, i) => {
+    const foot = feet.get(w.id);
+    if (!foot || foot.length < 3 || isBoundary(doc, w)) return;
+    // Façade : à peine plus haute que le toit, les deux dessus ne se battent
+    // pas. Mur intérieur : du toit, au même niveau.
+    const facade = isFacade(doc, polys, w);
+    const m = new THREE.Mesh(prism(foot, y0, facade ? y1 + 0.004 : y1), facade ? wallMat : slabMat);
+    m.name = `plan_slab_${id}_wall_${i}`;
+    m.castShadow = true;
+    m.receiveShadow = true;
+    g.add(m);
+  });
+  parapets(doc, above, y1).forEach((geo, i) => {
+    const m = new THREE.Mesh(geo, wallMat);
+    m.name = `plan_parapet_${id}_${i}`;
+    m.castShadow = true;
+    m.receiveShadow = true;
+    g.add(m);
+  });
+  return g;
 }
 
 /** L'épaisseur sous les sols d'un étage. */
@@ -104,7 +188,7 @@ export function buildHouse(plan: PlanDoc, active: number): BuiltHouse {
   }
   // Chaque niveau sous l'étage montré reçoit sa dalle, jusqu'au sol du suivant.
   for (let k = 0; k < top; k++) {
-    const slab = roofSlab(views[k].doc, views[k + 1].elevation - views[k].elevation, views[k].id);
+    const slab = roofSlab(views[k].doc, views[k + 1].elevation - views[k].elevation, views[k].id, footprintOf(views[k + 1].doc));
     if (slab) groups[k].add(slab);
   }
   root.updateMatrixWorld(true);
