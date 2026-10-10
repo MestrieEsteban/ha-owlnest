@@ -136,6 +136,22 @@ export interface PlanDoc {
    * et ne doivent pas glisser quand on agrandit la maison.
    */
   origin?: { x: number; y: number };
+  /**
+   * Les étages au-dessus du rez-de-chaussée (voir floors.ts). Absent : une
+   * maison de plain-pied, comme tous les plans d'avant les étages.
+   */
+  floors?: PlanFloor[];
+  /** Nom du rez-de-chaussée, quand l'utilisateur l'a changé. */
+  groundName?: string;
+}
+
+/** Un étage : son plan, et la hauteur de son sol au-dessus du rez-de-chaussée. */
+export interface PlanFloor {
+  id: string;
+  name: string;
+  /** En mètres, au-dessus du sol du rez-de-chaussée. */
+  elevation: number;
+  doc: PlanDoc;
 }
 
 export function emptyPlan(): PlanDoc {

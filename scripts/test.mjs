@@ -56,6 +56,7 @@ const ENTRIES = [
   'src/plan/low-walls.ts',
   'src/plan/room-views.ts',
   'src/plan/auto-place.ts',
+  'src/plan/floors.ts',
 ];
 
 /**
