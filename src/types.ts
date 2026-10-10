@@ -238,6 +238,8 @@ export interface RenderingConfig {
   ground_style?: GroundStyle;
   /** Ground scale multiplier (default 1.0, range 0.5–3.0) */
   ground_scale?: number;
+  /** Toit du dernier niveau d'un plan dessiné : plat (défaut) ou en pente, vu murs debout. */
+  roof?: 'flat' | 'hip';
   /** Quality/performance preset — see quality.ts. 'auto' probes the hardware. */
   quality?: import('./quality').QualityLevel;
 }

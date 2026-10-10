@@ -54,7 +54,7 @@ import { partIndexOf, partFrame, guessPart, verticalAxis } from './parts';
 import { separateCoplanarSlabs } from './coplanar';
 import { StaticBatch } from './batching';
 import { buildPlan } from './plan/build';
-import { buildHouse, floorGroup } from './plan/house';
+import { buildHouse, floorGroup, buildRoof, ROOF_NAME } from './plan/house';
 import { floorViews, floorDoc, withFloorDoc, addFloor, removeFloor, renameFloor, allOpenings, floorOfHeight, type FloorView } from './plan/floors';
 import { LowWalls, WALL_VIEWS, type WallView } from './plan/low-walls';
 import { syncPlanParts } from './plan/parts';
@@ -642,6 +642,7 @@ export class Ha3dFloorplan extends HTMLElement {
     this._closeWallMenu();
     this._ui?.setHidden(true);
     this._setFullscreen('plan', true);
+    queueMicrotask(() => this._updateRoofVisibility());
     // L'éditeur dessine un niveau à la fois : son plan, sans la liste des étages.
     const levelDoc = (): PlanDoc | null => {
       const root = this._planDoc();
@@ -735,6 +736,7 @@ export class Ha3dFloorplan extends HTMLElement {
       },
       onClose: () => {
         this._planEditor = null;
+        this._updateRoofVisibility();
         this._framedBox = null;
         this._viewShift = 0;
         this._ui?.setHidden(false);
@@ -2097,11 +2099,45 @@ export class Ha3dFloorplan extends HTMLElement {
     return p && p.floors?.length ? floorOfHeight(p, y - this._groundY) : 0;
   }
 
-  /** Après une construction : le groupe de l'étage montré, et l'éclairage des étages. */
+  /** Après une construction : le groupe de l'étage montré, l'éclairage des étages, le toit. */
   private _refreshFloorGroup(root: THREE.Object3D) {
     const plan = this._plan;
     this._activeGroup = plan ? floorGroup(root, plan, this._floorIndex()) ?? root : root;
     this._applyFloorLights();
+    this._syncRoof();
+  }
+
+  /**
+   * Le toit en pente (réglage) : sur le dernier niveau, quand c'est lui qu'on
+   * regarde. Il ne se montre que murs debout, hors édition : c'est la vue de
+   * l'extérieur, les autres vues servent à voir dedans.
+   */
+  private _syncRoof() {
+    const root = this._modelRoot;
+    if (!root) return;
+    const old = root.getObjectByName(ROOF_NAME);
+    if (old) {
+      old.removeFromParent();
+      old.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) { m.geometry.dispose(); (m.material as THREE.Material).dispose(); } });
+    }
+    const plan = this._plan;
+    const want = this._effectiveConfig?.rendering?.roof === 'hip';
+    if (plan && want && this._floorIndex() === this._floors().length - 1) {
+      const doc = this._activeDoc() ?? plan;
+      const roof = buildRoof(doc);
+      if (roof) (this._activeGroup ?? root).add(roof);
+    }
+    this._updateRoofVisibility();
+  }
+
+  private _updateRoofVisibility() {
+    const roof = this._modelRoot?.getObjectByName(ROOF_NAME);
+    if (!roof) return;
+    const show = this._lowWalls.view === 'up' && !this._editMode && !this._planEditor;
+    if (roof.visible === show) return;
+    roof.visible = show;
+    this._requestShadowUpdate();
+    this._requestRender();
   }
 
   /** Les lampes d'un étage masqué s'éteignent ; celles des étages montrés suivent leur état. */
@@ -2395,6 +2431,7 @@ export class Ha3dFloorplan extends HTMLElement {
       this._mergeStatic();
     }
     this._paintLowWallsBtn();
+    this._updateRoofVisibility();
     this._requestShadowUpdate();
     this._requestRender();
   }
@@ -2541,6 +2578,7 @@ export class Ha3dFloorplan extends HTMLElement {
   }
 
   private _enterEditMode(tab?: string) {
+    queueMicrotask(() => this._updateRoofVisibility());
     // Les marqueurs et gizmos de l'éditeur modifient la géométrie de la scène.
     this._requestShadowUpdate();
     this._editMode = true;
@@ -2783,6 +2821,7 @@ export class Ha3dFloorplan extends HTMLElement {
   }
 
   private _exitEditMode() {
+    queueMicrotask(() => this._updateRoofVisibility());
     if (this._previewTimer) { clearTimeout(this._previewTimer); this._previewTimer = null; }
     this._previewingRule = false;
     this._requestShadowUpdate();
@@ -3648,6 +3687,7 @@ export class Ha3dFloorplan extends HTMLElement {
   // ── Live settings apply ────────────────────────────────────────────────
 
   private _applySettingsLive() {
+    this._syncRoof();
     if (!this.renderer || !this.scene || !this.controls) return;
     const ec = this._effectiveConfig;
     const rl = ec.rendering ?? {};

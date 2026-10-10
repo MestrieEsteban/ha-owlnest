@@ -34,6 +34,14 @@ Ajoutés le 10 octobre 2026. Voir [[Owlnest 2.0]], [[Import sh3d]], [[Vues des m
 - Changer de niveau vide l'historique : annuler ne traverse pas les étages.
 - Il faut un rez-de-chaussée dessiné pour ajouter un étage.
 
+## Le toit en pente (option)
+
+- Réglage **Ambiance → Toit** : « Ouvert (voir dedans) » (défaut) ou « En pente » (`rendering.roof = 'hip'`).
+- Posé sur le **dernier niveau, quand c'est lui qu'on regarde**, et visible seulement **murs debout**, hors édition (`_syncRoof`, `_updateRoofVisibility`) : les autres vues des murs servent à voir dedans.
+- Calcul (`plan/roof.ts`, testé) : le contour extérieur du niveau (`planOutline` : arêtes des pièces qui n'appartiennent qu'à une pièce, au nu extérieur des murs), débord de 30 cm, puis un **squelette droit** : chaque façade recule en montant (pente 35°), avec deux sortes d'évènements, une façade qui disparaît et un angle rentrant qui coupe une façade (le contour se scinde). Chaque façade laisse des bandes, ce sont les pans. Marche pour rectangle, L, T, sommets au milieu d'une façade.
+- Rendu : un seul maillage hors fusion (`owlnestLive`), une nuance par orientation de pan et un trait sur les arêtes, pour lire la forme même quand le soleil éclaire deux pans pareil.
+- Le petit jour entre l'étage et la façade du dessous est bouché : la façade monte jusqu'au sol de l'étage.
+
 ## Reste à faire
 
 - Escaliers, trémie dans la dalle, toit.

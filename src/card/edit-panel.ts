@@ -1899,6 +1899,13 @@ export class EditPanel {
       root.appendChild(wrap);
     }
 
+    selectField(t('cfgRoof'), t('helpRoof'), [
+      ['flat', t('cfgRoofFlat')],
+      ['hip', t('cfgRoofHip')],
+    ], rendering.roof ?? 'flat', (v) => {
+      this.onSceneSettingsChange?.({ rendering: { ...rendering, roof: v as 'flat' | 'hip' } });
+    });
+
     selectField(t('cfgLightOcclusion'), t('helpLightOcclusion'), [
       ['none', t('cfgOcclusionNone')],
       ['top', t('cfgOcclusionTop')],

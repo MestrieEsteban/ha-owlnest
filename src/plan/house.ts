@@ -21,6 +21,73 @@ import { WALL_ATTR } from './low-walls';
 import { faces, isBoundary, wallEnds, wallLength, thicknessOf } from './graph';
 import { wallFootprints } from './footprint';
 import { type Pt, add, mul, norm, perp, sub, clipAlong, pointInPolygon } from './geometry';
+import { hipRoof, planOutline, offset } from './roof';
+
+export const ROOF_NAME = 'plan_roof';
+/** Pente du toit : 35°. */
+const ROOF_SLOPE = Math.tan((35 * Math.PI) / 180);
+/** Débord du toit au-delà des façades. */
+const ROOF_EAVE = 0.3;
+
+/**
+ * Le toit en pente d'un niveau, posé sur ses murs (repère du niveau). Il
+ * déborde un peu des façades et descend d'autant : le pan touche le haut des
+ * murs pile au nu de la façade.
+ */
+export function buildRoof(doc: PlanDoc, color = '#8f4a36'): THREE.Group | null {
+  const outline = planOutline(doc);
+  if (outline.length < 3) return null;
+  const base = (doc.wallHeight ?? 2.5) - ROOF_EAVE * ROOF_SLOPE;
+  const strips = hipRoof(offset(outline, ROOF_EAVE), ROOF_SLOPE);
+  if (!strips.length) return null;
+  const pos: number[] = [];
+  const col: number[] = [];
+  const tint = new THREE.Color(color);
+  const tri = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3) => {
+    const n = new THREE.Vector3().subVectors(b, a).cross(new THREE.Vector3().subVectors(c, a));
+    if (n.lengthSq() < 1e-12) return;
+    // Chaque pan regarde le ciel.
+    const [p, q, r] = n.y >= 0 ? [a, b, c] : [a, c, b];
+    pos.push(p.x, p.y, p.z, q.x, q.y, q.z, r.x, r.y, r.z);
+    // Une nuance par orientation : deux pans voisins ne se confondent jamais,
+    // même sous un soleil qui les éclaire pareil.
+    if (n.y < 0) n.negate();
+    const h = Math.hypot(n.x, n.z) || 1;
+    const k = 0.86 + 0.14 * ((n.x * 0.6 + n.z * 0.8) / h);
+    for (let i = 0; i < 3; i++) col.push(k, k, k);
+  };
+  for (const s of strips) {
+    const [a, b, c, d] = s.pts;
+    const v = (p: Pt, h: number) => new THREE.Vector3(p.x, base + h, p.y);
+    const A = v(a, s.h0), B = v(b, s.h0), C = v(c, s.h1), D = v(d, s.h1);
+    tri(A, B, C);
+    tri(A, C, D);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  geo.computeVertexNormals();
+  const mat = new THREE.MeshStandardMaterial({ color: tint, vertexColors: true, roughness: 0.85, metalness: 0, side: THREE.DoubleSide });
+  const m = new THREE.Mesh(geo, mat);
+  m.name = `${ROOF_NAME}_mesh`;
+  m.castShadow = true;
+  m.receiveShadow = true;
+  const g = new THREE.Group();
+  g.name = ROOF_NAME;
+  // Hors de la fusion des objets immobiles : la carte le montre ou le cache seul.
+  g.userData.owlnestLive = true;
+  g.add(m);
+  // Un trait sur les arêtes : sous un soleil qui éclaire deux pans pareil,
+  // la forme du toit se lit quand même.
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(geo, 8),
+    new THREE.LineBasicMaterial({ color: new THREE.Color(color).multiplyScalar(0.55) }),
+  );
+  edges.name = `${ROOF_NAME}_edges`;
+  edges.raycast = () => {};
+  g.add(edges);
+  return g;
+}
 
 /** Hauteur du muret qui borde un toit plat (l'acrotère). */
 export const PARAPET = 0.35;
@@ -143,7 +210,7 @@ function roofSlab(doc: PlanDoc, top: number, id: string, above: Pt[][]): THREE.G
     // Façade : à peine plus haute que le toit, les deux dessus ne se battent
     // pas. Mur intérieur : du toit, au même niveau.
     const facade = isFacade(doc, polys, w);
-    const m = new THREE.Mesh(prism(foot, y0, facade ? y1 + 0.004 : y1), facade ? wallMat : slabMat);
+    const m = new THREE.Mesh(prism(foot, y0, facade ? Math.max(top, y1 + 0.004) : y1), facade ? wallMat : slabMat);
     m.name = `plan_slab_${id}_wall_${i}`;
     m.castShadow = true;
     m.receiveShadow = true;
