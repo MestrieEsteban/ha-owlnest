@@ -123,5 +123,6 @@ export function allOpenings(plan: PlanDoc): PlanDoc {
 
 /** Le logement a-t-il des murs, à un niveau ou à un autre ? */
 export function hasWalls(plan: PlanDoc): boolean {
-  return floorViews(plan).some((v) => v.doc.walls.length > 0);
+  // Appelé très souvent par la carte : sans rien construire.
+  return plan.walls.length > 0 || (plan.floors ?? []).some((f) => f.doc.walls.length > 0);
 }

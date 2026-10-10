@@ -55,7 +55,7 @@ import { separateCoplanarSlabs } from './coplanar';
 import { StaticBatch } from './batching';
 import { buildPlan } from './plan/build';
 import { buildHouse, floorGroup, buildRoof, ROOF_NAME } from './plan/house';
-import { floorViews, floorDoc, withFloorDoc, addFloor, removeFloor, renameFloor, allOpenings, floorOfHeight, hasWalls, type FloorView } from './plan/floors';
+import { floorViews, floorDoc, withFloorDoc, addFloor, removeFloor, renameFloor, allOpenings, hasWalls, type FloorView } from './plan/floors';
 import { LowWalls, WALL_VIEWS, type WallView } from './plan/low-walls';
 import { syncPlanParts } from './plan/parts';
 import { emptyPlan, type PlanDoc, type OpeningKind } from './plan/types';
@@ -2100,10 +2100,21 @@ export class Ha3dFloorplan extends HTMLElement {
     return this._modelBox.min.y + 0.02;
   }
 
-  /** L'étage d'un point de la scène. */
+  /** Les hauteurs de sol des niveaux, recalculées seulement quand le plan change. */
+  private _levelsCache: { plan: PlanDoc; tops: number[] } | null = null;
+
+  /**
+   * L'étage d'un point de la scène. Appelé pour chaque pastille à chaque
+   * image : les hauteurs des niveaux sont gardées, pas recalculées.
+   */
   private _floorOfY(y: number): number {
     const p = this._plan;
-    return p && p.floors?.length ? floorOfHeight(p, y - this._groundY) : 0;
+    if (!p?.floors?.length) return 0;
+    if (this._levelsCache?.plan !== p) this._levelsCache = { plan: p, tops: floorViews(p).map((v) => v.elevation) };
+    const h = y - this._groundY;
+    let k = 0;
+    this._levelsCache.tops.forEach((e, i) => { if (h >= e - 0.1) k = i; });
+    return k;
   }
 
   /** Après une construction : le groupe de l'étage montré, l'éclairage des étages, le toit. */
