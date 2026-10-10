@@ -19,14 +19,16 @@ export type Slot = 'tl' | 'tc' | 'tr' | 'bl' | 'bc' | 'br';
 export const SLOTS: Slot[] = ['tl', 'tc', 'tr', 'bl', 'bc', 'br'];
 
 /** Les modules qu'on peut placer. La barre d'outils ne se cache pas. */
-export type ModuleId = 'rooms' | 'views' | 'status' | 'dock';
-export const MODULES: ModuleId[] = ['rooms', 'views', 'status', 'dock'];
+// Les vues enregistrées vivent dans la barre des pièces : un seul endroit
+// pour aller quelque part dans la maison.
+export type ModuleId = 'rooms' | 'status' | 'dock';
+export const MODULES: ModuleId[] = ['rooms', 'status', 'dock'];
 
 export interface UiPrefs {
   skin: Skin;
   accent: Accent;
   slots: Record<ModuleId, Slot>;
-  /** Modules affichés (la barre d'outils l'est toujours). */
+  /** Modules affichés (la barre d'outils l'est toujours) ; `views` : les vues enregistrées dans la barre des pièces. */
   show: { rooms: boolean; views: boolean; status: boolean; names: boolean };
   /** Les outils s'effacent quand on ne touche pas la carte. */
   autohide: boolean;
@@ -35,7 +37,7 @@ export interface UiPrefs {
 export const DEFAULT_UI: UiPrefs = {
   skin: 'night',
   accent: 'auto',
-  slots: { rooms: 'tl', views: 'bc', status: 'tr', dock: 'br' },
+  slots: { rooms: 'tl', status: 'tr', dock: 'br' },
   show: { rooms: true, views: true, status: true, names: false },
   autohide: true,
 };
@@ -43,8 +45,10 @@ export const DEFAULT_UI: UiPrefs = {
 /** Les préférences enregistrées, complétées par les valeurs par défaut. */
 export function uiPrefs(saved?: Partial<UiPrefs> | null): UiPrefs {
   const s = saved ?? {};
-  const slots = { ...DEFAULT_UI.slots, ...(s.slots ?? {}) };
-  for (const k of MODULES) if (!SLOTS.includes(slots[k])) slots[k] = DEFAULT_UI.slots[k];
+  // Seuls les modules d'aujourd'hui : une place enregistrée pour l'ancien module Vues est oubliée.
+  const placed = (s.slots ?? {}) as Partial<Record<ModuleId, Slot>>;
+  const slots = { ...DEFAULT_UI.slots };
+  for (const k of MODULES) if (placed[k] && SLOTS.includes(placed[k]!)) slots[k] = placed[k]!;
   return {
     skin: SKINS.includes(s.skin as Skin) ? (s.skin as Skin) : DEFAULT_UI.skin,
     accent: typeof s.accent === 'string' && s.accent ? s.accent : DEFAULT_UI.accent,
@@ -160,8 +164,6 @@ export const STYLES = `
 .ow-sepv { width: 1px; align-self: stretch; margin: 6px 3px; background: var(--ow-line); }
 
 /* Vues enregistrées */
-.ow-views { display: flex; gap: 2px; padding: 4px; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
-.ow-views::-webkit-scrollbar { display: none; }
 .ow-chip { font: 600 12px ${FONT}; padding: 6px 11px; border-radius: 999px; border: none; background: transparent; color: var(--ow-muted);
   cursor: pointer; white-space: nowrap; transition: background .15s, color .15s; }
 .ow-chip:hover { color: var(--ow-text); background: var(--ow-chrome2); }
@@ -187,6 +189,10 @@ export const STYLES = `
 .ow-rooms::-webkit-scrollbar { display: none; }
 .ow-floors { display: flex; gap: 2px; padding-right: 4px; margin-right: 2px; border-right: 1px solid var(--ow-line); flex: none; }
 .ow-floor.ow-on { background: var(--ow-text); color: var(--ow-chrome); }
+.ow-rooms .ow-sep { flex: none; width: 1px; margin: 4px 3px; background: var(--ow-line); }
+.ow-chip.ow-view { display: inline-flex; align-items: center; gap: 5px; }
+.ow-chip.ow-view svg { flex: none; opacity: .7; }
+.ow-chip.ow-view.ow-on svg { opacity: 1; }
 
 /* État */
 .ow-status { display: flex; align-items: center; gap: 10px; padding: 7px 12px; font-size: 12px; white-space: nowrap; }

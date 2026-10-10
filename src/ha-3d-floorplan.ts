@@ -2319,7 +2319,6 @@ export class Ha3dFloorplan extends HTMLElement {
     ];
     if (this.overlays.size) steps.push({ target: () => [...this.overlays.values()].find((o) => o.el.offsetParent && o.el.style.display !== 'none')?.el, title: 'tourTapTitle', text: 'tourTapText', anim: 'tap' });
     if (this._ui?.roomsModule) steps.push({ target: () => this._ui?.roomsModule, title: 'tourRoomsTitle', text: 'tourRoomsText', anim: 'views' });
-    if (this._ui?.viewsModule) steps.push({ target: () => this._ui?.viewsModule, title: 'tourViewsTitle', text: 'tourViewsText', anim: 'views' });
     if (this._plan) steps.push({ target: dock('walls'), title: 'tourWallsTitle', text: 'tourWallsText', anim: 'walls' });
     steps.push(
       { target: dock('full'), title: 'tourFullTitle', text: 'tourFullText', anim: 'full' },

@@ -54,14 +54,13 @@ export interface HudStatus {
 
 const SKIN_LABEL: Record<Skin, StringKey> = { night: 'uiSkinNight', paper: 'uiSkinPaper', glass: 'uiSkinGlass', ha: 'uiSkinHa' };
 const SKIN_SWATCH: Record<Skin, string> = { night: '#0b1220', paper: '#fbfaf7', glass: 'rgba(10,16,30,0.42)', ha: '#ffffff' };
-const MODULE_LABEL: Record<ModuleId, StringKey> = { rooms: 'uiModRooms', views: 'uiModViews', status: 'uiModStatus', dock: 'uiModDock' };
+const MODULE_LABEL: Record<ModuleId, StringKey> = { rooms: 'uiModRooms', status: 'uiModStatus', dock: 'uiModDock' };
 type Toggleable = 'rooms' | 'views' | 'status';
 
 export class CardHud {
   prefs: UiPrefs;
   private slots = new Map<Slot, HTMLDivElement>();
   private dockEl: HTMLDivElement | null = null;
-  private viewsEl: HTMLDivElement | null = null;
   private roomsEl: HTMLDivElement | null = null;
   private roomPanel: HTMLDivElement | null = null;
   private activeRoom: string | null = null;
@@ -154,12 +153,14 @@ export class CardHud {
   refreshDock() { this.renderDock(); this.applyVisibility(); }
 
   /** Les vues enregistrées ont changé. */
-  refreshViews() { this.renderViews(); }
+  refreshViews() { this.lastRooms = ''; this.refreshRooms(); }
 
   /** La pièce montrée (ou aucune) : un clic sur une vue l'efface, et réciproquement. */
   setActiveRoom(id: string | null) {
     this.activeRoom = id;
-    this.roomsEl?.querySelectorAll<HTMLButtonElement>('.ow-chip').forEach((b) => b.classList.toggle('ow-on', (b.dataset.room || null) === id));
+    // Une vue choisie : aucune pièce n'est allumée, pas même « Maison ».
+    this.roomsEl?.querySelectorAll<HTMLButtonElement>('.ow-chip[data-room]').forEach((b) =>
+      b.classList.toggle('ow-on', !this.activeView && (b.dataset.room || null) === id));
     this.lastPanel = '';
     this.renderRoomPanel();
   }
@@ -262,10 +263,11 @@ export class CardHud {
   /** Les pièces ou leurs lampes ont pu changer : ne repeint que si quelque chose a bougé. */
   refreshRooms() {
     const rooms = this.prefs.show.rooms ? this.opts.getRooms() : [];
-    const key = JSON.stringify([rooms, this.opts.getFloors(), this.opts.getActiveFloor()]);
+    const views = this.prefs.show.views ? this.opts.getViews() : [];
+    const key = JSON.stringify([rooms, views, this.opts.getFloors(), this.opts.getActiveFloor()]);
     if (key !== this.lastRooms) {
       this.lastRooms = key;
-      this.renderRooms(rooms);
+      this.renderRooms(rooms, views);
     }
     this.renderRoomPanel();
   }
@@ -282,7 +284,8 @@ export class CardHud {
   setActiveView(id: string | null) {
     this.activeView = id;
     if (id) this.setActiveRoom(null);
-    this.viewsEl?.querySelectorAll<HTMLButtonElement>('.ow-chip').forEach((b) => b.classList.toggle('ow-on', b.dataset.view === id));
+    this.roomsEl?.querySelectorAll<HTMLButtonElement>('.ow-chip[data-view]').forEach((b) => b.classList.toggle('ow-on', b.dataset.view === id));
+    if (!id) this.setActiveRoom(this.activeRoom);
   }
 
   /** L'état de la maison a pu changer : ne repeint que si le texte change. */
@@ -299,7 +302,6 @@ export class CardHud {
   }
 
   get dock() { return this.dockEl; }
-  get viewsModule() { return this.viewsEl; }
 
   // ── Rendu ────────────────────────────────────────────────────────────────
 
@@ -309,11 +311,10 @@ export class CardHud {
     this.roomPanel?.remove();
     this.roomPanel = null;
     this.lastPanel = '';
-    this.dockEl = this.viewsEl = this.statusEl = this.roomsEl = null;
+    this.dockEl = this.statusEl = this.roomsEl = null;
     this.renderDock();
     this.lastRooms = '';
     this.refreshRooms();
-    this.renderViews();
     this.lastStatus = '';
     this.refreshStatus();
     this.applyVisibility();
@@ -359,10 +360,11 @@ export class CardHud {
     }
   }
 
-  private renderRooms(rooms: HudRoom[]) {
+  private renderRooms(rooms: HudRoom[], views: HudView[]) {
     const floors = this.prefs.show.rooms ? this.opts.getFloors() : [];
-    // Une seule pièce et un seul niveau : le bouton « Maison » suffit, le module ne sert à rien.
-    if (rooms.length < 2 && floors.length < 2) { this.roomsEl?.remove(); this.roomsEl = null; return; }
+    // Une seule pièce, un seul niveau et aucune vue : le module ne sert à rien.
+    if (rooms.length < 2) rooms = [];
+    if (!rooms.length && floors.length < 2 && !views.length) { this.roomsEl?.remove(); this.roomsEl = null; return; }
     if (!this.roomsEl) {
       const el = document.createElement('div');
       el.className = 'ow-surface ow-rooms';
@@ -414,38 +416,33 @@ export class CardHud {
       b.classList.toggle('ow-on', (id || null) === this.activeRoom);
       b.addEventListener('click', (e) => {
         e.stopPropagation();
-        this.setActiveRoom(id || null);
+        this.activeView = null;
         this.setActiveView(null);
+        this.setActiveRoom(id || null);
         this.opts.flyToRoom(id || null);
       });
       this.roomsEl!.append(b);
     };
-    if (rooms.length < 1) return;
-    chip('', t('uiRoomsHome'), rooms.reduce((n, r) => n + r.lit, 0));
-    for (const r of rooms) chip(r.id, r.name, r.lit, r.temp);
-  }
-
-  private renderViews() {
-    const views = this.prefs.show.views ? this.opts.getViews() : [];
-    if (!views.length) { this.viewsEl?.remove(); this.viewsEl = null; return; }
-    if (!this.viewsEl) {
-      const el = document.createElement('div');
-      el.className = 'ow-surface ow-views';
-      el.setAttribute('role', 'toolbar');
-      el.setAttribute('aria-label', t('uiModViews'));
-      this.viewsEl = el;
-      this.place('views', el);
+    if (rooms.length) {
+      chip('', t('uiRoomsHome'), rooms.reduce((n, r) => n + r.lit, 0));
+      for (const r of rooms) chip(r.id, r.name, r.lit, r.temp);
     }
-    this.viewsEl.innerHTML = '';
+    // Les vues enregistrées, après les pièces : une caméra les distingue.
+    if (views.length && (rooms.length || floors.length > 1)) {
+      const sep = document.createElement('span');
+      sep.className = 'ow-sep';
+      this.roomsEl.append(sep);
+    }
     for (const v of views) {
       const b = document.createElement('button');
       b.type = 'button';
-      b.className = 'ow-chip';
+      b.className = 'ow-chip ow-view';
       b.dataset.view = v.id;
-      b.textContent = v.label;
+      b.title = t('uiModViews');
+      b.append(icon('camera', 14), document.createTextNode(v.label));
       b.classList.toggle('ow-on', v.id === this.activeView);
       b.addEventListener('click', (e) => { e.stopPropagation(); this.setActiveView(v.id); this.opts.flyTo(v.id); });
-      this.viewsEl.append(b);
+      this.roomsEl.append(b);
     }
   }
 
@@ -472,7 +469,8 @@ export class CardHud {
     if (this.helloEl || this.hidden) return;
     const el = document.createElement('div');
     el.className = 'ow-surface ow-pill';
-    el.style.top = '12px';
+    // Dans une place libre, pour ne jamais recouvrir un module (en bas au centre d'abord).
+    const free = (['bc', 'tc', 'bl', 'tl', 'tr', 'br'] as Slot[]).map((k) => this.slots.get(k)).find((c) => c && !c.children.length);
     el.innerHTML = `<span>${t('uiHello')}</span>`;
     const go = document.createElement('button');
     go.type = 'button';
@@ -488,7 +486,7 @@ export class CardHud {
     x.append(icon('close', 15));
     x.addEventListener('click', (e) => { e.stopPropagation(); this.hideHello(true); });
     el.append(go, x);
-    this.host.appendChild(el);
+    if (free) { el.style.position = 'static'; el.style.transform = 'none'; free.appendChild(el); } else { el.style.top = '12px'; this.host.appendChild(el); }
     this.helloEl = el;
   }
 

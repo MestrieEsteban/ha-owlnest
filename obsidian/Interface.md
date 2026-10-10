@@ -16,7 +16,9 @@ Refonte d'octobre 2026, demandée par Esteban : « plus friendly », modulaire, 
 
 ## La carte, hors édition
 
-Trois modules dans six emplacements (`tl tc tr bl bc br`) : **Outils** (murs, recentrer, plein écran, verrou, aide, personnaliser, modifier), **Vues** (les vues enregistrées en puces) et **Météo et état** (lampes allumées, météo de `weather_entity`). Les outils peuvent s'effacer au repos (réglage, activé par défaut comme avant).
+Trois modules dans six emplacements (`tl tc tr bl bc br`) : **Outils** (murs, recentrer, plein écran, verrou, aide, personnaliser, modifier), **Pièces et vues** et **Météo et état** (lampes allumées, météo de `weather_entity`).
+
+**Pièces et vues** (10 octobre 2026) : une seule barre pour aller quelque part, dans l'ordre étages, « Maison » et les pièces du plan, un séparateur, puis les vues enregistrées (icône caméra). Avant, les vues avaient leur propre module en bas au centre et les deux barres se confondaient. Le réglage « Vues enregistrées » les masque dans la barre. Une place enregistrée pour l'ancien module Vues est oubliée (`uiPrefs`). Une vue choisie éteint toutes les puces de pièce, « Maison » comprise. La bulle de bienvenue se pose dans une place libre (en bas au centre d'abord) pour ne plus recouvrir la barre. Les outils peuvent s'effacer au repos (réglage, activé par défaut comme avant).
 
 Les préférences (thème, accent, emplacements, modules affichés) vont dans **`scene.settings.ui`** : elles suivent la carte d'un appareil à l'autre et passent par l'enregistrement normal de la scène (le backend accepte un dict libre).
 
