@@ -533,7 +533,7 @@ export class Ha3dFloorplan extends HTMLElement {
         this._batch?.unmerge();
         this._lowWalls.attachItems(this._activeDoc() ?? plan, this._activeGroup ?? root);
         this._mergeStatic();
-        if (v.index === 0) this._syncLampAnchors(root, plan);
+        this._syncLampAnchors(root, plan);
         this._requestShadowUpdate();
         this._requestRender();
       });
@@ -576,10 +576,13 @@ export class Ha3dFloorplan extends HTMLElement {
     const prefix = 'plan_lamp_';
     const all = this._scene.anchors ?? [];
     const before = new Map(all.filter((a) => a.id.startsWith(prefix)).map((a) => [a.id, a]));
-    const mine = (plan.items ?? [])
+    // Les lampes de tous les niveaux, même ceux qui ne sont pas construits :
+    // leur pastille doit rester (elle est seulement masquée hors de son étage).
+    const mine = floorViews(plan).flatMap((v) => (v.doc.items ?? [])
       .filter((i) => i.entity && catalogItem(i.model)?.light)
-      .map((i) => {
-        const p = root.localToWorld(new THREE.Vector3(...bulbPosition(plan, i)));
+      .map((i) => ({ i, doc: v.doc, lift: v.elevation })))
+      .map(({ i, doc, lift }) => {
+        const p = root.localToWorld(new THREE.Vector3(...bulbPosition(doc, i)).add(new THREE.Vector3(0, lift, 0)));
         const prev = before.get(prefix + i.id);
         return {
           ...prev,
@@ -710,7 +713,9 @@ export class Ha3dFloorplan extends HTMLElement {
       // La même liste que pour poser une ancre : par étage et par pièce.
       pickEntity: (_current, done) => {
         if (!this._hass || !this.overlayContainer) return;
-        const placed = new Set((this._scene?.plan?.items ?? []).map((i) => i.entity).filter((e): e is string => !!e));
+        const root = this._scene?.plan;
+        const items = root ? floorViews(root).flatMap((v) => v.doc.items ?? []) : [];
+        const placed = new Set(items.map((i) => i.entity).filter((e): e is string => !!e));
         openEntityPicker({ container: this.overlayContainer, hass: this._hass, placed, onPick: (entity) => done(entity) });
       },
       entityLabel: (entity) => {
@@ -2027,8 +2032,9 @@ export class Ha3dFloorplan extends HTMLElement {
     if (!matches.size) { this._showToast(t('autoPlaceNoMatch'), true); return; }
     const placed = new Set([...editor.anchors.values()].map((a) => a.entity).filter(Boolean));
     const origin = this._planOrigin(plan);
-    const floor = this._modelBox.min.y;
-    const ceiling = floor + (plan.wallHeight ?? 2.5) - 0.35;
+    // Le sol et la hauteur sous plafond de l'étage montré : ses pièces seules sont proposées.
+    const floor = this._groundY + this._floorLift();
+    const ceiling = floor + ((this._activeDoc() ?? plan).wallHeight ?? 2.5) - 0.35;
     const eye = floor + 1.4;
     const add: { entity: string; label: string; position: THREE.Vector3 }[] = [];
     let roomsUsed = 0;
@@ -2125,7 +2131,12 @@ export class Ha3dFloorplan extends HTMLElement {
     if (plan && want && this._floorIndex() === this._floors().length - 1) {
       const doc = this._activeDoc() ?? plan;
       const roof = buildRoof(doc);
-      if (roof) (this._activeGroup ?? root).add(roof);
+      if (roof) {
+        // Construit caché : `_updateRoofVisibility` le montre si la vue s'y prête.
+        roof.visible = false;
+        roof.traverse((o) => o.layers.disableAll());
+        (this._activeGroup ?? root).add(roof);
+      }
     }
     this._updateRoofVisibility();
   }
@@ -2136,6 +2147,9 @@ export class Ha3dFloorplan extends HTMLElement {
     const show = this._lowWalls.view === 'up' && !this._editMode && !this._planEditor;
     if (roof.visible === show) return;
     roof.visible = show;
+    // Caché, il ne doit pas non plus arrêter les clics : le lancer de rayon de
+    // three.js touche les objets invisibles, pas ceux hors de ses calques.
+    roof.traverse((o) => { if (show) o.layers.set(0); else o.layers.disableAll(); });
     this._requestShadowUpdate();
     this._requestRender();
   }
@@ -4021,19 +4035,22 @@ export class Ha3dFloorplan extends HTMLElement {
   }
 
   private _mountParts() {
-    const configs = this._scene?.parts ?? [];
-    if (!this._modelRoot) return;
+    const root = this._modelRoot;
+    if (!root) return;
+    // Les portes d'un étage qui n'est pas construit attendent leur étage, sans bruit.
+    const configs = (this._scene?.parts ?? []).filter((p) =>
+      !(p.node?.startsWith('plan_leaf_') && this._plan?.floors?.length && !root.getObjectByName(p.node)));
     // Les rangs de l'arborescence se relèvent sur le modèle tel que chargé,
     // avant qu'un ouvrant ne déplace quoi que ce soit.
-    stampOrder(this._modelRoot);
+    stampOrder(root);
     // Les calques de surlignage ne doivent pas entrer dans une boîte d'ouvrant.
     this._highlight.clear();
-    this._parts.dispose(this._modelRoot);
+    this._parts.dispose(root);
     if (configs.length === 0) { this._applyHighlight(); return; }
 
     // Déduite du modèle entier, pas de chaque pièce : voir verticalAxis().
     this._parts.setVertical(verticalAxis(this._modelBox));
-    const { missing } = this._parts.build(this._modelRoot, configs);
+    const { missing } = this._parts.build(root, configs);
     if (missing.length) {
       console.warn(
         `[Owlnest] ${missing.length} opening(s) not found in the model:`,

@@ -71,5 +71,16 @@ export function syncPlanParts(
           ...target,
         });
   });
+
+  // Une porte d'un étage qui n'est pas construit (on regarde un autre
+  // niveau) n'a pas de vantaux dans la 3D : son ouvrant est gardé tel quel,
+  // capteur compris, jusqu'à ce que l'étage revienne.
+  const built = new Set(leaves.map((l) => l.opening));
+  const known = new Set(plan.openings.map((o) => o.id));
+  for (const p of byNode.values()) {
+    const rest = p.node!.slice(PLAN_LEAF.length);
+    const opening = rest.slice(0, rest.lastIndexOf('_'));
+    if (known.has(opening) && !built.has(opening) && !out.includes(p)) out.push(p);
+  }
   return out;
 }
