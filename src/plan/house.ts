@@ -268,6 +268,8 @@ export function buildHouse(plan: PlanDoc, active: number): BuiltHouse {
     if (slab) groups[k].add(slab);
   }
   root.updateMatrixWorld(true);
+  // Un rez-de-chaussée vide (effacé, les étages gardés) : on centre sur ce qui existe.
+  if (groundBox.isEmpty()) groundBox.setFromObject(root);
   return { root, groundBox };
 }
 

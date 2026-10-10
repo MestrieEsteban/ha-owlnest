@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { floorViews, floorDoc, withFloorDoc, addFloor, removeFloor, renameFloor, floorOfHeight, allOpenings, SLAB } from './floors.mjs';
+import { floorViews, floorDoc, withFloorDoc, addFloor, removeFloor, renameFloor, floorOfHeight, allOpenings, hasWalls, SLAB } from './floors.mjs';
 import { addRect } from './graph.mjs';
 
 const emptyPlan = () => ({ version: 2, wallHeight: 2.5, wallThickness: 0.15, nodes: [], walls: [], rooms: [], openings: [], items: [] });
@@ -77,4 +77,11 @@ test('toutes les ouvertures, d’un étage à l’autre', () => {
   const up = floorDoc(p, 1);
   p = withFloorDoc(p, 1, { ...up, openings: [{ id: 'o1', wall: up.walls[0].id, kind: 'window', offset: 1, width: 1, height: 1.2, sill: 0.9 }] });
   assert.deepEqual(allOpenings(p).openings.map((o) => o.id), ['o0', 'o1']);
+});
+
+test('un rez-de-chaussée effacé ne fait pas disparaître le logement', () => {
+  const p = addFloor(house(), 'Étage').plan;
+  const cleared = withFloorDoc(p, 0, { ...floorDoc(p, 0), nodes: [], walls: [], rooms: [], openings: [] });
+  assert.equal(hasWalls(cleared), true);
+  assert.equal(hasWalls(emptyPlan()), false);
 });

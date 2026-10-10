@@ -113,3 +113,8 @@ export function floorOfHeight(plan: PlanDoc, height: number): number {
 export function allOpenings(plan: PlanDoc): PlanDoc {
   return { ...plan, openings: floorViews(plan).flatMap((v) => v.doc.openings) };
 }
+
+/** Le logement a-t-il des murs, à un niveau ou à un autre ? */
+export function hasWalls(plan: PlanDoc): boolean {
+  return floorViews(plan).some((v) => v.doc.walls.length > 0);
+}

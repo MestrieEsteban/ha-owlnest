@@ -55,7 +55,7 @@ import { separateCoplanarSlabs } from './coplanar';
 import { StaticBatch } from './batching';
 import { buildPlan } from './plan/build';
 import { buildHouse, floorGroup, buildRoof, ROOF_NAME } from './plan/house';
-import { floorViews, floorDoc, withFloorDoc, addFloor, removeFloor, renameFloor, allOpenings, floorOfHeight, type FloorView } from './plan/floors';
+import { floorViews, floorDoc, withFloorDoc, addFloor, removeFloor, renameFloor, allOpenings, floorOfHeight, hasWalls, type FloorView } from './plan/floors';
 import { LowWalls, WALL_VIEWS, type WallView } from './plan/low-walls';
 import { syncPlanParts } from './plan/parts';
 import { emptyPlan, type PlanDoc, type OpeningKind } from './plan/types';
@@ -438,7 +438,8 @@ export class Ha3dFloorplan extends HTMLElement {
   /** Le logement dessiné dans la carte, s'il a au moins une pièce : il fait alors la maison. */
   private get _plan(): PlanDoc | null {
     const p = this._planDoc();
-    return p && p.walls.length ? p : null;
+    // Un rez-de-chaussée effacé ne fait pas disparaître les étages.
+    return p && hasWalls(p) ? p : null;
   }
 
   /** Le plan de la scène, converti s'il vient d'une version plus ancienne de l'éditeur. */
@@ -481,7 +482,7 @@ export class Ha3dFloorplan extends HTMLElement {
     this._scene = { ...this._scene, plan };
     const root = this._modelRoot;
     // Premier dessin, ou passage de la démo (ou d'un import) au plan : on charge.
-    if (!root || root.name !== 'owlnest_plan' || !plan.walls.length) {
+    if (!root || root.name !== 'owlnest_plan' || !hasWalls(plan)) {
       this._syncPlanPartsAfterLoad = true;
       void this._loadModel();
       return;
@@ -669,7 +670,7 @@ export class Ha3dFloorplan extends HTMLElement {
       onChange: (doc) => {
         if (!this._scene) return;
         const plan = withLevel(doc);
-        if (fromDemo && plan.walls.length) {
+        if (fromDemo && hasWalls(plan)) {
           fromDemo = false;
           this._scene = { ...this._scene, anchors: [], camera_views: [], parts: [] };
           try { localStorage.removeItem(this._storageKey); } catch { /* stockage bloqué */ }
@@ -687,7 +688,7 @@ export class Ha3dFloorplan extends HTMLElement {
         add: () => {
           const root = this._planDoc();
           // Un étage se pose sur une maison : il faut d'abord un rez-de-chaussée.
-          if (!root?.walls.length || fromDemo) return null;
+          if (!root || !hasWalls(root) || fromDemo) return null;
           const { plan, index } = addFloor(root, `${t('floorUpper')} ${this._floors().length}`);
           saveHouse(plan);
           this._setFloor(index);
