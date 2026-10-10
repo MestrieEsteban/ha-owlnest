@@ -206,11 +206,13 @@ export class SimulationPanel {
       azimuth = 90 + ((this._simHour - 6) / 12) * 180;
       azimuth = Math.max(0, Math.min(360, azimuth));
     }
+    // La météo d'avant d'abord remise à zéro : le soleil s'applique sur une
+    // base propre, sinon repasser au beau temps gardait l'assombrissement.
+    this.env.removeWeatherParticles();
+    this.env.weatherType = 'none';
     this.env.applySunLight(elevation, azimuth);
 
     // Apply weather — map sim presets to HA weather states
-    this.env.removeWeatherParticles();
-    this.env.weatherType = 'none';
     const haState: Record<typeof this._simWeather, string> = {
       clear:  '',
       cloudy: 'cloudy',
