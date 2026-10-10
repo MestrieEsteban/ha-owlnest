@@ -44,13 +44,20 @@ export function floorDoc(plan: PlanDoc, index: number): PlanDoc {
   return floorViews(plan)[index]?.doc ?? plan;
 }
 
-/** Le logement, avec le plan du niveau `index` remplacé par `doc`. */
+/**
+ * Le logement, avec le plan du niveau `index` remplacé par `doc`. Si la
+ * hauteur des murs de ce niveau change, les étages du dessus montent ou
+ * descendent d'autant : ils restent posés sur lui.
+ */
 export function withFloorDoc(plan: PlanDoc, index: number, doc: PlanDoc): PlanDoc {
-  if (index === 0) return { ...bare(doc), floors: plan.floors, groundName: plan.groundName };
   const views = floorViews(plan);
   const target = views[index];
   if (!target) return plan;
-  return { ...plan, floors: (plan.floors ?? []).map((f) => (f.id === target.id ? { ...f, doc: bare(doc) } : f)) };
+  const delta = Math.round(((doc.wallHeight ?? 2.5) - (target.doc.wallHeight ?? 2.5)) * 1000) / 1000;
+  const shift = (f: PlanFloor): PlanFloor => (delta && f.elevation > target.elevation
+    ? { ...f, elevation: Math.round((f.elevation + delta) * 1000) / 1000 } : f);
+  if (index === 0) return { ...bare(doc), floors: plan.floors?.map(shift), groundName: plan.groundName };
+  return { ...plan, floors: (plan.floors ?? []).map((f) => shift(f.id === target.id ? { ...f, doc: bare(doc) } : f)) };
 }
 
 /**

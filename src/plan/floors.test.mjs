@@ -85,3 +85,13 @@ test('un rez-de-chaussée effacé ne fait pas disparaître le logement', () => {
   assert.equal(hasWalls(cleared), true);
   assert.equal(hasWalls(emptyPlan()), false);
 });
+
+test('des murs plus hauts au rez-de-chaussée : les étages montent avec', () => {
+  let p = addFloor(addFloor(house(), 'Étage').plan, 'Combles').plan;
+  const [e1, e2] = floorViews(p).slice(1).map((v) => v.elevation);
+  p = withFloorDoc(p, 0, { ...floorDoc(p, 0), wallHeight: 3 });
+  assert.deepEqual(floorViews(p).slice(1).map((v) => v.elevation), [e1 + 0.5, e2 + 0.5]);
+  // Le premier étage plus bas : seul celui du dessus descend.
+  p = withFloorDoc(p, 1, { ...floorDoc(p, 1), wallHeight: 2.2 });
+  assert.deepEqual(floorViews(p).slice(1).map((v) => v.elevation), [e1 + 0.5, Math.round((e2 + 0.2) * 1000) / 1000]);
+});
