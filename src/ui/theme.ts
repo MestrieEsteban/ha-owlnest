@@ -277,7 +277,7 @@ export const STYLES = `
 .ow-cell[data-cell^="b"] { justify-content: flex-end; }
 .ow-cell.ow-hot, .ow-map.ow-placing .ow-cell:hover { background: rgba(255,255,255,0.22); border-color: #fff; }
 .ow-mchip { font: 600 10.5px ${FONT}; padding: 4px 6px; border-radius: 6px; border: none; background: #0b1220; color: #e2e8f0; cursor: grab;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; touch-action: none; text-align: left; }
+  line-height: 1.25; overflow-wrap: anywhere; touch-action: none; text-align: left; }
 .ow-mchip.ow-sel { background: var(--ow-acc); color: var(--ow-acc-ink); }
 .ow-mchip.ow-off { opacity: .45; text-decoration: line-through; }
 .ow-drag-ghost { position: fixed; z-index: 100000; pointer-events: none; transform: translate(-50%, -50%) rotate(-3deg); box-shadow: 0 6px 16px rgba(0,0,0,0.35); }
