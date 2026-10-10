@@ -319,6 +319,12 @@ export class EditPanel {
   onCustomize?: () => void;
   /** Pose les appareils des pièces de Home Assistant dans les pièces du même nom. */
   onAutoPlace?: () => Promise<void>;
+  /**
+   * Le nom de l'étage d'un ouvrant quand il n'est pas celui qu'on regarde
+   * (`null` sinon), et l'étage à montrer avant d'ouvrir sa fiche.
+   */
+  partFloor?: (part: OwlnestPart) => string | null;
+  showPartFloor?: (part: OwlnestPart) => void;
   /** Ouvre le sélecteur de fichiers pour importer un plan (admin seulement). */
   onImportModel?: () => void;
 
@@ -2687,6 +2693,11 @@ export class EditPanel {
   /** Sections repliées de la fiche d'un appareil, d'une ouverture à l'autre. */
   private _sheetFold: Record<string, boolean> = {};
 
+  /** La liste des ouvrants, repeinte (après un changement d'étage, par exemple). */
+  refreshPartsList() {
+    if (this._partsBody) this._fillPartsList(this._partsBody);
+  }
+
   updateAnchorList() {
     this._paintSteps();
     if (!this._panel) return;
@@ -3781,6 +3792,14 @@ export class EditPanel {
         const name = document.createElement('b');
         const friendly = st?.attributes?.friendly_name;
         name.textContent = part.label || (typeof friendly === 'string' ? friendly : '') || part.entity || t('partTitle');
+        // Une porte d'un autre étage : son étage, en petit, à côté du nom.
+        const floorName = this.partFloor?.(part);
+        if (floorName) {
+          const tag = document.createElement('span');
+          tag.className = 'ow-floor-tag';
+          tag.textContent = floorName;
+          name.append(tag);
+        }
         const sub = document.createElement('span');
         if (!part.entity) {
           sub.textContent = t('partNoEntity');
@@ -3839,6 +3858,8 @@ export class EditPanel {
    * l'objet dans l'arborescence du modèle sont repliés : on y vient rarement.
    */
   private _openPartModal(part: OwlnestPart, hit: PickedPart | null) {
+    // Une porte d'un autre étage : on y va d'abord, pour la voir bouger.
+    if (this.partFloor?.(part)) this.showPartFloor?.(part);
     this._closePartModal?.();
     this._panel?.querySelector('#owlnest-part-modal')?.remove();
     const host = this._panel;

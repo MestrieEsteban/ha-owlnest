@@ -2177,6 +2177,16 @@ export class Ha3dFloorplan extends HTMLElement {
     });
   }
 
+  /** L'étage d'un ouvrant construit depuis le plan (`null` pour un ouvrant d'un modèle importé). */
+  private _partFloorIndex(part: OwlnestPart): number | null {
+    const plan = this._plan;
+    if (!plan || !part.node?.startsWith('plan_leaf_')) return null;
+    const rest = part.node.slice('plan_leaf_'.length);
+    const opening = rest.slice(0, rest.lastIndexOf('_'));
+    const v = floorViews(plan).find((f) => f.doc.openings.some((o) => o.id === opening));
+    return v ? v.index : null;
+  }
+
   /** Change d'étage : la maison se reconstruit jusqu'à lui, la caméra monte ou descend avec. */
   private _setFloor(index: number) {
     const plan = this._plan;
@@ -2778,6 +2788,16 @@ export class Ha3dFloorplan extends HTMLElement {
     this._editPanel.onDrawPlan = () => this.openPlanEditor();
     this._editPanel.getSetupSteps = () => this._setupSteps();
     if (this._plan) this._editPanel.onAutoPlace = () => this._autoPlace();
+    if (this._plan) {
+      this._editPanel.partFloor = (part) => {
+        const k = this._partFloorIndex(part);
+        return k !== null && k !== this._floorIndex() ? this._floors()[k]?.name ?? null : null;
+      };
+      this._editPanel.showPartFloor = (part) => {
+        const k = this._partFloorIndex(part);
+        if (k !== null) { this._setFloor(k); this._editPanel?.refreshPartsList(); }
+      };
+    }
     this._editPanel.onCustomize = () => { this._exitEditMode(); this._ui?.openSheet(); };
     this._editPanel.countDetectedOpenings = () => this._detectedOpenings().length;
     this._editPanel.onAddDetectedOpenings = () => this._addDetectedOpenings();
