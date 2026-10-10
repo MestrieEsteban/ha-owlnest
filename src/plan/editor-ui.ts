@@ -15,7 +15,7 @@
 import { t, getLang, type StringKey } from '../i18n';
 import { icon } from '../ui/icons';
 import { Tour, type TourStep } from '../ui/tour';
-import type { PlanDoc, PlanOpening, OpeningKind, PlanWall, FloorMaterial, DoorStyle, WindowStyle, PlanItem } from './types';
+import type { PlanDoc, PlanOpening, OpeningKind, PlanWall, FloorMaterial, FacadeMaterial, DoorStyle, WindowStyle, PlanItem } from './types';
 import { OPENING_DEFAULTS, PLAN_COLORS } from './types';
 import {
   type Pt, sub, add, mul, dot, dist, norm, perp, project, insidePoint, pointInPolygon, clipAlong, round3,
@@ -32,7 +32,7 @@ import {
   loadFurniture, itemSize, topView, isoView, furnitureTints, tintKind, overItem, baseSize, itemElevation, supportOf, isFlat,
 } from './furniture';
 import {
-  ROOM_TYPES, FLOOR_COLORS, WALL_COLORS, DOOR_COLORS, FRAME_COLORS, FLOOR_MATERIALS, type RoomType,
+  ROOM_TYPES, FLOOR_COLORS, WALL_COLORS, FACADE_COLORS, DOOR_COLORS, FRAME_COLORS, FLOOR_MATERIALS, type RoomType,
 } from './rooms';
 
 type Tool = 'select' | 'room' | 'wall' | OpeningKind | 'furniture' | 'erase' | 'calibrate' | 'image';
@@ -2563,7 +2563,15 @@ export class PlanEditor {
     this.bubble.append(close);
     this.stepper(t('planWallHeight'), this.plan.wallHeight, 0.1, 1, 10, (v) => { this.plan.wallHeight = v; });
     this.stepper(t('planWallThickness'), this.plan.wallThickness, 0.01, 0.03, 1, (v) => { this.plan.wallThickness = v; });
-    this.swatches(t('planOutsideColor'), WALL_COLORS, this.plan.outside ?? PLAN_COLORS.outside, (c) => { this.plan.outside = c; });
+    this.swatches(t('planOutsideColor'), FACADE_COLORS, this.plan.outside ?? PLAN_COLORS.outside, (c) => { this.plan.outside = c; });
+    // La matière des façades et le soubassement : le même réglage que dans
+    // l'onglet Réglages, là où l'on dessine sa maison.
+    this.chips(t('cfgFacade'), ([
+      ['smooth', t('cfgFacadeSmooth')], ['render', t('cfgFacadeRender')], ['brick', t('cfgFacadeBrick')],
+      ['wood', t('cfgFacadeWood')], ['stone', t('cfgFacadeStone')],
+    ] as [FacadeMaterial, string][]), this.plan.facade ?? 'smooth', (m) => { this.plan.facade = m === 'smooth' ? undefined : m; });
+    this.chips(t('cfgPlinth'), ([['no', t('planPlinthNo')], ['yes', t('planPlinthYes')]] as ['no' | 'yes', string][]),
+      this.plan.plinth ? 'yes' : 'no', (v) => { this.plan.plinth = v === 'yes' || undefined; });
 
     this.bubble.append(el('div', `height:1px;background:${C.line};margin:12px 0;`));
     this.heading(t('planImage'), 'image');
