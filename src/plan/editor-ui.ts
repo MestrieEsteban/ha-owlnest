@@ -105,7 +105,23 @@ export interface PlanEditorOptions {
    */
   navTabs?: { id: string; label: string; icon: string }[];
   onNavTab?: (id: string) => void;
+  /**
+   * Les niveaux du logement. L'éditeur ne dessine qu'un niveau à la fois : en
+   * changer lui rend le plan de l'autre (`null` : rien n'a changé).
+   */
+  floors?: PlanFloorsApi;
   onClose: () => void;
+}
+
+export interface PlanFloorsApi {
+  list: () => { name: string }[];
+  active: () => number;
+  switchTo: (index: number) => PlanDoc | null;
+  add: () => PlanDoc | null;
+  rename: (index: number, name: string) => void;
+  remove: (index: number) => PlanDoc | null;
+  /** Le niveau du dessous, montré en filigrane pour dessiner pile au-dessus. */
+  under: () => PlanDoc | null;
 }
 
 // ── Petits outils DOM ─────────────────────────────────────────────────────
@@ -230,6 +246,83 @@ export class PlanEditor {
   private showSettings = false;
   private doneBtn: HTMLButtonElement | null = null;
   private tour: Tour | null = null;
+  private floorBar: HTMLDivElement | null = null;
+
+  /**
+   * La barre des niveaux, en haut à gauche du dessin. Toucher le niveau
+   * actif le renomme ; le « + » en ajoute un au-dessus du dernier.
+   */
+  private renderFloorBar() {
+    const api = this.opts.floors;
+    if (!api) return;
+    if (!this.floorBar) {
+      this.floorBar = el('div', [
+        'position:absolute', 'left:12px', 'top:12px', 'display:flex', 'gap:2px', 'align-items:center', 'padding:3px',
+        `background:${C.chrome}`, `border:1px solid ${C.line}`, 'border-radius:11px', 'box-shadow:0 6px 18px rgba(0,0,0,0.25)',
+        'max-width:calc(100% - 290px)', 'overflow-x:auto', 'scrollbar-width:none', 'z-index:2',
+      ].join(';'));
+      this.floorBar.setAttribute('role', 'tablist');
+      this.floorBar.setAttribute('aria-label', t('uiFloors'));
+      this.floorBar.dataset.owFloors = '';
+      this.stage.append(this.floorBar);
+    }
+    const bar = this.floorBar;
+    bar.innerHTML = '';
+    const active = api.active();
+    const chip = (label: string, on: boolean, title: string, onClick: (b: HTMLButtonElement) => void) => {
+      const b = el('button', [
+        'display:flex', 'align-items:center', 'gap:5px', 'padding:6px 11px', 'border-radius:8px', 'border:none', 'cursor:pointer',
+        `font-family:${FONT}`, 'font-size:12.5px', 'font-weight:600', 'white-space:nowrap', 'flex-shrink:0',
+        on ? 'background:#0ea5e9;color:#fff' : `background:transparent;color:${C.muted}`,
+      ].join(';'), label);
+      b.title = title;
+      b.addEventListener('click', () => onClick(b));
+      bar.append(b);
+      return b;
+    };
+    api.list().forEach((f, k) => {
+      const b = chip(f.name, k === active, k === active ? t('planFloorRename') : f.name, (btn) => {
+        if (k !== api.active()) { const doc = api.switchTo(k); if (doc) this.loadFloor(doc); return; }
+        const r = btn.getBoundingClientRect(), s = this.stage.getBoundingClientRect();
+        this.ask({ x: r.left - s.left, y: r.bottom - s.top + 6 }, f.name, 'text', (v) => {
+          const name = v.trim();
+          if (name && name !== f.name) { api.rename(k, name); this.renderFloorBar(); }
+        }, t('planFloorName'));
+      });
+      b.setAttribute('role', 'tab');
+      b.setAttribute('aria-selected', String(k === active));
+      b.dataset.floor = String(k);
+    });
+    const add = chip('', false, t('planFloorAdd'), () => { const doc = api.add(); if (doc) this.loadFloor(doc); });
+    add.append(icon('plus', 15));
+    add.dataset.floorAdd = '';
+    if (active > 0) {
+      const del = chip('', false, t('planFloorRemove'), () => {
+        const name = api.list()[api.active()]?.name ?? '';
+        this.confirmBox(t('planFloorRemoveConfirm').replace('{name}', name), t('planFloorRemove'), () => {
+          const doc = api.remove(api.active());
+          if (doc) this.loadFloor(doc);
+        });
+      });
+      del.append(icon('trash', 14));
+      del.style.color = C.danger;
+    }
+  }
+
+  /** Un autre niveau à dessiner : son plan, et un historique neuf (annuler ne traverse pas les étages). */
+  private loadFloor(doc: PlanDoc) {
+    this.stopPreview();
+    this.closePopup();
+    this.plan = clone(doc);
+    this.history = [];
+    this.future = [];
+    this.sel = null;
+    this.hover = null;
+    this.chain = null;
+    this.roomCounter = this.plan.rooms.length;
+    this.renderFloorBar();
+    this.refresh();
+  }
 
   /** La visite de l'éditeur de plan : les outils, les vues, les réglages, la fin. */
   startTour() {
@@ -345,6 +438,7 @@ export class PlanEditor {
     });
     this.resize.observe(this.root);
     this.setMode(this.plan.walls.length ? 'split' : 'plan');
+    this.renderFloorBar();
     this.refresh();
   }
 
@@ -1424,6 +1518,16 @@ export class PlanEditor {
       grid.append(svgEl('line', { x1: vx, y1: y, x2: vx + vw, y2: y, stroke: major ? C.gridStrong : C.grid }));
     }
     svg.append(grid);
+
+    // Le niveau du dessous, en filigrane : on dessine l'étage pile au-dessus.
+    const under = this.opts.floors?.under();
+    if (under?.walls.length) {
+      const ghost = svgEl('g', { opacity: 0.35, 'pointer-events': 'none' });
+      for (const foot of wallFootprints(under).values()) {
+        if (foot.length >= 3) ghost.append(svgEl('polygon', { points: poly(foot), fill: 'none', stroke: C.wall, 'stroke-width': px(1.5), 'stroke-dasharray': `${px(5)} ${px(4)}` }));
+      }
+      svg.append(ghost);
+    }
 
     // Sols
     const erasing = this.tool === 'erase';

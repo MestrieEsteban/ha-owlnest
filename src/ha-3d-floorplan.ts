@@ -55,7 +55,7 @@ import { separateCoplanarSlabs } from './coplanar';
 import { StaticBatch } from './batching';
 import { buildPlan } from './plan/build';
 import { buildHouse, floorGroup } from './plan/house';
-import { floorViews, floorDoc, allOpenings, floorOfHeight, type FloorView } from './plan/floors';
+import { floorViews, floorDoc, withFloorDoc, addFloor, removeFloor, renameFloor, allOpenings, floorOfHeight, type FloorView } from './plan/floors';
 import { LowWalls, WALL_VIEWS, type WallView } from './plan/low-walls';
 import { syncPlanParts } from './plan/parts';
 import { emptyPlan, type PlanDoc, type OpeningKind } from './plan/types';
@@ -642,11 +642,29 @@ export class Ha3dFloorplan extends HTMLElement {
     this._closeWallMenu();
     this._ui?.setHidden(true);
     this._setFullscreen('plan', true);
+    // L'éditeur dessine un niveau à la fois : son plan, sans la liste des étages.
+    const levelDoc = (): PlanDoc | null => {
+      const root = this._planDoc();
+      if (!root) return null;
+      const { floors: _f, groundName: _g, ...doc } = floorDoc(root, this._floorIndex());
+      return doc as PlanDoc;
+    };
+    // Le niveau dessiné remis dans le logement.
+    const withLevel = (doc: PlanDoc): PlanDoc => {
+      const root = this._scene?.plan;
+      return root && !fromDemo ? withFloorDoc(root, this._floorIndex(), doc) : doc;
+    };
+    const saveHouse = (plan: PlanDoc) => {
+      this.applyPlan(plan);
+      this._ui?.refreshFloors();
+      this._schedulePlanSave(400);
+    };
     this._planEditor = new PlanEditor({
       container: this.overlayContainer,
-      plan: this._planDoc() ?? emptyPlan(),
-      onChange: (plan) => {
+      plan: levelDoc() ?? emptyPlan(),
+      onChange: (doc) => {
         if (!this._scene) return;
+        const plan = withLevel(doc);
         if (fromDemo && plan.walls.length) {
           fromDemo = false;
           this._scene = { ...this._scene, anchors: [], camera_views: [], parts: [] };
@@ -655,8 +673,38 @@ export class Ha3dFloorplan extends HTMLElement {
         this.applyPlan(plan);
         this._schedulePlanSave(800);
       },
-      onPreview: (plan) => {
-        if (this._scene && !fromDemo) this.applyPlan(plan);
+      onPreview: (doc) => {
+        if (this._scene && !fromDemo) this.applyPlan(withLevel(doc));
+      },
+      floors: {
+        list: () => this._floors().map((f) => ({ name: f.name })),
+        active: () => this._floorIndex(),
+        switchTo: (k) => { this._setFloor(k); return levelDoc(); },
+        add: () => {
+          const root = this._planDoc();
+          // Un étage se pose sur une maison : il faut d'abord un rez-de-chaussée.
+          if (!root?.walls.length || fromDemo) return null;
+          const { plan, index } = addFloor(root, `${t('floorUpper')} ${this._floors().length}`);
+          saveHouse(plan);
+          this._setFloor(index);
+          return levelDoc();
+        },
+        rename: (k, name) => {
+          const root = this._planDoc();
+          if (root) saveHouse(renameFloor(root, k, name));
+        },
+        remove: (k) => {
+          const root = this._planDoc();
+          if (!root || k <= 0) return null;
+          saveHouse(removeFloor(root, k));
+          this._setFloor(k - 1);
+          return levelDoc();
+        },
+        under: () => {
+          const root = this._scene?.plan;
+          const k = this._floorIndex();
+          return root && k > 0 ? floorDoc(root, k - 1) : null;
+        },
       },
       // La même liste que pour poser une ancre : par étage et par pièce.
       pickEntity: (_current, done) => {
