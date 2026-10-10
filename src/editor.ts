@@ -316,6 +316,27 @@ export class AnchorEditor {
     mesh.renderOrder = 999;
     this._scene.add(mesh);
     this._markers.set(key, mesh);
+    this._filterMarker(key, mesh);
+  }
+
+  // ── Étages ──────────────────────────────────────────────────────────────
+
+  private _markerFilter: ((pos: THREE.Vector3) => boolean) | null = null;
+
+  /**
+   * Ne montre que les repères qui passent le filtre (ceux de l'étage
+   * regardé) ; l'appareil sélectionné reste toujours visible. Un repère
+   * caché sort aussi des calques : il n'arrête plus les clics.
+   */
+  setMarkerFilter(fn: ((pos: THREE.Vector3) => boolean) | null) {
+    this._markerFilter = fn;
+    this._markers.forEach((m, key) => this._filterMarker(key, m));
+  }
+
+  private _filterMarker(key: string, mesh: THREE.Mesh) {
+    const show = !this._markerFilter || key === this._selectedKey || this._markerFilter(mesh.position);
+    mesh.visible = show;
+    mesh.traverse((o) => { if (show) o.layers.set(0); else o.layers.disableAll(); });
   }
 
   private _deleteAnchor(key: string) {

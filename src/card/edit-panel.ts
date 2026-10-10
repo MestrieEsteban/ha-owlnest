@@ -324,6 +324,8 @@ export class EditPanel {
    * (`null` sinon), et l'étage à montrer avant d'ouvrir sa fiche.
    */
   partFloor?: (part: OwlnestPart) => string | null;
+  /** Le nom de l'étage d'un appareil quand il n'est pas celui qu'on regarde. */
+  anchorFloor?: (a: EditableAnchor) => string | null;
   showPartFloor?: (part: OwlnestPart) => void;
   /** Ouvre le sélecteur de fichiers pour importer un plan (admin seulement). */
   onImportModel?: () => void;
@@ -1340,6 +1342,13 @@ export class EditPanel {
     col.className = 'ow-nm';
     const name = document.createElement('b');
     name.textContent = anchorTitle(a);
+    const floorName = this.anchorFloor?.(a);
+    if (floorName) {
+      const tag = document.createElement('span');
+      tag.className = 'ow-floor-tag';
+      tag.textContent = floorName;
+      name.append(tag);
+    }
     const sub = document.createElement('span');
     sub.textContent = st ? stateLabel(a.entity, st.state, st.attributes ?? {}) : anchorSubtitle(a);
     sub.title = a.entity;

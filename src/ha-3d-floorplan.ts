@@ -2206,6 +2206,12 @@ export class Ha3dFloorplan extends HTMLElement {
     }
     this._ui?.refreshFloors();
     this._ui?.refreshRooms();
+    if (this._editor && this._editMode) {
+      this._editor.setMarkerFilter((p) => this._floorOfY(p.y) === this._floorIndex());
+      // Les étiquettes d'étage des listes changent avec l'étage regardé.
+      this._editPanel?.updateAnchorList();
+      this._editPanel?.refreshPartsList();
+    }
     this._requestShadowUpdate();
     this._requestRender();
   }
@@ -2793,6 +2799,11 @@ export class Ha3dFloorplan extends HTMLElement {
         const k = this._partFloorIndex(part);
         return k !== null && k !== this._floorIndex() ? this._floors()[k]?.name ?? null : null;
       };
+      this._editPanel.anchorFloor = (a) => {
+        if (!this._plan?.floors?.length) return null;
+        const k = this._floorOfY(a.position.y);
+        return k !== this._floorIndex() ? this._floors()[k]?.name ?? null : null;
+      };
       this._editPanel.showPartFloor = (part) => {
         const k = this._partFloorIndex(part);
         if (k !== null) { this._setFloor(k); this._editPanel?.refreshPartsList(); }
@@ -2831,7 +2842,18 @@ export class Ha3dFloorplan extends HTMLElement {
       this._editPanel?.updateAnchorList();  // refresh Az/El readout etc.
       this._editPanel?.scheduleAutoSave();  // save once when drag finishes
     };
-    this._editor.onSelectionChange = () => this._editPanel?.updateAnchorList();
+    this._editor.onSelectionChange = (key) => {
+      // Un appareil choisi dans la liste, à un autre étage : on y va.
+      const a = key ? this._editor?.anchors.get(key) : null;
+      if (a && this._plan?.floors?.length) {
+        const k = this._floorOfY(a.position.y);
+        if (k !== this._floorIndex()) this._setFloor(k);
+      }
+      if (this._plan?.floors?.length) this._editor?.setMarkerFilter((p) => this._floorOfY(p.y) === this._floorIndex());
+      this._editPanel?.updateAnchorList();
+    };
+    // Seuls les repères de l'étage regardé.
+    this._editor.setMarkerFilter(this._plan?.floors?.length ? (p) => this._floorOfY(p.y) === this._floorIndex() : null);
     this._editor.onToolChange = (_tool) => {
       // Card placement is triggered from the sidebar, not from a tool button
     };
