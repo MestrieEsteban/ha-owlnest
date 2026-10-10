@@ -3874,7 +3874,7 @@ export class Ha3dFloorplan extends HTMLElement {
     }
     // Ground style — rebuild ground only when ground-related settings change
     if (this._env && this._modelRoot && rl.transparent_background !== true) {
-      const groundKey = `${rl.ground_style ?? 'square'}|${rl.ground_scale ?? 1}|${rl.ground_color ?? ''}`;
+      const groundKey = `${rl.ground_style ?? 'square'}|${rl.ground_scale ?? 1}|${rl.ground_color ?? ''}|${rl.garden ?? 'none'}`;
       if (groundKey !== this._lastGroundKey) {
         this._lastGroundKey = groundKey;
         const box = new THREE.Box3().setFromObject(this._modelRoot);

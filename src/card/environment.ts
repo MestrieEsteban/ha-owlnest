@@ -3,6 +3,32 @@ import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import type { CardConfig, Hass, SunMode, GroundStyle } from '../types';
 import { qualityFromConfig } from '../quality';
 import { modelScale } from '../scale';
+import { buildGarden } from './garden';
+
+let grassCache: THREE.Texture | null | undefined;
+
+/** Le grain de la pelouse : clair, la couleur du sol le teinte. Partagé, jamais libéré. */
+function grassTexture(): THREE.Texture | null {
+  if (grassCache !== undefined) return grassCache;
+  if (typeof document === 'undefined') return (grassCache = null);
+  const size = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, size, size);
+  let seed = 4242;
+  const r = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+  for (let i = 0; i < 2600; i++) {
+    const v = Math.round(225 + r() * 30);
+    ctx.fillStyle = `rgb(${v},${Math.min(255, v + 8)},${v})`;
+    ctx.fillRect(r() * size, r() * size, 2 + r() * 3, 2 + r() * 3);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return (grassCache = tex);
+}
 
 export type WeatherEffect =
   | 'none'
@@ -849,6 +875,15 @@ export class EnvironmentController {
   // ── Ground ────────────────────────────────────────────────────────────────
 
   private _groundMesh: THREE.Mesh | THREE.Group | null = null;
+  private _garden: THREE.Group | null = null;
+
+  /** Le jardin autour de la maison (réglage), à la hauteur du sol. */
+  private _plantGarden(box: THREE.Box3, groundY: number, reach: number, config: CardConfig) {
+    const garden = buildGarden(box, groundY, reach, config?.rendering?.garden ?? 'none');
+    if (!garden) return;
+    this.scene.add(garden);
+    this._garden = garden;
+  }
 
   addGround(originalBox: THREE.Box3, config: CardConfig) {
     this.removeGround();
@@ -948,36 +983,53 @@ export class EnvironmentController {
       group.add(disc);
       this.scene.add(group);
       this._groundMesh = group as unknown as THREE.Mesh;
+      this._plantGarden(originalBox, groundY + gap, radius * 0.9, config);
       return;
     }
 
     let geo: THREE.BufferGeometry;
+    // Jusqu'où le jardin peut s'étendre, depuis le centre.
+    let reach: number;
     switch (style) {
       case 'disc': {
         const radius = maxDim * 1.0 * scale;
         geo = new THREE.CircleGeometry(radius, 64);
+        reach = radius;
         break;
       }
       case 'infinite': {
         const spread = maxDim * 30;
         geo = new THREE.PlaneGeometry(spread, spread);
+        reach = maxDim * 2.5;
         break;
       }
       case 'square':
       default: {
         const spread = maxDim * 6 * scale;
         geo = new THREE.PlaneGeometry(spread, spread);
+        reach = spread / 2;
         break;
       }
     }
 
-    const mat = new THREE.MeshStandardMaterial({ color: groundHex, roughness: 1, metalness: 0 });
+    // Un grain d'herbe très léger, répété tous les deux mètres : la pelouse
+    // n'est plus un aplat, sans rien charger.
+    const metres = maxDim > 100 ? 200 : 2;
+    const map = grassTexture();
+    if (map && geo.attributes.uv) {
+      const box = new THREE.Box3().setFromBufferAttribute(geo.attributes.position as THREE.BufferAttribute);
+      const w = box.max.x - box.min.x;
+      const uv = geo.attributes.uv as THREE.BufferAttribute;
+      for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * (w / metres), uv.getY(i) * (w / metres));
+    }
+    const mat = new THREE.MeshStandardMaterial({ color: groundHex, roughness: 1, metalness: 0, ...(map ? { map } : {}) });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.rotation.x = -Math.PI / 2;
     mesh.position.y = groundY;
     mesh.receiveShadow = true;
     this.scene.add(mesh);
     this._groundMesh = mesh;
+    this._plantGarden(originalBox, groundY, reach, config);
   }
 
   updateGroundColor(hexColor: string | undefined) {
@@ -998,6 +1050,17 @@ export class EnvironmentController {
   }
 
   removeGround() {
+    if (this._garden) {
+      this.scene.remove(this._garden);
+      this._garden.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (!m.isMesh) return;
+        m.geometry.dispose();
+        (m.material as THREE.Material).dispose();
+        (o as THREE.InstancedMesh).dispose?.();
+      });
+      this._garden = null;
+    }
     if (this._groundMesh) {
       this.scene.remove(this._groundMesh);
       const dispose = (obj: THREE.Object3D) => {
