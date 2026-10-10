@@ -55,7 +55,7 @@ import { partIndexOf, partFrame, guessPart, verticalAxis } from './parts';
 import { separateCoplanarSlabs } from './coplanar';
 import { StaticBatch } from './batching';
 import { buildPlan } from './plan/build';
-import { buildHouse, floorGroup, buildRoof, ROOF_NAME } from './plan/house';
+import { buildHouse, floorGroup, buildRoof, ROOF_NAME, ROOF_COLORS } from './plan/house';
 import { floorViews, floorDoc, withFloorDoc, addFloor, removeFloor, renameFloor, allOpenings, hasWalls, type FloorView } from './plan/floors';
 import { LowWalls, WALL_VIEWS, type WallView } from './plan/low-walls';
 import { syncPlanParts } from './plan/parts';
@@ -2147,7 +2147,7 @@ export class Ha3dFloorplan extends HTMLElement {
     const want = this._effectiveConfig?.rendering?.roof === 'hip';
     if (plan && want && this._floorIndex() === this._floors().length - 1) {
       const doc = this._activeDoc() ?? plan;
-      const roof = buildRoof(doc);
+      const roof = buildRoof(doc, ROOF_COLORS[this._effectiveConfig?.rendering?.roof_color ?? 'tile'] ?? ROOF_COLORS.tile);
       if (roof) {
         // Construit caché : `_updateRoofVisibility` le montre si la vue s'y prête.
         roof.visible = false;

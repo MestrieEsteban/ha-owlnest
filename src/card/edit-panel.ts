@@ -1972,6 +1972,14 @@ export class EditPanel {
       this.onSceneSettingsChange?.({ rendering: { ...rendering, roof: v as 'flat' | 'hip' } });
     });
 
+    selectField(t('cfgRoofColor'), t('helpRoofColor'), [
+      ['tile', t('cfgRoofTile')],
+      ['slate', t('cfgRoofSlate')],
+      ['zinc', t('cfgRoofZinc')],
+    ], rendering.roof_color ?? 'tile', (v) => {
+      this.onSceneSettingsChange?.({ rendering: { ...rendering, roof_color: v as 'tile' | 'slate' | 'zinc' } });
+    });
+
     selectField(t('cfgLightOcclusion'), t('helpLightOcclusion'), [
       ['none', t('cfgOcclusionNone')],
       ['top', t('cfgOcclusionTop')],

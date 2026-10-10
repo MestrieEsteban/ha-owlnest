@@ -240,6 +240,8 @@ export interface RenderingConfig {
   ground_scale?: number;
   /** Toit du dernier niveau d'un plan dessiné : plat (défaut) ou en pente, vu murs debout. */
   roof?: 'flat' | 'hip';
+  /** Couverture du toit en pente. */
+  roof_color?: 'tile' | 'slate' | 'zinc';
   /** Quality/performance preset — see quality.ts. 'auto' probes the hardware. */
   quality?: import('./quality').QualityLevel;
 }

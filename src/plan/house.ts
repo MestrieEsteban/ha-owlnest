@@ -24,6 +24,8 @@ import { type Pt, add, mul, norm, perp, sub, clipAlong, pointInPolygon } from '.
 import { hipRoof, planOutline, offset } from './roof';
 
 export const ROOF_NAME = 'plan_roof';
+/** Les couvertures proposées : tuile, ardoise, zinc. */
+export const ROOF_COLORS = { tile: '#8f4a36', slate: '#4a5059', zinc: '#8e979e' } as const;
 /** Pente du toit : 35°. */
 const ROOF_SLOPE = Math.tan((35 * Math.PI) / 180);
 /** Débord du toit au-delà des façades. */
