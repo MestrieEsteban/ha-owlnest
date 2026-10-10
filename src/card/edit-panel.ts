@@ -8,7 +8,7 @@ import { t, tn, setLang, type StringKey } from '../i18n';
 import { icon } from '../ui/icons';
 import { entityIconName } from '../ui/entity-icon';
 import { Tour, type TourStep } from '../ui/tour';
-import { EDITOR_STYLES, BAR_H, PANEL_W } from '../ui/editor-styles';
+import { EDITOR_STYLES, BAR_H, BAR_H_PHONE, PANEL_W } from '../ui/editor-styles';
 import { loadRegistry, cachedRegistry, areaOf } from '../entities/registry';
 import { onHass } from '../entities/live';
 import { openEntityPicker } from '../entities/picker';
@@ -673,8 +673,13 @@ export class EditPanel {
       this._narrow = narrow;
       if (!narrow) this._panelOpen = false;
     }
+    // Un téléphone : les onglets prennent toute une ligne, la barre double de hauteur.
+    const phone = this.cardContainer.clientWidth < 560;
     this._bar?.classList.toggle('ow-narrow', narrow);
+    this._bar?.classList.toggle('ow-phone', phone);
     this._panel?.classList.toggle('ow-narrow', narrow);
+    this._panel?.classList.toggle('ow-phone', phone);
+    this.cardContainer.style.setProperty('--ow-bar-h', `${phone ? BAR_H_PHONE : BAR_H}px`);
     this._panel?.classList.toggle('ow-panel-open', this._panelOpen);
     if (this._panel) this._panel.style.width = narrow ? '' : `${this._panelW}px`;
     this.cardContainer.style.setProperty('--ow-dock', `${narrow ? 0 : this._panelW}px`);
@@ -759,9 +764,13 @@ export class EditPanel {
     if (seen) return;
     const pill = document.createElement('div');
     pill.className = 'ow-ui ow-surface ow-pill ow-ed';
-    pill.style.cssText = `top:${BAR_H + 12}px;left:calc(50% - var(--ow-dock, 0px) / 2);z-index:30;`;
+    // Sur une carte étroite le panneau recouvre le haut : l'invitation passe en bas.
+    pill.style.cssText = this._narrow
+      ? 'bottom:16px;left:12px;right:12px;transform:none;justify-content:space-between;z-index:30;'
+      : `top:${BAR_H + 12}px;left:calc(50% - var(--ow-dock, 0px) / 2);z-index:30;`;
     const text = document.createElement('span');
     text.textContent = t('edHello');
+    if (this._narrow) text.style.cssText = 'white-space:normal;line-height:1.3;';
     const go = document.createElement('button');
     go.type = 'button';
     go.className = 'ow-btn ow-primary ow-small';

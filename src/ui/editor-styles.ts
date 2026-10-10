@@ -7,6 +7,8 @@ import { EDITOR_VARS, FONT } from './theme';
 
 /** Hauteur de la barre du haut, en pixels : le panneau commence dessous. */
 export const BAR_H = 52;
+/** Sur un téléphone, deux lignes : les onglets, puis les actions. */
+export const BAR_H_PHONE = 94;
 /** Largeur du panneau ancré. */
 export const PANEL_W = 340;
 
@@ -52,6 +54,11 @@ export const EDITOR_STYLES = `
 .ow-edbar.ow-narrow .ow-only-narrow { display: inline-flex; }
 .ow-edbar.ow-narrow .ow-tab span, .ow-edbar.ow-narrow .ow-edtitle span, .ow-edbar.ow-narrow .ow-save { display: none; }
 .ow-edbar.ow-narrow .ow-tab { padding: 7px 9px; }
+.ow-edbar.ow-phone { height: ${BAR_H_PHONE}px; flex-wrap: wrap; align-content: center; row-gap: 6px; }
+.ow-edbar.ow-phone .ow-edtitle { display: none; }
+.ow-edbar.ow-phone .ow-tabs { order: -1; flex: 1 0 100%; justify-content: space-between; }
+.ow-edbar.ow-phone .ow-edact { margin-left: auto; }
+.ow-edpanel.ow-phone { top: ${BAR_H_PHONE}px; width: 100%; }
 
 /*
  * Le contenu repris de l'ancien inspecteur était écrit pour un panneau de

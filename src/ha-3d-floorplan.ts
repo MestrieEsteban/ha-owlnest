@@ -2811,27 +2811,7 @@ export class Ha3dFloorplan extends HTMLElement {
     this._editPanel.showToolbar();
     this._requestRender();
 
-    if (editable.size === 0) {
-      const hint = document.createElement('div');
-      hint.id = 'ha-editor-hint';
-      hint.style.cssText = [
-        'position:absolute', 'top:50%', 'left:calc(50% - var(--ow-dock, 0px) / 2)',
-        'transform:translate(-50%,-50%)',
-        'background:rgba(26,107,255,0.18)',
-        'border:1px dashed rgba(26,107,255,0.5)',
-        'border-radius:10px',
-        'padding:12px 20px',
-        'color:rgba(255,255,255,0.7)',
-        'font-size:13px',
-        'font-family:var(--primary-font-family,sans-serif)',
-        'text-align:center',
-        'pointer-events:none',
-        'z-index:30',
-      ].join(';');
-      hint.textContent = t('hintBarPlaceAnchor');
-      this.overlayContainer!.appendChild(hint);
-      setTimeout(() => hint.remove(), 4000);
-    }
+    // Sans appareil, la liste vide du panneau explique déjà quoi faire.
   }
 
   private _exitEditMode() {
