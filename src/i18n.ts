@@ -758,7 +758,7 @@ const STRINGS = {
 
     // Rules list
     rulesEmpty:        'No rules',
-    rulesEmptyHint:    'Click + Add',
+    rulesEmptyHint:    'Tap Add to create the first one',
     ruleToggleEnable:  'Enable',
     ruleToggleDisable: 'Disable',
     ruleEditTitle:     'Edit',
@@ -1436,7 +1436,7 @@ const STRINGS = {
     partInvert:     "Inverser : ouvert dans Home Assistant s'affiche fermé",
     partExtra:      'Pièces qui bougent avec',
     partExtraHint:  'Une poignée est rarement rattachée à sa porte dans le modèle. Ajoute-la ici, avec tout ce qui doit suivre.',
-    partExtraAdd:   '+ Cliquer une pièce du modèle',
+    partExtraAdd:   '+ Touche une pièce du modèle',
     partExtraEmpty: 'Seule la pièce choisie bouge.',
     partExtraDrop:  'Retirer cette pièce',
     partExtraPick:  'Clique la pièce qui doit bouger avec cet ouvrant',
@@ -1458,10 +1458,10 @@ const STRINGS = {
     partObjectParent: "Sélectionner l'objet parent",
     partObjectPiece:  'Pièce cliquée',
     partObjectPieceHint: 'Seulement le morceau cliqué, détaché de sa maille',
-    partObjectHint:   "Survoler une ligne la montre dans la vue ; cliquer choisit ce qui bouge. Un groupe bouge avec tout son contenu.",
+    partObjectHint:   "Survole une ligne pour la voir dans la vue, touche-la pour choisir ce qui bouge. Un groupe bouge avec tout son contenu.",
     partObjectNone:   'Aucun objet ne correspond',
     partDelete:     'Supprimer cet ouvrant',
-    partDeleteConfirm: 'Cliquer à nouveau pour supprimer cet ouvrant',
+    partDeleteConfirm: 'Touche encore pour supprimer cet ouvrant',
     tabRulesDesc:   'Automatisations visuelles déclenchées par les états',
     tabCamera:      'Caméra',
     tabCameraDesc:  'Enregistre des points de vue et reviens-y d’un geste',
@@ -1846,7 +1846,7 @@ const STRINGS = {
 
     // Rules list
     rulesEmpty:        'Aucune règle',
-    rulesEmptyHint:    'Cliquer sur + Ajouter',
+    rulesEmptyHint:    'Touche « Ajouter » pour créer la première',
     ruleToggleEnable:  'Activer',
     ruleToggleDisable: 'Désactiver',
     ruleEditTitle:     'Modifier',
@@ -1949,7 +1949,7 @@ const STRINGS = {
     viewMgrOverwrite:  'Écraser avec la vue actuelle',
     viewMgrRename:     'Renommer',
     viewMgrDelete:     'Supprimer',
-    viewMgrConfirmDelete: 'Cliquer à nouveau pour confirmer',
+    viewMgrConfirmDelete: 'Touche encore pour confirmer',
     viewMgrNamePh:     'Nom de la vue (ex: Salon)…',
     viewMgrSaveError:  "Les vues n'ont pas pu être enregistrées",
 
