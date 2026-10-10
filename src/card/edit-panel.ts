@@ -5558,6 +5558,12 @@ export class EditPanel {
             word(t('ruleTheView')),
             pillSel(opts, action.view_id, (v) => { (draft.actions[idx] as typeof action).view_id = v; }),
           ));
+          if (!views.length) {
+            const warn = mk('div') as HTMLDivElement;
+            warn.className = 'ow-warn-t';
+            warn.textContent = t('ruleNoViews');
+            block.appendChild(warn);
+          }
         } else if (action.type === 'highlight_anchor') {
           const col = mk('input') as HTMLInputElement;
           col.type = 'color'; col.value = action.color ?? '#ef4444';
