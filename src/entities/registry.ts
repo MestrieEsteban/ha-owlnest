@@ -34,6 +34,8 @@ export interface DeviceInfo {
   id: string;
   name: string;
   area_id?: string | null;
+  /** Un « service » (Adaptive Lighting, assistant, intégration logicielle) : rien de physique dans la pièce. */
+  service?: boolean;
 }
 
 export interface EntityInfo {
@@ -112,6 +114,7 @@ function toDevice(raw: Record<string, unknown>): DeviceInfo | null {
     id,
     name: str(raw.name_by_user) ?? str(raw.name) ?? id,
     area_id: str(raw.area_id),
+    ...(raw.entry_type === 'service' ? { service: true } : {}),
   };
 }
 

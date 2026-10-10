@@ -74,3 +74,28 @@ export function spreadPoints(poly: Pt[], n: number, inset = 0.5): Pt[] {
   const c = { x: poly.reduce((s, p) => s + p.x, 0) / poly.length, y: poly.reduce((s, p) => s + p.y, 0) / poly.length };
   return Array.from({ length: n }, () => ({ ...c }));
 }
+
+/**
+ * Une seule entité par appareil et par domaine : une télé vue par deux
+ * intégrations sur le même appareil (DLNA et la sienne) n'a qu'une pastille.
+ * Un capteur se départage aussi par ce qu'il mesure : la température et
+ * l'humidité d'un même boîtier gardent chacune la leur. Les entités sans
+ * appareil passent toutes. L'ordre est gardé.
+ */
+export function onePerDevice(
+  ids: readonly string[],
+  deviceOf: (id: string) => string | null | undefined,
+  deviceClassOf: (id: string) => unknown = () => undefined,
+): string[] {
+  const seen = new Set<string>();
+  return ids.filter((id) => {
+    const dev = deviceOf(id);
+    if (!dev) return true;
+    const domain = id.split('.')[0];
+    const measure = domain === 'sensor' || domain === 'binary_sensor' ? String(deviceClassOf(id) ?? id) : '';
+    const key = `${dev}|${domain}|${measure}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}

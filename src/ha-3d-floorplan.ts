@@ -24,9 +24,9 @@ import { findLeaves, proposeParts, replaceParts } from './import/sh3d-parts';
 import { setLang, getLang, langFromLocale, t, type StringKey } from './i18n';
 import { demoModelUrl, isPlaceholder, seedDemoAnchors, type DemoAnchorId } from './demo';
 import { openEntityPicker } from './entities/picker';
-import { cachedRegistry, loadRegistry, areaOf, displayName, isTechnical } from './entities/registry';
+import { cachedRegistry, loadRegistry, areaOf, deviceOf, displayName, isTechnical } from './entities/registry';
 import { formatSensor, haPrecision } from './entities/format';
-import { matchRooms, placeable, spreadPoints } from './plan/auto-place';
+import { matchRooms, placeable, spreadPoints, onePerDevice } from './plan/auto-place';
 import { publishHass } from './entities/live';
 
 /** Clé de traduction du libellé de chaque ancre de démonstration. */
@@ -2043,9 +2043,13 @@ export class Ha3dFloorplan extends HTMLElement {
     for (const room of rooms) {
       const areaId = matches.get(room.id);
       if (!areaId) continue;
-      const ids = Object.keys(hass.states).filter((id) =>
+      // Ni réglages d'une intégration (appareil « service »), ni doublons
+      // d'un même appareil vu par deux intégrations.
+      const ids = onePerDevice(Object.keys(hass.states).filter((id) =>
         !placed.has(id) && !isTechnical(reg, id) && areaOf(reg, id)?.area_id === areaId
-        && placeable(id, hass.states[id]?.attributes ?? {}));
+        && !deviceOf(reg, id)?.service
+        && placeable(id, hass.states[id]?.attributes ?? {})),
+      (id) => deviceOf(reg, id)?.id, (id) => hass.states[id]?.attributes?.device_class);
       if (!ids.length) continue;
       roomsUsed++;
       const pts = spreadPoints(room.poly, ids.length);

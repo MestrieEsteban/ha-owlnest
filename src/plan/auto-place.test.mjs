@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeName, matchRooms, placeable, spreadPoints } from './auto-place.mjs';
+import { normalizeName, matchRooms, placeable, spreadPoints, onePerDevice } from './auto-place.mjs';
 
 test('noms : accents, majuscules et espaces ne comptent pas', () => {
   assert.equal(normalizeName('  Salle à Manger '), 'salle a manger');
@@ -35,4 +35,18 @@ test('répartition : des points distincts, tous dans la pièce et loin des murs'
 test('répartition : une pièce en L garde ses points dedans', () => {
   const L = [{ x: 0, y: 0 }, { x: 6, y: 0 }, { x: 6, y: 2 }, { x: 2, y: 2 }, { x: 2, y: 6 }, { x: 0, y: 6 }];
   for (const p of spreadPoints(L, 4)) assert.ok(!(p.x > 2 && p.y > 2), JSON.stringify(p));
+});
+
+test('une entité par appareil et par domaine', () => {
+  const dev = { 'media_player.tv_dlna': 'tv', 'media_player.tv_bravia': 'tv', 'remote.tv': 'tv', 'light.a': 'lamp' };
+  assert.deepEqual(
+    onePerDevice(['media_player.tv_dlna', 'media_player.tv_bravia', 'remote.tv', 'light.a', 'sensor.free'], (id) => dev[id]),
+    ['media_player.tv_dlna', 'remote.tv', 'light.a', 'sensor.free'],
+  );
+});
+
+test('un boîtier température et humidité garde ses deux mesures', () => {
+  const dev = { 'sensor.t': 'box', 'sensor.h': 'box', 'sensor.t2': 'box' };
+  const cls = { 'sensor.t': 'temperature', 'sensor.h': 'humidity', 'sensor.t2': 'temperature' };
+  assert.deepEqual(onePerDevice(['sensor.t', 'sensor.h', 'sensor.t2'], (id) => dev[id], (id) => cls[id]), ['sensor.t', 'sensor.h']);
 });
