@@ -220,6 +220,9 @@ export const STYLES = `
 .ow-pill { position: absolute; left: 50%; transform: translateX(-50%); z-index: 40; display: flex; align-items: center; gap: 10px;
   padding: 6px 6px 6px 14px; border-radius: 999px; font-size: 12.5px; pointer-events: auto; max-width: calc(100% - 24px); }
 .ow-pill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Une bulle qui porte aussi .ow-ui ne doit pas être un conteneur : sa largeur
+   viendrait plus de son contenu (22 px, texte écrasé). */
+.ow-ui.ow-pill { container-type: normal; }
 
 /* Boutons */
 .ow-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; font: 600 12.5px ${FONT}; padding: 8px 14px;

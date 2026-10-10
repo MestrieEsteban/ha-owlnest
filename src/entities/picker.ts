@@ -285,7 +285,7 @@ export function openEntityPicker(opts: PickerOptions): () => void {
     return {
       label: f ? `${f.name} · ${a.name}` : a.name,
       rank: 0,
-      sort: `${level} ${(f?.name ?? '').toLowerCase()} ${a.name.toLowerCase()}`,
+      sort: `${level}\u0000${(f?.name ?? '').toLowerCase()}\u0000${a.name.toLowerCase()}`,
     };
   }
 
