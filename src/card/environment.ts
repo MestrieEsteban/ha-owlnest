@@ -87,10 +87,16 @@ export class EnvironmentController {
    * scène un peu plus à chaque fois, sans jamais revenir. On repart donc toujours
    * des valeurs de base, relues dans la configuration.
    */
+  /**
+   * Facteurs du cycle du soleil (entité soleil) : la base de l'éclairage, que
+   * la météo assombrit ensuite. `null` sans entité soleil : réglages seuls.
+   */
+  private _cycle: { hemi: number; sun: number } | null = null;
+
   private _resetLights(): { hemi: number; sun: number } {
     const rl = this.getConfig()?.rendering ?? {};
-    const hemi = rl.ambient_intensity ?? 0.7;
-    const sun = rl.sun_intensity ?? 0.8;
+    const hemi = (rl.ambient_intensity ?? 0.7) * (this._cycle?.hemi ?? 1);
+    const sun = (rl.sun_intensity ?? 0.8) * (this._cycle?.sun ?? 1);
     if (!this._baseHemiColor) this._baseHemiColor = this.hemiLight.color.clone();
     else this.hemiLight.color.copy(this._baseHemiColor);
     this.hemiLight.intensity = hemi;
@@ -117,14 +123,15 @@ export class EnvironmentController {
    *
    * Elle appartient donc à l'atmosphère, pas aux particules.
    */
-  private _resetAtmosphere() {
-    this._resetLights();
+  private _resetAtmosphere(): { hemi: number; sun: number } {
+    const base = this._resetLights();
     const fog = this.scene.fog;
     if (fog instanceof THREE.FogExp2) {
       if (!this._baseFogColor) this._baseFogColor = fog.color.clone();
       else fog.color.copy(this._baseFogColor);
     }
     this._setFogDensity(this.getConfig()?.rendering?.fog_density ?? 0.018);
+    return base;
   }
 
   private _setFogDensity(asked: number) {
@@ -146,13 +153,17 @@ export class EnvironmentController {
   updateFromHass(hass: Hass) {
     const cfg = this.getConfig();
 
-    if (cfg?.sun_entity) {
-      const sunState = hass.states[cfg.sun_entity];
-      if (sunState) {
-        const elevation = (sunState.attributes.elevation as number) ?? 0;
-        const azimuth = (sunState.attributes.azimuth as number) ?? 180;
-        this.applySunLight(elevation, azimuth);
-      }
+    const sunState = cfg?.sun_entity ? hass.states[cfg.sun_entity] : undefined;
+    if (sunState) {
+      const elevation = (sunState.attributes.elevation as number) ?? 0;
+      const azimuth = (sunState.attributes.azimuth as number) ?? 180;
+      this.applySunLight(elevation, azimuth);
+    } else {
+      // Sans soleil réel, l'éclairage suit les réglages (intensités) : ils
+      // doivent agir tout de suite, et la météo en cours reste appliquée.
+      this._cycle = null;
+      this._applyAtmosphere(this._weatherType);
+      this.requestRender();
     }
 
     if (cfg?.weather_entity) {
@@ -233,6 +244,15 @@ export class EnvironmentController {
       this.sunLight.color.setHex(0xfff4c2);
     }
     this.sunLight.intensity = sunFactor * userSunIntensity;
+    // Gardés comme base : la météo assombrit à partir d'eux, sans écraser la
+    // nuit ou l'heure dorée.
+    this._cycle = { hemi: ambientFactor, sun: sunFactor };
+    this._baseHemiColor = this.hemiLight.color.clone();
+    if (this._weatherType !== 'none') {
+      const color = this.sunLight.color.clone();
+      this._applyAtmosphere(this._weatherType);
+      this.sunLight.color.copy(color);
+    }
 
     const azRad = ((effectiveAzimuth - 180) * Math.PI) / 180;
     const elRad = (elevation * Math.PI) / 180;
@@ -265,10 +285,8 @@ export class EnvironmentController {
     const baseDensity = this.getConfig()?.rendering?.fog_density ?? 0.018;
     // Toujours repartir d'une base propre : les facteurs ci-dessous sont des
     // assignations, jamais des multiplications cumulées.
-    this._resetAtmosphere();
-    const rl = this.getConfig()?.rendering ?? {};
-    const hemi = rl.ambient_intensity ?? 0.7;
-    const sun = rl.sun_intensity ?? 0.8;
+    // La base : réglages × cycle du soleil. La météo l'assombrit.
+    const { hemi, sun } = this._resetAtmosphere();
     const dim = (h: number, s?: number) => {
       this.hemiLight.intensity = hemi * h;
       if (s !== undefined) this.sunLight.intensity = sun * s;
