@@ -35,7 +35,7 @@ import {
   ROOM_TYPES, FLOOR_COLORS, WALL_COLORS, FACADE_COLORS, DOOR_COLORS, FRAME_COLORS, FLOOR_MATERIALS, type RoomType,
 } from './rooms';
 
-type Tool = 'select' | 'room' | 'wall' | OpeningKind | 'furniture' | 'erase' | 'calibrate' | 'image';
+type Tool = 'select' | 'room' | 'wall' | 'boundary' | OpeningKind | 'furniture' | 'erase' | 'calibrate' | 'image';
 type ViewMode = 'plan' | 'split' | '3d';
 type Hit =
   | { type: 'node'; id: string }
@@ -156,6 +156,7 @@ const TOOLS: { tool: Tool; icon: string; label: StringKey; key: string }[] = [
   { tool: 'select', icon: 'select', label: 'planToolSelect', key: 'v' },
   { tool: 'room', icon: 'room', label: 'planToolRoom', key: 'r' },
   { tool: 'wall', icon: 'wall', label: 'planToolWall', key: 'm' },
+  { tool: 'boundary', icon: 'boundary', label: 'planToolBoundary', key: 'l' },
   { tool: 'door', icon: 'door', label: 'planToolDoor', key: 'p' },
   { tool: 'window', icon: 'window', label: 'planToolWindow', key: 'f' },
   { tool: 'slider', icon: 'slider', label: 'planToolSlider', key: 'b' },
@@ -693,6 +694,7 @@ export class PlanEditor {
       case 'furniture': key = 'planHintFurniture'; break;
       case 'room': key = 'planHintRoom'; break;
       case 'wall': key = this.chain?.pts.length ? 'planHintWall2' : 'planHintWall'; break;
+      case 'boundary': key = this.chain?.pts.length ? 'planHintWall2' : 'planHintBoundary'; break;
       case 'erase': key = 'planHintErase'; break;
       case 'calibrate': key = this.calib ? 'planHintCalib2' : 'planHintCalib1'; break;
       case 'image': key = 'planHintImage'; break;
@@ -891,7 +893,7 @@ export class PlanEditor {
         this.drag = { kind: 'rect', a: s.p, b: s.p };
         return;
       }
-      case 'wall': this.chainClick(p); return;
+      case 'wall': case 'boundary': this.chainClick(p); return;
       case 'door': case 'window': case 'slider': case 'passage': this.placeOpening(this.tool, p); return;
       case 'erase': {
         const h = this.hitAt(p);
@@ -980,7 +982,7 @@ export class PlanEditor {
             : h?.type === 'wall' ? this.wallCursor(h.id) : 'default';
         return;
       }
-      if (this.tool === 'wall' || this.tool === 'room') {
+      if (this.tool === 'wall' || this.tool === 'boundary' || this.tool === 'room') {
         const last = this.chain?.pts[this.chain.pts.length - 1];
         const s = this.snap(p, new Set(), last);
         this.guides = s.guides;
@@ -1177,7 +1179,7 @@ export class PlanEditor {
   }
 
   private onDouble(e: MouseEvent) {
-    if (this.tool === 'wall') { this.endChain(); return; }
+    if (this.tool === 'wall' || this.tool === 'boundary') { this.endChain(); return; }
     if (!this.picking) return;
     const p = this.toPlan(e);
     const h = this.hitAt(p);
@@ -1206,7 +1208,8 @@ export class PlanEditor {
     const last = chain.pts[chain.pts.length - 1];
     if (dist(last, q) < MIN_SIDE / 4) { this.endChain(); return; }
     this.commit();
-    addWall(this.plan, last, q);
+    // Une limite de pièce est un mur de hauteur nulle : invisible en 3D, elle ferme la pièce.
+    addWall(this.plan, last, q, this.tool === 'boundary' ? { height: 0 } : {});
     chain.pts.push(q);
     chain.typed = '';
     this.changed();
@@ -1637,11 +1640,11 @@ export class PlanEditor {
     }
 
     // Coins : visibles en sélection, pour qu'on sache qu'on peut les tirer.
-    if (this.picking || this.tool === 'wall' || this.tool === 'erase') {
+    if (this.picking || this.tool === 'wall' || this.tool === 'boundary' || this.tool === 'erase') {
       for (const n of plan.nodes) {
         const hit = { type: 'node' as const, id: n.id };
         const on = this.same(this.sel, hit), hov = this.same(this.hover, hit);
-        if (this.tool === 'wall' && !hov) continue;
+        if ((this.tool === 'wall' || this.tool === 'boundary') && !hov) continue;
         svg.append(svgEl('circle', {
           cx: n.x, cy: n.y, r: px(on || hov ? 7 : 4.5),
           fill: on ? C.select : hov ? (erasing ? C.danger : C.hover) : '#fff',
@@ -1673,7 +1676,7 @@ export class PlanEditor {
     }
 
     // Mur en cours de tracé
-    if (this.tool === 'wall') {
+    if (this.tool === 'wall' || this.tool === 'boundary') {
       const c = this.chain;
       const at = c?.cursor ?? this.cursor;
       if (c && c.pts.length && at) {
@@ -2506,7 +2509,10 @@ export class PlanEditor {
     this.stepper(t('planWallHeight'), heightOf(this.plan, w), 0.1, 0.3, 10, (v) => { w.height = v; });
     this.stepper(t('planWallThickness'), thicknessOf(this.plan, w), 0.01, 0.03, 1, (v) => { w.thickness = v; });
     this.small(t('planWallHelp'));
-    const buttons = [this.pill(t('planDeleteWall'), () => this.remove({ type: 'wall', id }), false, 'trash', true)];
+    const buttons = [
+      this.pill(t('planWallToBoundary'), () => { this.commit(); w.height = 0; this.plan.openings = this.plan.openings.filter((o) => o.wall !== w.id); this.changed(); }, false, 'boundary'),
+      this.pill(t('planDeleteWall'), () => this.remove({ type: 'wall', id }), false, 'trash', true),
+    ];
     if (w.height !== undefined || w.thickness !== undefined) {
       buttons.unshift(this.pill(t('planWallReset'), () => { this.commit(); delete w.height; delete w.thickness; cleanup(this.plan); this.changed(); }));
     }

@@ -10,6 +10,7 @@ const SVG = 'http://www.w3.org/2000/svg';
 export const ICONS: Record<string, string> = {
   select: '<path d="M5 3l14 8-6 1.5L10 19z" fill="currentColor" stroke="none"/>',
   room: '<rect x="4" y="5" width="16" height="14" rx="1.5"/><path d="M4 12h7v7"/>',
+  boundary: '<path d="M4 18L10 6l10 4" stroke-dasharray="2.5 2.5"/><circle cx="4" cy="18" r="1.8" fill="currentColor"/><circle cx="20" cy="10" r="1.8" fill="currentColor"/>',
   wall: '<path d="M4 18L10 6l10 4"/><circle cx="4" cy="18" r="1.8" fill="currentColor"/><circle cx="10" cy="6" r="1.8" fill="currentColor"/><circle cx="20" cy="10" r="1.8" fill="currentColor"/>',
   door: '<path d="M4 20h16"/><path d="M6 20V6"/><path d="M6 6a14 14 0 0 1 14 14" stroke-dasharray="2 2"/>',
   window: '<rect x="3" y="9" width="18" height="6"/><path d="M3 12h18"/>',
