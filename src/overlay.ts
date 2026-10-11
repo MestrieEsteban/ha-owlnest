@@ -238,7 +238,12 @@ export class AnchorOverlay {
     this._iconEl.textContent = text;
   }
 
-  updateState(on: boolean, color: THREE.Color, labelText: string) {
+  /**
+   * `tint` : la teinte de l'appareil (lampe ambre, porte verte…). Éteint, son
+   * icône la garde, adoucie, au lieu d'un gris uniforme : on reconnaît chaque
+   * appareil d'un coup d'œil, comme dans les listes.
+   */
+  updateState(on: boolean, color: THREE.Color, labelText: string, tint?: string) {
     const haIcon = this._iconEl.querySelector('ha-icon') as HTMLElement | null;
     const path = !haIcon ? (this._iconEl.querySelector('path,circle,rect') as SVGElement | null) : null;
     if (on) {
@@ -248,8 +253,9 @@ export class AnchorOverlay {
       this.el.style.boxShadow = `0 0 14px 3px ${hex}99, 0 2px 8px rgba(0,0,0,0.5)`;
       this.el.style.borderColor = `${hex}55`;
     } else {
-      if (haIcon) haIcon.style.color = '#555';
-      else if (path) path.style.fill = '#555';
+      const off = tint ? `color-mix(in srgb, ${tint} 75%, #555)` : '#555';
+      if (haIcon) haIcon.style.color = off;
+      else if (path) path.style.fill = off;
       this.el.style.boxShadow = '0 2px 8px rgba(0,0,0,0.5)';
       this.el.style.borderColor = '';
     }
@@ -304,6 +310,11 @@ export class SensorOverlay {
 
   private _value: HTMLSpanElement | null = null;
   private _name: HTMLDivElement | null = null;
+
+  /** La teinte de la valeur : celle de ce que le capteur mesure (température orange, humidité bleue…). */
+  setTint(tint: string) {
+    this.el.style.color = tint;
+  }
 
   updateValue(value: string, unit: string, label: string) {
     if (!this._value) {

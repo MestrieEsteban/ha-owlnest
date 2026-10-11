@@ -26,6 +26,7 @@ import { demoModelUrl, isPlaceholder, seedDemoAnchors, type DemoAnchorId } from 
 import { openEntityPicker } from './entities/picker';
 import { cachedRegistry, loadRegistry, areaOf, deviceOf, displayName, isTechnical } from './entities/registry';
 import { formatSensor, haPrecision } from './entities/format';
+import { deviceTint } from './ui/device-tint';
 import { matchRooms, placeable, spreadPoints, onePerDevice, normalizeName } from './plan/auto-place';
 import { publishHass } from './entities/live';
 
@@ -5096,6 +5097,7 @@ export class Ha3dFloorplan extends HTMLElement {
         const rawValue = stateObj?.state ?? '\u2014';
         const unit = (stateObj?.attributes.unit_of_measurement as string) ?? '';
         const value = _formatSensorValue(rawValue, entry.precision, entry.entityId, this._hass);
+        overlay.setTint(deviceTint(entry.entityId, stateObj?.attributes ?? {}));
         overlay.updateValue(value, unit, `${entry.label}: ${value}${unit}`);
         return;
       }
@@ -5110,6 +5112,7 @@ export class Ha3dFloorplan extends HTMLElement {
           desc.isOn(stateObj),
           entry.targetColor,
           `${entry.label} \u2022 ${desc.stateText(stateObj)}`,
+          deviceTint(entry.entityId, stateObj?.attributes ?? {}),
         );
       }
     });
