@@ -9,6 +9,7 @@
  */
 import { t, type StringKey } from '../i18n';
 import { icon, iconHtml } from '../ui/icons';
+import { deviceTint } from '../ui/device-tint';
 import {
   ACCENTS, MODULES, SKINS, SLOTS, applyTheme, uiPrefs,
   type ModuleId, type Skin, type Slot, type UiPrefs,
@@ -42,6 +43,8 @@ export interface HudDevice {
   icon: string;
   /** Se bascule d'un geste (lampe, prise…) ; sinon, toucher ouvre ses détails. */
   toggle: boolean;
+  /** Ses attributs, pour sa teinte (un capteur de température n'a pas celle de l'humidité). */
+  attributes?: Record<string, unknown>;
 }
 
 export interface HudStatus {
@@ -225,6 +228,7 @@ export class CardHud {
       row.className = 'ow-rp-row';
       const tileEl = document.createElement('span');
       tileEl.className = `ow-rp-tile${d.on ? ' ow-on' : ''}`;
+      tileEl.style.setProperty('--tint', deviceTint(d.id, d.attributes ?? {}));
       tileEl.append(icon(d.icon, 17));
       const col = document.createElement('span');
       col.className = 'ow-rp-nm';

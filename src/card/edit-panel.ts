@@ -18,6 +18,7 @@ import type { SceneSummary } from '../scene';
 import { describeEntity, knownStates, stateLabel } from '../entities/descriptors';
 import { stateText } from '../entities/format';
 import { FACADE_COLORS, GROUND_COLORS } from '../plan/rooms';
+import { deviceTint } from '../ui/device-tint';
 import type { FacadeMaterial } from '../plan/types';
 import { openFraction, hasOpenSemantics, type ExtendInfo } from '../parts-runtime';
 import type { ClipInfo } from '../parts-clips';
@@ -125,7 +126,7 @@ const RULE_PANEL_W = 470;
 const EDITOR_TOUR_KEY = 'owlnest_tour_editor_seen';
 
 /** Le dessin d'un appareil dans la liste, d'après sa nature et son domaine. */
-const anchorIcon = (a: { entity: string; kind?: AnchorKind }) => entityIconName(a.entity, a.kind);
+const anchorIcon = (a: { entity: string; kind?: AnchorKind }, attributes?: Record<string, unknown>) => entityIconName(a.entity, a.kind, attributes);
 
 /** Le dessin d'un ouvrant, d'après son mouvement. */
 const PART_ICON: Record<string, string> = { swing: 'door', slide: 'slider', extend: 'awning', animation: 'play' };
@@ -367,6 +368,9 @@ export class EditPanel {
       el.appendChild(b);
     });
   }
+
+  /** La couleur de sol de la pièce du plan qui porte ce nom (pièce de Home Assistant). */
+  roomColor?: (areaName: string) => string | null;
 
   /** Le nom de l'étage d'un appareil quand il n'est pas celui qu'on regarde. */
   anchorFloor?: (a: EditableAnchor) => string | null;
@@ -1217,6 +1221,13 @@ export class EditPanel {
           const items = groups.get(g)!;
           const head = document.createElement('div');
           head.className = 'ow-room';
+          // La couleur de la pièce du plan qui porte ce nom.
+          const color = g ? this.roomColor?.(g) : null;
+          if (color) {
+            const dot = document.createElement('i');
+            dot.style.background = color;
+            head.appendChild(dot);
+          }
           const hb = document.createElement('b');
           hb.textContent = g || t('edNoRoom');
           const hn = document.createElement('span');
@@ -1385,8 +1396,12 @@ export class EditPanel {
     row.tabIndex = 0;
     row.setAttribute('role', 'button');
     const tile = document.createElement('span');
-    tile.className = `ow-tile${domain === 'light' && st?.state === 'on' ? ' ow-lit' : ''}`;
-    tile.append(icon(anchorIcon(a), 18));
+    // Sa teinte d'appareil ; pleine quand il est allumé (lampe, prise, média…).
+    const lit = (s?: { state: string }) => !!s && ['on', 'playing', 'open', 'heat', 'cool'].includes(s.state)
+      && ['light', 'switch', 'input_boolean', 'fan', 'media_player', 'climate', 'cover'].includes(domain);
+    tile.className = `ow-tile${lit(st) ? ' ow-lit' : ''}`;
+    if (a.entity) tile.style.setProperty('--tint', deviceTint(a.entity, st?.attributes ?? {}));
+    tile.append(icon(anchorIcon(a, st?.attributes ?? {}), 18));
     const col = document.createElement('span');
     col.className = 'ow-nm';
     const name = document.createElement('b');
@@ -1405,7 +1420,7 @@ export class EditPanel {
     if (a.entity) {
       this._liveRows.set(key, () => {
         const s2 = this.getHass()?.states[a.entity];
-        tile.classList.toggle('ow-lit', domain === 'light' && s2?.state === 'on');
+        tile.classList.toggle('ow-lit', lit(s2));
         sub.textContent = s2 ? stateText(this.getHass(), a.entity, s2.state, s2.attributes ?? {}, a.precision) : anchorSubtitle(a);
       });
     }
@@ -3941,13 +3956,14 @@ export class EditPanel {
         const tile = document.createElement('span');
         tile.className = 'ow-tile';
         const st = part.entity ? hass?.states[part.entity] : undefined;
+        tile.style.setProperty('--tint', part.entity ? deviceTint(part.entity, st?.attributes ?? {}) : '#34d399');
         const paintTile = (s2: typeof st) => {
           let frac = 0;
           if (s2) {
             frac = openFraction(part.entity, s2.state, s2.attributes, part.openWhen);
             if (part.invert) frac = 1 - frac;
           }
-          tile.style.cssText = frac > 0.5 ? 'background:color-mix(in srgb, #34d399 22%, transparent);color:#34d399;' : '';
+          tile.classList.toggle('ow-lit', frac > 0.5);
         };
         paintTile(st);
         tile.append(icon(PART_ICON[part.motion] ?? 'door', 18));

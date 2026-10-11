@@ -94,15 +94,17 @@ export const EDITOR_STYLES = `
 
 /* Liste des appareils */
 .ow-list { overflow-y: auto; flex: 1; min-height: 0; padding: 4px 0 12px; }
-.ow-room { padding: 12px 14px 4px; display: flex; align-items: baseline; gap: 6px; }
+.ow-room { padding: 12px 14px 4px; display: flex; align-items: center; gap: 7px; }
+.ow-room i { width: 10px; height: 10px; border-radius: 3px; flex: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.25); }
 .ow-room b { font-size: 13px; }
 .ow-room span { font-size: 11.5px; color: var(--ow-muted); }
 .ow-dev { display: flex; align-items: center; gap: 12px; margin: 2px 8px; padding: 8px; border-radius: 12px; cursor: pointer; }
 .ow-dev:hover { background: var(--ow-chrome2); }
 .ow-dev.ow-on { background: color-mix(in srgb, var(--ow-acc) 14%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ow-acc) 55%, transparent); }
 .ow-dev.ow-off { opacity: .45; }
-.ow-tile { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; flex-shrink: 0; background: var(--ow-chrome2); color: var(--ow-muted); }
-.ow-tile.ow-lit { background: #fbbf24; color: #3b2a05; }
+.ow-tile { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; flex-shrink: 0;
+  background: color-mix(in srgb, var(--tint, #64748b) 17%, var(--ow-chrome2)); color: var(--tint, var(--ow-muted)); }
+.ow-tile.ow-lit { background: var(--tint, #fbbf24); color: #17120a; box-shadow: 0 0 14px color-mix(in srgb, var(--tint, #fbbf24) 45%, transparent); }
 .ow-dev .ow-nm { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .ow-dev .ow-nm b { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ow-dev .ow-nm span { font-size: 12px; color: var(--ow-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

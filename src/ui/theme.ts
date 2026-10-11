@@ -180,8 +180,9 @@ export const STYLES = `
 .ow-rp-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 6px; border: none; border-radius: 10px; background: transparent;
   color: var(--ow-text); font: inherit; text-align: left; cursor: pointer; }
 .ow-rp-row:hover { background: var(--ow-chrome2); }
-.ow-rp-tile { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; background: var(--ow-chrome2); color: var(--ow-muted); flex-shrink: 0; }
-.ow-rp-tile.ow-on { background: #fbbf24; color: #3b2a05; }
+.ow-rp-tile { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; flex-shrink: 0;
+  background: color-mix(in srgb, var(--tint, #64748b) 17%, var(--ow-chrome2)); color: var(--tint, var(--ow-muted)); }
+.ow-rp-tile.ow-on { background: var(--tint, #fbbf24); color: #17120a; }
 .ow-rp-nm { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .ow-rp-nm b { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ow-rp-nm span { font-size: 11.5px; color: var(--ow-muted); }

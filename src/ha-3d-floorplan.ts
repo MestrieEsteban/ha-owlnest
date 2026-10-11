@@ -26,7 +26,7 @@ import { demoModelUrl, isPlaceholder, seedDemoAnchors, type DemoAnchorId } from 
 import { openEntityPicker } from './entities/picker';
 import { cachedRegistry, loadRegistry, areaOf, deviceOf, displayName, isTechnical } from './entities/registry';
 import { formatSensor, haPrecision } from './entities/format';
-import { matchRooms, placeable, spreadPoints, onePerDevice } from './plan/auto-place';
+import { matchRooms, placeable, spreadPoints, onePerDevice, normalizeName } from './plan/auto-place';
 import { publishHass } from './entities/live';
 
 /** Clé de traduction du libellé de chaque ancre de démonstration. */
@@ -2361,7 +2361,7 @@ export class Ha3dFloorplan extends HTMLElement {
       if (typeof unit === 'string' && unit && /^-?[\d.,]+$/.test(state)) {
         state = `${_formatSensorValue(state, a.precision, a.entityId, this._hass)} ${unit}`;
       }
-      out.push({ id: a.entityId, name: a.label || a.entityId, state, on, icon: entityIconName(a.entityId), toggle });
+      out.push({ id: a.entityId, name: a.label || a.entityId, state, on, icon: entityIconName(a.entityId, undefined, st?.attributes ?? {}), toggle, attributes: st?.attributes ?? {} });
     });
     // Ce qui se commande d'abord, puis par nom.
     return out.sort((x, y) => Number(y.toggle) - Number(x.toggle) || x.name.localeCompare(y.name));
@@ -2907,6 +2907,19 @@ export class Ha3dFloorplan extends HTMLElement {
         list: () => this._floors().map((f) => f.name),
         active: () => this._floorIndex(),
         set: (k) => this._setFloor(k),
+      };
+      // La pièce du plan qui porte le nom de la pièce HA (ou d'un de ses alias) donne sa couleur.
+      this._editPanel.roomColor = (areaName) => {
+        const p = this._scene?.plan;
+        if (!p) return null;
+        const reg = cachedRegistry();
+        const area = [...reg.areas.values()].find((x) => x.name === areaName);
+        const names = new Set([areaName, ...(area?.aliases ?? [])].map(normalizeName));
+        for (const v of floorViews(p)) {
+          const r = v.doc.rooms.find((q) => names.has(normalizeName(q.name)));
+          if (r) return r.floor ?? null;
+        }
+        return null;
       };
       this._editPanel.anchorFloor = (a) => {
         if (!this._plan?.floors?.length) return null;
