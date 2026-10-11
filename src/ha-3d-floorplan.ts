@@ -3724,6 +3724,13 @@ export class Ha3dFloorplan extends HTMLElement {
     if (this._plan && this._modelRoot && this.camera && this.controls
       && this._lowWalls.update(this.camera, this.controls.target, this._activeGroup ?? this._modelRoot, dt)) {
       this._dirty = true;
+      // Les ombres suivent les murs qui descendent. Hors qualité haute, une
+      // seule fois quand ils ont fini de bouger : les recalculer à chaque image
+      // doublait le travail d'une tablette pendant qu'on tourne.
+      if (this._quality.anchorShadows) this._requestShadowUpdate();
+      else this._wallShadowsPending = true;
+    } else if (this._wallShadowsPending) {
+      this._wallShadowsPending = false;
       this._requestShadowUpdate();
     }
     // L'effacement à travers les murs dépend du point de vue : il doit suivre
@@ -3775,6 +3782,7 @@ export class Ha3dFloorplan extends HTMLElement {
 
   // ── Compteur de performances (diagnostic, sur l'appareil) ───────────────
 
+  private _wallShadowsPending = false;
   private _perfEl: HTMLDivElement | null = null;
   private _perfStats = { frames: 0, ms: 0, worst: 0, total: 0, since: 0 };
 
