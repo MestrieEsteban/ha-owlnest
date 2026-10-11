@@ -1,6 +1,27 @@
 import * as THREE from 'three';
 import type { EntityDomain } from './types';
 
+/**
+ * Pose un élément au point (x, y) de la carte.
+ *
+ * Par la propriété `translate` quand le navigateur la connaît : déplacer une
+ * pastille ne demande alors que la carte graphique. `left` et `top`, eux,
+ * relancent la mise en page de la page à chaque image, pour chaque pastille :
+ * c'est ce qui faisait saccader une tablette modeste pendant qu'on tourne.
+ */
+const canTranslate = typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('translate', '1px 1px');
+export function placeAt(el: HTMLElement, x: number, y: number) {
+  if (canTranslate) {
+    if (el.dataset.owPlaced !== '1') { el.style.left = '0px'; el.style.top = '0px'; el.dataset.owPlaced = '1'; }
+    el.style.translate = `${x.toFixed(1)}px ${y.toFixed(1)}px`;
+  } else {
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+  }
+}
+
+const projScratch = new THREE.Vector3();
+
 export interface ClusterItem {
   domain: EntityDomain;
   label: string;
@@ -76,8 +97,8 @@ export class AnchorOverlay {
       'z-index:5',
       // Les couleurs suivent le thème de la carte (variables posées par CardHud).
       'background:var(--ow-chrome, rgba(15,15,25,0.65))',
-      'backdrop-filter:blur(6px)',
-      '-webkit-backdrop-filter:blur(6px)',
+      // Pas de flou d'arrière-plan : recalculé sous chaque pastille à chaque
+      // image, il coûtait cher aux tablettes pour un effet à peine visible.
       'border:1.5px solid var(--ow-line, rgba(255,255,255,0.12))',
       'box-shadow:0 2px 8px rgba(0,0,0,0.5)',
       'transition:transform .15s ease, box-shadow .3s ease, border-color .3s ease',
@@ -212,11 +233,10 @@ export class AnchorOverlay {
   }
 
   updatePosition(worldPos: THREE.Vector3, camera: THREE.Camera, w: number, h: number) {
-    const p = worldPos.clone().project(camera);
+    const p = projScratch.copy(worldPos).project(camera);
     if (p.z >= 1 || this.conditionHidden) { this.el.style.display = 'none'; return; }
     this.el.style.display = 'flex';
-    this.el.style.left = `${((p.x + 1) / 2) * w}px`;
-    this.el.style.top = `${((-p.y + 1) / 2) * h}px`;
+    placeAt(this.el, ((p.x + 1) / 2) * w, ((-p.y + 1) / 2) * h);
   }
 
   /**
@@ -281,8 +301,8 @@ export class SensorOverlay {
       'padding:4px 10px',
       'border-radius:12px',
       'background:var(--ow-chrome, rgba(15,15,25,0.72))',
-      'backdrop-filter:blur(6px)',
-      '-webkit-backdrop-filter:blur(6px)',
+      // Pas de flou d'arrière-plan : recalculé sous chaque pastille à chaque
+      // image, il coûtait cher aux tablettes pour un effet à peine visible.
       'border:1px solid rgba(0,204,136,0.3)',
       'color:#00cc88',
       'font-size:12px',
@@ -342,11 +362,10 @@ export class SensorOverlay {
   }
 
   updatePosition(worldPos: THREE.Vector3, camera: THREE.Camera, w: number, h: number) {
-    const p = worldPos.clone().project(camera);
+    const p = projScratch.copy(worldPos).project(camera);
     if (p.z >= 1 || this.conditionHidden) { this.el.style.display = 'none'; return; }
     this.el.style.display = 'block';
-    this.el.style.left = `${((p.x + 1) / 2) * w}px`;
-    this.el.style.top = `${((-p.y + 1) / 2) * h}px`;
+    placeAt(this.el, ((p.x + 1) / 2) * w, ((-p.y + 1) / 2) * h);
   }
 
   destroy() {
@@ -476,8 +495,7 @@ export class ClusterOverlay {
   }
 
   updatePosition(x: number, y: number) {
-    this.el.style.left = `${x}px`;
-    this.el.style.top = `${y}px`;
+    placeAt(this.el, x, y);
   }
 
   show() { this.el.style.display = 'flex'; }

@@ -136,6 +136,14 @@ export class CardHud {
     if (on) { this.closeSheet(); this.hideHello(); }
   }
 
+  /**
+   * Allégé (qualité équilibrée ou basse) : pas de flou derrière les barres.
+   * Recalculé sur la 3D à chaque image, il coûte cher à une tablette.
+   */
+  setLite(on: boolean) {
+    this.host.classList.toggle('ow-lite', on);
+  }
+
   /** Les outils au repos : s'effacent seulement si l'utilisateur l'a choisi. */
   setIdle(idle: boolean) {
     this.visible = !idle;

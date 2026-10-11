@@ -7,7 +7,7 @@ import type { Hass, CardConfig, AnchorEntry, SavedView, EditableAnchor, OwlnestS
 import { syncLights, stepTransitions } from './lights';
 import { loadGLTF, detectAnchors, buildAnchorsFromEditable, rebuildAnchorLight, lightTargetPos } from './model';
 import { modelErrorKey, httpStatus } from './model-errors';
-import { AnchorOverlay, SensorOverlay, ClusterOverlay, LabelOverlay, CameraOverlay, pulseOverlay } from './overlay';
+import { AnchorOverlay, SensorOverlay, ClusterOverlay, LabelOverlay, CameraOverlay, pulseOverlay, placeAt } from './overlay';
 import type { ClusterItem } from './overlay';
 import { AnchorEditor } from './editor';
 import { loadScene, saveScene, listScenes, sceneToEffectiveConfig, buildSceneFromEditor, normalizeViews, emptyScene, sceneUnreachable, forgetSceneFailure } from './scene';
@@ -37,7 +37,7 @@ const DEMO_LABEL: Record<DemoAnchorId, 'demoFloorLamp' | 'demoBedsideLamp' | 'de
   kitchenLamp: 'demoKitchenLamp',
   television: 'demoTelevision',
 };
-import { qualityFromConfig, qualityKey, profileFor } from './quality';
+import { qualityFromConfig, qualityKey, profileFor, resolveLevel } from './quality';
 import { describeEntity, fallbackIcon } from './entities/descriptors';
 import './card-editor';
 import { EnvironmentController } from './card/environment';
@@ -1086,6 +1086,7 @@ export class Ha3dFloorplan extends HTMLElement {
       onPrefs: (prefs) => this._saveUiPrefs(prefs),
       startTour: () => this._startViewTour(),
     });
+    this._ui.setLite(resolveLevel(this._effectiveConfig?.rendering?.quality) !== 'high');
     this._ui.onHelloDismissed = () => markTourSeen();
 
     // Hover (desktop) — show/hide HUD
@@ -2190,15 +2191,25 @@ export class Ha3dFloorplan extends HTMLElement {
     this._requestRender();
   }
 
-  /** Les lampes d'un étage masqué s'éteignent ; celles des étages montrés suivent leur état. */
+  /**
+   * Les lampes d'un étage masqué s'éteignent (par leur intensité, voir
+   * stepTransitions) ; et seules les premières, dans la limite du profil
+   * qualité, éclairent vraiment la scène. Leur nombre ne change plus jamais
+   * en cours de route : pas de recompilation des shaders.
+   */
   private _applyFloorLights() {
     const k = this._floorIndex();
-    this.anchors.forEach((a) => {
-      if (!a.light) return;
-      const off = this._floorOfY(a.worldPos.y) > k;
-      a.light.userData.owlnestFloorOff = off;
-      if (off) a.light.visible = false;
+    // Les lampes de l'étage regardé d'abord : ce sont elles qu'on voit.
+    const lamps = [...this.anchors.values()].filter((a) => a.light);
+    lamps.sort((a, b) => Number(this._floorOfY(a.worldPos.y) !== k) - Number(this._floorOfY(b.worldPos.y) !== k));
+    const budget = this._quality.anchorLights;
+    lamps.forEach((a, i) => {
+      const light = a.light!;
+      light.userData.owlnestFloorOff = this._floorOfY(a.worldPos.y) > k;
+      light.userData.owlnestReal = i < budget;
+      light.visible = i < budget;
     });
+    this._dirty = true;
   }
 
   /** L'étage d'un ouvrant construit depuis le plan (`null` pour un ouvrant d'un modèle importé). */
@@ -3089,7 +3100,8 @@ export class Ha3dFloorplan extends HTMLElement {
         if (entry.light) {
           entry.light.intensity = entry.targetIntensity;
           entry.light.color.copy(entry.targetColor);
-          entry.light.visible = entry.targetIntensity > 0.01;
+          // La lampe reconstruite reprend sa place dans le budget de lumières.
+          this._applyFloorLights();
         }
       } else if ((newStyle === 'spot' || newStyle === 'beam') && entry.lightTarget) {
         // Update direction only
@@ -3895,6 +3907,8 @@ export class Ha3dFloorplan extends HTMLElement {
       this._lastQualityKey = qKey;
       const q = qualityFromConfig(ec);
       this._quality = q;
+      this._ui?.setLite(resolveLevel(ec.rendering?.quality) !== 'high');
+      this._applyFloorLights();
 
       this.renderer.setPixelRatio(Math.min(devicePixelRatio, q.maxPixelRatio));
       this.renderer.shadowMap.type = q.shadowFilter;
@@ -4424,6 +4438,7 @@ export class Ha3dFloorplan extends HTMLElement {
 
     this.anchors = detectAnchors(model, this.scene, ec, this._modelSpan);
     this._ovPosPool.clear();
+    this._applyFloorLights();
     this._createOverlays();
 
     this._overlaysVisible = !(ec.tap_to_toggle ?? false);
@@ -4635,8 +4650,7 @@ export class Ha3dFloorplan extends HTMLElement {
       }
 
       ov.el.style.display = ov instanceof SensorOverlay ? 'block' : 'flex';
-      ov.el.style.left = `${p.x}px`;
-      ov.el.style.top = `${p.y}px`;
+      placeAt(ov.el, p.x, p.y);
 
       // La profondeur se lit sur la taille : une pastille au fond de la maison
       // est un peu plus petite et plus pâle qu'une pastille au premier plan.

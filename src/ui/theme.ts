@@ -225,6 +225,9 @@ export const STYLES = `
 /* Une bulle qui porte aussi .ow-ui ne doit pas être un conteneur : sa largeur
    viendrait plus de son contenu (22 px, texte écrasé). */
 .ow-ui.ow-pill { container-type: normal; }
+/* Allégé : sans flou, un fond plus couvrant pour rester lisible sur la 3D. */
+.ow-ui.ow-lite .ow-surface, .ow-ui.ow-lite .ow-pill, .ow-ui.ow-lite .ow-toast { -webkit-backdrop-filter: none; backdrop-filter: none; }
+.ow-ui.ow-lite .ow-surface { background: color-mix(in srgb, var(--ow-chrome) 88%, #0b1220); }
 /* Rangée dans un emplacement, la bulle prend la largeur de l'emplacement : un
    max-width en % se calculerait sur sa propre largeur et rognerait le texte. */
 .ow-slot > .ow-pill { max-width: none; }

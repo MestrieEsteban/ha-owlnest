@@ -19,6 +19,12 @@ export type QualityLevel = 'auto' | 'high' | 'balanced' | 'low';
 export interface QualityProfile {
   /** Les lumières d'ancres projettent-elles une ombre (cube map, 6 passes). */
   anchorShadows: boolean;
+  /**
+   * Combien de lampes éclairent vraiment la scène. Chaque lumière alourdit le
+   * calcul de chaque pixel ; au-delà, une lampe allumée ne se voit plus que sur
+   * sa pastille (et sur ses vitres, la nuit).
+   */
+  anchorLights: number;
   /** Résolution de la shadow map d'une lumière d'ancre. */
   anchorShadowMap: number;
   /** Résolution de la shadow map du soleil. */
@@ -51,6 +57,7 @@ export type ResolvedLevel = Exclude<QualityLevel, 'auto'>;
 const PROFILES: Record<ResolvedLevel, QualityProfile> = {
   high: {
     anchorShadows: true,
+    anchorLights: 8,
     anchorShadowMap: 512,
     sunShadowMap: 2048,
     shadowFilter: THREE.PCFSoftShadowMap,
@@ -65,6 +72,7 @@ const PROFILES: Record<ResolvedLevel, QualityProfile> = {
   // pour la perte visuelle la plus faible, le soleil continuant d'ombrer.
   balanced: {
     anchorShadows: false,
+    anchorLights: 3,
     anchorShadowMap: 256,
     sunShadowMap: 1024,
     shadowFilter: THREE.PCFShadowMap,
@@ -79,6 +87,7 @@ const PROFILES: Record<ResolvedLevel, QualityProfile> = {
   // marginal, ses bords crénelés ne le sont pas.
   low: {
     anchorShadows: false,
+    anchorLights: 0,
     anchorShadowMap: 256,
     sunShadowMap: 1024,
     shadowFilter: THREE.PCFShadowMap,

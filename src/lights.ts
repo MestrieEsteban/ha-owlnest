@@ -94,8 +94,14 @@ export function stepTransitions(
   const alpha = 1 - Math.exp(-dt / tau);
   let active = false;
 
-  anchors.forEach(({ light, targetIntensity, targetColor }) => {
+  anchors.forEach(({ light, targetIntensity: wanted, targetColor }) => {
     if (!light) return;
+    // Une lampe d'un étage masqué reste éteinte : elle éclairerait l'étage du dessous.
+    const targetIntensity = light.userData.owlnestFloorOff ? 0 : wanted;
+    // Une lumière du budget reste « visible » en permanence, seule son intensité
+    // varie : changer le nombre de lumières visibles fait recompiler tous les
+    // shaders (un gel à chaque lampe allumée ou éteinte sur une tablette).
+    const real = light.userData.owlnestReal as boolean | undefined;
     const dI = Math.abs(light.intensity - targetIntensity);
     const dR = Math.abs(light.color.r - targetColor.r);
     const dG = Math.abs(light.color.g - targetColor.g);
@@ -104,13 +110,12 @@ export function stepTransitions(
     if (dI > 0.002 || dR > 0.002 || dG > 0.002 || dB > 0.002) {
       light.intensity = THREE.MathUtils.lerp(light.intensity, targetIntensity, alpha);
       light.color.lerp(targetColor, alpha);
-      // Une lampe d'un étage masqué reste éteinte : elle éclairerait l'étage du dessous.
-      light.visible = !light.userData.owlnestFloorOff && (light.intensity > 0.01 || targetIntensity > 0);
+      light.visible = real ?? (light.intensity > 0.01 || targetIntensity > 0);
       active = true;
     } else {
       light.intensity = targetIntensity;
       light.color.copy(targetColor);
-      light.visible = !light.userData.owlnestFloorOff && targetIntensity > 0;
+      light.visible = real ?? targetIntensity > 0;
     }
   });
 
