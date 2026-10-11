@@ -329,6 +329,9 @@ export class EditPanel {
    * (`null` sinon), et l'étage à montrer avant d'ouvrir sa fiche.
    */
   partFloor?: (part: OwlnestPart) => string | null;
+  /** Montre ou cache le compteur de performances de la carte. */
+  onPerfHud?: (on: boolean) => void;
+
   /** L'apparence de la maison dessinée (façade), lue et changée sur le plan ; `null` sans plan. */
   getPlanLook?: () => { outside?: string; facade?: FacadeMaterial; plinth?: boolean } | null;
   setPlanLook?: (patch: { outside?: string; facade?: FacadeMaterial; plinth?: boolean }) => void;
@@ -2182,6 +2185,14 @@ export class EditPanel {
       reloadNote.style.cssText = 'font-size:11.5px;color:var(--ow-muted);margin:0 0 8px;line-height:1.5;';
       reloadNote.textContent = t('cfgQualityReload');
       root.appendChild(reloadNote);
+
+      // Le compteur de performances : propre à cet appareil (la tablette), pas à la scène.
+      let perfOn = false;
+      try { perfOn = localStorage.getItem('owlnest_perf_hud') === '1'; } catch { /* stockage bloqué */ }
+      switchField(t('cfgPerfHud'), t('helpPerfHud'), perfOn, (v) => {
+        try { localStorage.setItem('owlnest_perf_hud', v ? '1' : '0'); } catch { /* stockage bloqué */ }
+        this.onPerfHud?.(v);
+      });
     }
 
     // ── Language ──────────────────────────────────────────────────────

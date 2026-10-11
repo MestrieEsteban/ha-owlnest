@@ -37,7 +37,7 @@ const DEMO_LABEL: Record<DemoAnchorId, 'demoFloorLamp' | 'demoBedsideLamp' | 'de
   kitchenLamp: 'demoKitchenLamp',
   television: 'demoTelevision',
 };
-import { qualityFromConfig, qualityKey, profileFor, resolveLevel } from './quality';
+import { qualityFromConfig, qualityKey, profileFor, resolveLevel, detectionLabel } from './quality';
 import { describeEntity, fallbackIcon } from './entities/descriptors';
 import './card-editor';
 import { EnvironmentController } from './card/environment';
@@ -1087,6 +1087,7 @@ export class Ha3dFloorplan extends HTMLElement {
       startTour: () => this._startViewTour(),
     });
     this._ui.setLite(resolveLevel(this._effectiveConfig?.rendering?.quality) !== 'high');
+    try { if (localStorage.getItem('owlnest_perf_hud') === '1') this._setPerfHud(true); } catch { /* stockage bloqué */ }
     this._ui.onHelloDismissed = () => markTourSeen();
 
     // Hover (desktop) — show/hide HUD
@@ -2895,6 +2896,7 @@ export class Ha3dFloorplan extends HTMLElement {
     this._editPanel.onDrawPlan = () => this.openPlanEditor();
     this._editPanel.getSetupSteps = () => this._setupSteps();
     if (this._plan) this._editPanel.onAutoPlace = () => this._autoPlace();
+    this._editPanel.onPerfHud = (on) => this._setPerfHud(on);
     if (this._plan) {
       // L'apparence de la façade : sur le plan, pour tous les étages.
       this._editPanel.getPlanLook = () => {
@@ -3689,6 +3691,7 @@ export class Ha3dFloorplan extends HTMLElement {
 
     const dt = Math.min((now - this._lastTime) / 1000, 0.1);
     this._lastTime = now;
+    const loopT0 = this._perfEl ? performance.now() : 0;
 
     // Camera fly-to animation
     if (this._camAnimTo && this.camera && this.controls) {
@@ -3765,8 +3768,64 @@ export class Ha3dFloorplan extends HTMLElement {
       this.renderer.shadowMap.needsUpdate = true;
       this._shadowsDirty = false;
     }
+    const t0 = this._perfEl ? performance.now() : 0;
     this.renderer?.render(this.scene!, this.camera!);
+    if (this._perfEl) { const end = performance.now(); this._perfTick(end - t0, end - loopT0, now); }
   };
+
+  // ── Compteur de performances (diagnostic, sur l'appareil) ───────────────
+
+  private _perfEl: HTMLDivElement | null = null;
+  private _perfStats = { frames: 0, ms: 0, worst: 0, total: 0, since: 0 };
+
+  /** Le compteur, en haut à gauche : ce qu'il faut pour dire si une tablette suit. */
+  private _setPerfHud(on: boolean) {
+    this._perfEl?.remove();
+    this._perfEl = null;
+    if (!on || !this.overlayContainer) return;
+    const el = document.createElement('div');
+    el.className = 'ow-perf';
+    el.style.cssText = [
+      'position:absolute', 'left:8px', 'bottom:8px', 'z-index:60', 'pointer-events:none',
+      'font:11px/1.45 ui-monospace,Consolas,monospace', 'color:#e2e8f0', 'background:rgba(8,12,22,0.86)',
+      'padding:6px 9px', 'border-radius:8px', 'white-space:pre',
+    ].join(';');
+    this.overlayContainer.appendChild(el);
+    this._perfEl = el;
+    this._perfStats = { frames: 0, ms: 0, worst: 0, total: 0, since: performance.now() };
+    this._perfShow(0);
+  }
+
+  private _perfTick(renderMs: number, totalMs: number, now: number) {
+    const s = this._perfStats;
+    s.frames++;
+    s.ms += renderMs;
+    s.total += totalMs;
+    s.worst = Math.max(s.worst, totalMs);
+    if (now - s.since >= 1000) {
+      this._perfShow((s.frames * 1000) / (now - s.since));
+      s.frames = 0; s.ms = 0; s.total = 0; s.worst = 0; s.since = now;
+    }
+  }
+
+  private _perfShow(fps: number) {
+    const el = this._perfEl, r = this.renderer;
+    if (!el || !r) return;
+    const s = this._perfStats;
+    const avg = s.frames ? s.ms / s.frames : 0;
+    const total = s.frames ? s.total / s.frames : 0;
+    const size = r.getDrawingBufferSize(new THREE.Vector2());
+    const lights = [...this.anchors.values()].filter((a) => a.light?.visible).length;
+    el.textContent = [
+      `${fps.toFixed(0)} img/s · image ${total.toFixed(1)} ms (pire ${s.worst.toFixed(1)}) · dont rendu ${avg.toFixed(1)}`,
+      `${r.info.render.calls} appels · ${(r.info.render.triangles / 1000).toFixed(1)} k triangles`,
+      `${size.x}×${size.y} · DPR ${r.getPixelRatio()} · ${this.overlays.size} pastilles · ${lights} lumières`,
+      `qualité ${resolveLevel(this._effectiveConfig?.rendering?.quality)} · ombres ${r.shadowMap.enabled ? 'oui' : 'non'}`,
+      detectionLabel(),
+    ].join('\n');
+    // Au repos la carte ne dessine rien : on relit quand même une fois par seconde.
+    if (!fps) setTimeout(() => { if (this._perfEl === el && !this._perfStats.frames) this._perfShow(0); }, 1000);
+  }
 
   /** À appeler dès que les ombres cessent d'être valides (lumière, soleil, géométrie). */
   private _requestShadowUpdate() {
