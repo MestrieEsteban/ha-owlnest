@@ -71,3 +71,15 @@ Coûts mesurés :
 ## À surveiller
 
 L'échelle en centimètres de [[Modele 3D]] fausse `lights.distance`, les limites d'orbite et la densité du brouillard d'un facteur ~100. Pas encore corrigé — voir [[Chantiers ouverts]].
+
+## Tablette, 11 octobre 2026 (« ça bug vraiment trop »)
+
+Quatre causes trouvées et corrigées :
+
+- **Lampes allumées ou éteintes = shaders recompilés.** Chaque lampe crée une vraie lumière ; three.js recompile tous les programmes quand le nombre de lumières visibles change. Mesuré sur le PC de dev : près d'une seconde gelée au premier allumage (7 programmes compilés), bien plus sur tablette. Désormais un **budget de lumières** par niveau (`anchorLights` : 8 haute, 3 équilibrée, 0 basse) : les lumières du budget restent visibles en permanence, seule leur intensité varie (`owlnestReal`, `stepTransitions`), celles de l'étage regardé d'abord (`_applyFloorLights`). Au-delà, une lampe ne se voit que sur sa pastille et ses vitres la nuit. Plus aucune recompilation en usage.
+- **Flou sous chaque pastille** (`backdrop-filter`) : 25 flous recalculés sur la 3D à chaque image de mouvement. Retiré.
+- **Pastilles placées par `left`/`top`** : une mise en page de la page par image et par pastille. Placées par la propriété `translate` (`placeAt`, repli `left`/`top` sur les vieux navigateurs).
+- **Flou derrière les barres** (`.ow-surface`) : gardé en qualité haute seulement (`CardHud.setLite`, classe `ow-lite`).
+- En prime : hors qualité haute, les ombres suivent les murs bas une fois qu'ils ont fini de descendre, plus à chaque image.
+
+**Compteur de performances** : Réglages → Performance → « Afficher les performances », retenu sur l'appareil (`owlnest_perf_hud`). Images par seconde, temps total par image et part du rendu, appels de dessin, triangles, résolution, pastilles, lumières, qualité, matériel détecté.
