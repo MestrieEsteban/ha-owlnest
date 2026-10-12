@@ -14,7 +14,10 @@
  *  - en édition, on revient aux originaux : on clique, on survole, on
  *    désigne des pièces, et tout cela repose sur les objets d'origine ;
  *  - un ouvrant n'est jamais fusionné : il bouge. Les pièces montées sous un
- *    pivot d'ouvrant restent à part, et on refusionne à chaque remontage.
+ *    pivot d'ouvrant restent à part, et on refusionne à chaque remontage ;
+ *  - un objet qui porte des enfants n'est jamais fusionné : le cacher les
+ *    cacherait tous. C'est le cas du cadre d'une porte, qui porte le pivot de
+ *    son vantail (issue #9).
  */
 
 import * as THREE from 'three';
@@ -75,6 +78,9 @@ export class StaticBatch {
       if (!mesh.isMesh || !mesh.visible || (mesh as THREE.SkinnedMesh).isSkinnedMesh) return;
       if (Array.isArray(mesh.material) || mesh.morphTargetInfluences?.length) return;
       if (isMoving(mesh, root)) return;
+      // Cacher une maille cache tout ce qu'elle porte : le pivot d'un ouvrant
+      // détaché de cette maille, ou un nœud enfant du modèle.
+      if (mesh.children.length) return;
       const m = mesh.material as THREE.Material;
       const key = `${look(m)}|${mesh.castShadow ? 1 : 0}${mesh.receiveShadow ? 1 : 0}|${signature(mesh.geometry)}`;
       const list = groups.get(key);

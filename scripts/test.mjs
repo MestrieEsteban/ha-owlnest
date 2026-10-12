@@ -30,6 +30,7 @@ const ENTRIES = [
   'src/part-tint.ts',
   'src/part-carry.ts',
   'src/coplanar.ts',
+  'src/batching.ts',
   'src/lights.ts',
   'src/scale.ts',
   'src/model-errors.ts',
