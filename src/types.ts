@@ -291,6 +291,21 @@ export interface PartPiece {
   label?: string;
 }
 
+/** La position basculée d'une fenêtre oscillo-battante. */
+export interface PartTilt {
+  /** L'entité qui dit « basculée ». Absente : celle de l'ouvrant. */
+  entity?: string;
+  /** États qui veulent dire « basculée ». */
+  when?: string[];
+  /**
+   * Pour un capteur d'angle (sans `when`) : basculée à partir de cet angle, en
+   * valeur absolue. Absent : 2.
+   */
+  above?: number;
+  /** Angle de bascule, en degrés. Absent : 12. */
+  angle?: number;
+}
+
 export interface OwlnestPart {
   id: string;
   entity: string;
@@ -356,6 +371,11 @@ export interface OwlnestPart {
   swingSide?: 'front' | 'back';
   /** Ouverture d'un battant, en degrés. */
   angle?: number;
+  /**
+   * Oscillo-battant : le même vantail peut aussi basculer autour de son bord
+   * bas (soufflet), au lieu de s'ouvrir à la française. Battant vertical seulement.
+   */
+  tilt?: PartTilt;
   /** Sens de retrait d'un coulissant. */
   slide?: SlideDirection;
   /** Course d'un coulissant, en fraction de sa propre dimension. */

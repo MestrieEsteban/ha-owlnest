@@ -83,6 +83,34 @@ export function openFraction(
   return describeEntity(entityId).isOn({ state, attributes: attributes ?? {} }) ? 1 : 0;
 }
 
+type States = Record<string, { state: string; attributes?: Record<string, unknown> } | undefined>;
+
+/**
+ * Cette fenêtre oscillo-battante est-elle basculée ?
+ *
+ * Deux façons de le savoir : une liste d'états (un capteur qui dit « tilted »),
+ * ou un capteur d'angle dépassant un seuil (un Shelly BLU Door/Window donne
+ * environ 6° basculé, 0° ouvert ou fermé). Avec une entité à part, le capteur
+ * d'ouverture doit aussi dire « ouvert » : un angle resté en mémoire ne bascule
+ * pas une fenêtre fermée.
+ */
+export function isTilted(cfg: OwlnestPart, states: States): boolean {
+  const tilt = cfg.tilt;
+  if (!tilt || cfg.motion !== 'swing' || cfg.swingAxis === 'horizontal') return false;
+  const own = !tilt.entity || tilt.entity === cfg.entity;
+  const e = states[own ? cfg.entity : tilt.entity!];
+  if (!e || e.state === 'unavailable' || e.state === 'unknown') return false;
+  if (!own) {
+    const main = states[cfg.entity];
+    let f = openFraction(cfg.entity, main?.state, main?.attributes, cfg.openWhen);
+    if (cfg.invert) f = 1 - f;
+    if (f <= 0 && (hasOpenSemantics(cfg.entity) || cfg.openWhen?.length)) return false;
+  }
+  if (tilt.when?.length) return tilt.when.includes(e.state);
+  const v = Number(e.state);
+  return e.state.trim() !== '' && Number.isFinite(v) && Math.abs(v) >= (tilt.above ?? 2);
+}
+
 // ── Animation ───────────────────────────────────────────────────────────────
 
 /**
@@ -126,6 +154,12 @@ interface LiveMesh {
   rest: number;
   current: number;
   goal: number;
+  /** Battant : la place du gond, que la bascule déplace avec le vantail. */
+  seat?: THREE.Vector3;
+  /** Oscillo-battant : le bord bas, son axe, et l'angle de bascule signé. */
+  tilt?: { seat: THREE.Vector3; axis: THREE.Vector3; span: number } | null;
+  tiltCurrent?: number;
+  tiltGoal?: number;
   /** Déroulant : repère de la toile, mesuré au repos. */
   ext: ExtendState | null;
   /** Déroulant : axe d'écrasement et arêtes, d'après les réglages. */
@@ -156,7 +190,9 @@ interface LiveClips {
 const clipsKey = (cfg: OwlnestPart) => (cfg.clips ?? []).join('\n');
 
 /** Ce qui avance vers une fraction d'ouverture, quel que soit le mouvement. */
-type Moving = { cfg: OwlnestPart; current: number; goal: number };
+type Moving = { cfg: OwlnestPart; current: number; goal: number; tiltGoal?: number };
+
+const _tiltQ = new THREE.Quaternion();
 
 /**
  * Plus petite échelle appliquée à un déroulant.
@@ -775,7 +811,28 @@ export class PartController {
       item.sign = (hinge === 'start' ? -1 : 1) * (cfg.swingSide === 'back' ? -1 : 1);
       item.rest = 0;
     }
+    item.seat = seat.clone();
+    item.tilt = cfg.motion === 'swing' && !edge && cfg.tilt ? this._tiltOf(item, cfg, up, seat) : null;
     this._place(item);
+  }
+
+  /**
+   * La bascule d'un oscillo-battant : autour du bord bas du vantail, du même
+   * côté du mur que l'ouverture à la française. Ce côté se mesure : on tourne
+   * le centre du vantail d'un rien autour de chaque axe et on compare.
+   */
+  private _tiltOf(item: LiveMesh, cfg: OwlnestPart, up: { axis: 0 | 1 | 2; down: boolean }, seat: THREE.Vector3) {
+    const edge = this._horizontalEdge(item.frame, up.axis);
+    const bottom = edge.across === up.axis && up.down ? 'end' : 'start';
+    const tseat = hingePivot(item.box, item.frame, bottom, edge);
+    const axis = new THREE.Vector3().setComponent(edge.axis, 1);
+    const depth = 3 - edge.axis - edge.across;
+    const center = item.box.getCenter(new THREE.Vector3());
+    const swingAxis = new THREE.Vector3().setComponent('xyz'.indexOf(item.axis), 1);
+    const moved = (around: THREE.Vector3, at: THREE.Vector3, angle: number) =>
+      center.clone().sub(at).applyAxisAngle(around, angle).add(at).getComponent(depth) - center.getComponent(depth);
+    const same = moved(swingAxis, seat, 0.1 * item.sign) * moved(axis, tseat, 0.1) >= 0;
+    return { seat: tseat, axis, span: THREE.MathUtils.degToRad(cfg.tilt?.angle ?? 12) * (same ? 1 : -1) };
   }
 
   /**
@@ -866,6 +923,13 @@ export class PartController {
       const e = states[item.cfg.entity];
       let f = openFraction(item.cfg.entity, e?.state, e?.attributes, item.cfg.openWhen);
       if (item.cfg.invert) f = 1 - f;
+      // Basculée, la fenêtre n'est pas ouverte à la française : l'un ou l'autre.
+      const tilted = isTilted(item.cfg, states);
+      if (tilted) f = 0;
+      if ((item.tiltGoal ?? 0) !== Number(tilted)) {
+        item.tiltGoal = Number(tilted);
+        changed = true;
+      }
       if (Math.abs(f - item.goal) > 1e-4) {
         item.goal = f;
         changed = true;
@@ -880,7 +944,10 @@ export class PartController {
    */
   update(dt: number): boolean {
     let moving = false;
-    for (const item of this.items) if (this._advance(item, dt, () => this._place(item))) moving = true;
+    for (const item of this.items) {
+      if (this._advance(item, dt, () => this._place(item))) moving = true;
+      if (this._advanceTilt(item, dt)) moving = true;
+    }
     for (const anim of this.anims) if (this._advance(anim, dt, () => this._placeClips(anim))) moving = true;
     return moving;
   }
@@ -898,17 +965,43 @@ export class PartController {
     return true;
   }
 
+  /** La bascule avance à part : elle est courte, deux fois plus vite que l'ouverture. */
+  private _advanceTilt(item: LiveMesh, dt: number): boolean {
+    const goal = item.tilt ? item.tiltGoal ?? 0 : 0;
+    const current = item.tiltCurrent ?? 0;
+    const diff = goal - current;
+    if (Math.abs(diff) < 1e-4) {
+      if (current !== goal) { item.tiltCurrent = goal; this._place(item); }
+      return false;
+    }
+    const step = dt / Math.max(0.05, (item.cfg.duration ?? 1.2) / 2);
+    item.tiltCurrent = current + Math.sign(diff) * Math.min(Math.abs(diff), step);
+    this._place(item);
+    return true;
+  }
+
   private _place(item: LiveMesh) {
+    const tilted = item.tilt ? item.tiltCurrent ?? 0 : 0;
     if (item.cfg.motion === 'extend') this._placeExtend(item);
     else {
       const value = item.current * item.span * item.sign;
       if (item.cfg.motion === 'slide') item.pivotNode.position[item.axis] = item.rest + value;
-      else item.pivotNode.rotation[item.axis] = value;
+      else if (item.tilt && item.seat) {
+        // La bascule s'applique par-dessus l'ouverture : elle emmène le gond avec elle.
+        const p = item.pivotNode;
+        p.rotation.set(0, 0, 0);
+        p.rotation[item.axis] = value;
+        _tiltQ.setFromAxisAngle(item.tilt.axis, tilted * item.tilt.span);
+        p.quaternion.premultiply(_tiltQ);
+        p.position.copy(item.seat).sub(item.tilt.seat).applyQuaternion(_tiltQ).add(item.tilt.seat);
+      } else item.pivotNode.rotation[item.axis] = value;
     }
     // La position animée, pas la cible : la teinte fond avec le mouvement.
-    item.tint.apply(item.cfg.closedColor, item.cfg.openColor, item.current, item.cfg.tintStrength);
+    // Une fenêtre basculée est ouverte, pour la teinte.
+    const open = Math.max(item.current, tilted);
+    item.tint.apply(item.cfg.closedColor, item.cfg.openColor, open, item.cfg.tintStrength);
     for (const f of item.followers) {
-      f.tint?.apply(item.cfg.closedColor, item.cfg.openColor, item.current, item.cfg.tintStrength);
+      f.tint?.apply(item.cfg.closedColor, item.cfg.openColor, open, item.cfg.tintStrength);
     }
   }
 
@@ -1242,6 +1335,7 @@ export class PartController {
     const closed = distance(0);
     const opened = distance(item.sign * item.span * 0.5);
     p.rotation[item.axis] = saved;
+    if (item.tilt) this._place(item);
     p.updateMatrixWorld(true);
     const current = item.cfg.swingSide ?? 'front';
     if (opened <= closed) return current;
@@ -1251,6 +1345,14 @@ export class PartController {
   preview(id: string, fraction: number) {
     const item: Moving | undefined = this.items.find((i) => i.cfg.id === id) ?? this.anims.find((a) => a.cfg.id === id);
     if (item) item.goal = Math.min(1, Math.max(0, fraction));
+  }
+
+  /** L'aperçu de l'éditeur : basculer, ou revenir. */
+  previewTilt(id: string, on: boolean) {
+    const item = this.items.find((i) => i.cfg.id === id);
+    if (!item) return;
+    item.tiltGoal = on ? 1 : 0;
+    if (on) item.goal = 0;
   }
 
   boxOf(id: string): THREE.Box3 | null {

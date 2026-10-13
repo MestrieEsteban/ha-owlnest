@@ -1748,9 +1748,9 @@ export class Ha3dFloorplan extends HTMLElement {
     const parts: OwlnestPart[] = [];
     for (const [old, node] of match) {
       // Seuls les réglages de l'utilisateur passent : la géométrie vient du plan.
-      const { id, entity, label, angle, travel, openWhen, invert, duration, closedColor, openColor, tintStrength } = old;
+      const { id, entity, label, angle, travel, openWhen, invert, duration, closedColor, openColor, tintStrength, tilt } = old;
       parts.push({
-        id, entity, label, angle, travel, openWhen, invert, duration, closedColor, openColor, tintStrength,
+        id, entity, label, angle, travel, openWhen, invert, duration, closedColor, openColor, tintStrength, tilt,
         node, mesh: '', triangle: 0, motion: old.motion,
       });
     }
@@ -2897,6 +2897,7 @@ export class Ha3dFloorplan extends HTMLElement {
     this._editPanel.getSetupSteps = () => this._setupSteps();
     if (this._plan) this._editPanel.onAutoPlace = () => this._autoPlace();
     this._editPanel.onPerfHud = (on) => this._setPerfHud(on);
+    this._editPanel.onPreviewTilt = (id, on) => { this._parts.previewTilt(id, on); this._requestRender(); };
     if (this._plan) {
       // L'apparence de la façade : sur le plan, pour tous les étages.
       this._editPanel.getPlanLook = () => {

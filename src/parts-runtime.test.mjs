@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { openFraction, hasOpenSemantics, PartController, meshOrder, resolveMesh } from './parts-runtime.mjs';
+import { openFraction, hasOpenSemantics, isTilted, PartController, meshOrder, resolveMesh } from './parts-runtime.mjs';
 
 // ── Lecture de l'état ───────────────────────────────────────────────────────
 
@@ -962,4 +962,68 @@ test('la teinte suit une pièce ajoutée en direct', () => {
   let piece = null;
   root.traverse((o) => { if (!piece && o.name.startsWith('Poignees#')) piece = o; });
   assert.ok(piece && piece.material !== source, 'la poignée ajoutée après coup est teintée aussi');
+});
+
+// ── Oscillo-battant ─────────────────────────────────────────────────────────
+
+const TILT = { ...DOOR, tilt: { when: ['tilted'] }, openWhen: ['open'], entity: 'sensor.fenetre' };
+
+test('isTilted lit une liste d’états sur le capteur de l’ouvrant', () => {
+  assert.equal(isTilted(TILT, { 'sensor.fenetre': { state: 'tilted' } }), true);
+  assert.equal(isTilted(TILT, { 'sensor.fenetre': { state: 'open' } }), false);
+  assert.equal(isTilted(TILT, { 'sensor.fenetre': { state: 'unavailable' } }), false);
+  assert.equal(isTilted({ ...TILT, tilt: undefined }, { 'sensor.fenetre': { state: 'tilted' } }), false);
+  assert.equal(isTilted({ ...TILT, swingAxis: 'horizontal' }, { 'sensor.fenetre': { state: 'tilted' } }), false);
+});
+
+test('isTilted lit un capteur d’angle à part, fenêtre ouverte seulement', () => {
+  const cfg = { ...DOOR, tilt: { entity: 'sensor.rotation' } };
+  const st = (door, angle) => ({ 'binary_sensor.porte': { state: door }, 'sensor.rotation': { state: String(angle) } });
+  assert.equal(isTilted(cfg, st('on', 6.5)), true, 'ouverte et penchée : basculée');
+  assert.equal(isTilted(cfg, st('on', -6.5)), true, 'le signe de l’angle ne compte pas');
+  assert.equal(isTilted(cfg, st('on', 0.4)), false, 'ouverte à la française');
+  assert.equal(isTilted(cfg, st('off', 6.5)), false, 'un angle resté en mémoire ne bascule pas une fenêtre fermée');
+  assert.equal(isTilted({ ...cfg, tilt: { entity: 'sensor.rotation', above: 10 } }, st('on', 6.5)), false);
+});
+
+function run(c, root) {
+  let guard = 0;
+  while (c.update(0.1) && guard++ < 200);
+  root.updateMatrixWorld(true);
+  return c.boxOf('p1');
+}
+
+test('basculée, la fenêtre penche autour de son bord bas, du côté où elle s’ouvre', () => {
+  for (const swingSide of ['front', 'back']) {
+    const root = model();
+    const c = new PartController();
+    c.build(root, [{ ...TILT, swingSide }]);
+    root.updateMatrixWorld(true);
+    const closed = c.boxOf('p1');
+
+    c.applyStates({ 'sensor.fenetre': { state: 'open' } });
+    const opened = run(c, root);
+    const side = Math.sign((opened.min.y + opened.max.y) / 2);
+
+    assert.equal(c.applyStates({ 'sensor.fenetre': { state: 'tilted' } }), true);
+    const tilted = run(c, root);
+    // Vantail 90 × 6 × 200, hauteur en Z : 12° de bascule déportent le haut de 200·sin 12°.
+    const lean = 200 * Math.sin(THREE.MathUtils.degToRad(12));
+    const far = side > 0 ? tilted.max.y : -tilted.min.y;
+    assert.ok(Math.abs(far - lean) < 4, `${swingSide} : le haut penche de ${far.toFixed(1)}, attendu ~${lean.toFixed(1)}`);
+    assert.ok(Math.abs(tilted.min.z - closed.min.z) < 1, 'le bas ne quitte pas son appui');
+    assert.ok(Math.abs(tilted.min.x - closed.min.x) < 1e-3 && Math.abs(tilted.max.x - closed.max.x) < 1e-3,
+      'pas d’ouverture à la française en même temps');
+
+    c.applyStates({ 'sensor.fenetre': { state: 'closed' } });
+    const back = run(c, root);
+    assert.ok(back.min.distanceTo(closed.min) < 1e-3 && back.max.distanceTo(closed.max) < 1e-3, 'refermée, elle revient exactement');
+  }
+});
+
+test('sans bascule réglée, rien ne change pour un battant', () => {
+  const root = model();
+  const c = new PartController();
+  c.build(root, [DOOR]);
+  assert.equal(c.applyStates({ 'binary_sensor.porte': { state: 'off' } }), false);
 });

@@ -137,6 +137,7 @@ details[open] > .ow-card-h .ow-chev { transform: rotate(45deg); }
 .ow-field { display: flex; flex-direction: column; gap: 6px; }
 .ow-field > label { font-size: 12px; font-weight: 600; color: var(--ow-muted); }
 .ow-hint-line { font-size: 11.5px; color: var(--ow-muted); line-height: 1.45; }
+.ow-link { background: none; border: 0; padding: 0; margin: -6px 0 12px; font: inherit; font-size: 11.5px; color: var(--ow-accent, #7aa2ff); cursor: pointer; text-decoration: underline; }
 .ow-seg { display: flex; flex-wrap: wrap; gap: 3px; padding: 3px; border-radius: 10px; background: var(--ow-chrome2); border: 1px solid var(--ow-line); }
 .ow-seg button { flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 8px; border: none; border-radius: 8px;
   background: transparent; color: var(--ow-muted); font: 600 12px ${FONT}; cursor: pointer; min-width: 0; }

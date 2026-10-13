@@ -86,3 +86,13 @@ Le **curseur d'aperçu** entrouvre la pièce à l'écran sans toucher à la mais
 Le garde-fou important : **le gond ne bouge pas pendant la rotation**. Un pivot au centre du vantail le ferait traverser le mur, et c'est invisible dans un test d'angle.
 
 Coût d'une image avec une porte en mouvement : **0,50 ms**.
+
+## Oscillo-battant (issue 10)
+
+Un battant vertical peut porter `tilt` (`PartTilt` dans `types.ts`) : la même fenêtre s'ouvre à la française ou bascule autour de son bord bas.
+
+- **Qui dit « basculée »** : `isTilted()` dans `parts-runtime.ts`. Soit une liste d'états (`when`), soit un capteur d'angle au-dessus d'un seuil (`above`, 2° par défaut, en valeur absolue : un Shelly BLU Door/Window donne environ 6° basculé). Avec une entité à part, le capteur d'ouverture doit aussi dire « ouvert », pour qu'un angle resté en mémoire ne bascule pas une fenêtre fermée.
+- **Basculée exclut ouverte** : la cible d'ouverture passe à 0.
+- **Géométrie** : pas de nœud en plus. `_place` compose la bascule par-dessus la rotation du gond et déplace le pivot avec elle. Le sens se mesure (`_tiltOf`) pour pencher du côté où le battant s'ouvre.
+- **Éditeur** : interrupteur « Fenêtre oscillo-battante » sous l'angle d'ouverture, avec « Essayer basculée ».
+- Pas fait : la bascule pour les ouvrants en animation Blender.

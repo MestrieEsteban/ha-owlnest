@@ -20,7 +20,7 @@ import { stateText } from '../entities/format';
 import { FACADE_COLORS, GROUND_COLORS } from '../plan/rooms';
 import { deviceTint } from '../ui/device-tint';
 import type { FacadeMaterial } from '../plan/types';
-import { openFraction, hasOpenSemantics, type ExtendInfo } from '../parts-runtime';
+import { openFraction, hasOpenSemantics, isTilted, type ExtendInfo } from '../parts-runtime';
 import type { ClipInfo } from '../parts-clips';
 import { detectionLabel, resolveLevel } from '../quality';
 import type { TapAction } from '../entities/descriptors';
@@ -331,6 +331,9 @@ export class EditPanel {
   partFloor?: (part: OwlnestPart) => string | null;
   /** Montre ou cache le compteur de performances de la carte. */
   onPerfHud?: (on: boolean) => void;
+
+  /** Bascule (ou redresse) un oscillo-battant, pour l'essayer depuis son formulaire. */
+  onPreviewTilt?: (id: string, on: boolean) => void;
 
   /** L'apparence de la maison dessinée (façade), lue et changée sur le plan ; `null` sans plan. */
   getPlanLook?: () => { outside?: string; facade?: FacadeMaterial; plinth?: boolean } | null;
@@ -4318,13 +4321,15 @@ export class EditPanel {
       if (!draft.entity) { line(t('partNoEntity'), 'ow-warn-t'); return; }
       if (state === undefined) { line(t('partEntityUnknown'), 'ow-warn-t'); return; }
       const label = stateLabel(draft.entity, state, this.getHass()?.states[draft.entity]?.attributes ?? {});
-      const verdict = frac > 0.99 ? t('partReadOpen') : frac < 0.01 ? t('partReadClosed') : `${Math.round(frac * 100)} %`;
+      const tilted = isTilted(draft, this.getHass()?.states ?? {});
+      const verdict = tilted ? t('partReadTilted')
+        : frac > 0.99 ? t('partReadOpen') : frac < 0.01 ? t('partReadClosed') : `${Math.round(frac * 100)} %`;
       const row = document.createElement('div');
       row.className = 'ow-readout-row';
       const now = document.createElement('span');
       now.textContent = `${t('partReadNow')} ${label}`;
       const pill = document.createElement('span');
-      pill.className = `ow-state${frac > 0.5 ? ' ow-open' : ''}`;
+      pill.className = `ow-state${frac > 0.5 || tilted ? ' ow-open' : ''}`;
       pill.textContent = verdict;
       row.append(now, pill);
       readout.appendChild(row);
@@ -4610,6 +4615,75 @@ export class EditPanel {
       hintLine(specific, chosen.size ? t('partAnimationHint') : t('partAnimationPick'));
     };
 
+    // Oscillo-battant : la même fenêtre s'ouvre à la française ou bascule par le bas.
+    const buildTilt = () => {
+      const tilt = draft.tilt;
+      const set = (patch: Partial<NonNullable<OwlnestPart['tilt']>>) => { draft.tilt = { ...draft.tilt, ...patch }; };
+      toggle(specific, t('partTilt'), !!tilt, (v) => {
+        draft.tilt = v ? {} : undefined;
+        if (!v) this.onPreviewTilt?.(draft.id, false);
+        rebuildSpecific();
+        apply();
+        refreshReadout();
+      }, t('partTiltHint'));
+      if (!tilt) return;
+
+      // Qui dit « basculée » : le capteur de l'ouvrant, ou un autre (un capteur d'angle).
+      const picker = this._sensorPicker(tilt.entity ?? '', (id) => {
+        set({ entity: id || undefined, when: undefined, above: undefined });
+        rebuildSpecific();
+        apply();
+        refreshReadout();
+      }, { empty: 'partTiltSame', emptyHint: 'partTiltSameHint' });
+      field(t('partTiltEntity'), picker.el, specific);
+      if (tilt.entity) {
+        const same = document.createElement('button');
+        same.type = 'button';
+        same.className = 'ow-link';
+        same.textContent = t('partTiltUseSame');
+        same.addEventListener('click', () => {
+          set({ entity: undefined, when: undefined, above: undefined });
+          rebuildSpecific();
+          apply();
+          refreshReadout();
+        });
+        specific.appendChild(same);
+      }
+
+      const id = tilt.entity || draft.entity;
+      const st = id ? this.getHass()?.states[id] : undefined;
+      const numeric = !!st && st.state.trim() !== '' && Number.isFinite(Number(st.state));
+      if (numeric) {
+        slider(specific, t('partTiltAbove'), 1, 45, 0.5, tilt.above ?? 2,
+          (v) => `${v}°`, (v) => { set({ above: v }); refreshReadout(); });
+      } else if (id) {
+        const chips = document.createElement('div');
+        chips.className = 'ow-chips';
+        for (const value of knownStates(id, st?.state)) {
+          const chip = document.createElement('button');
+          chip.type = 'button';
+          chip.className = `ow-chip2${tilt.when?.includes(value) ? ' ow-on' : ''}`;
+          chip.textContent = stateLabel(id, value, st?.attributes ?? {});
+          chip.addEventListener('click', () => {
+            const next = new Set(draft.tilt?.when ?? []);
+            if (next.has(value)) next.delete(value); else next.add(value);
+            set({ when: next.size ? [...next] : undefined });
+            rebuildSpecific();
+            apply();
+            refreshReadout();
+          });
+          chips.appendChild(chip);
+        }
+        const wrap = document.createElement('div');
+        wrap.appendChild(chips);
+        hintLine(wrap, t('partTiltWhenHint'));
+        field(t('partTiltWhen'), wrap, specific);
+      }
+      slider(specific, t('partTiltAngle'), 5, 30, 1, tilt.angle ?? 12,
+        (v) => `${v}°`, (v) => { set({ angle: v }); });
+      toggle(specific, t('partTiltTry'), false, (v) => this.onPreviewTilt?.(draft.id, v));
+    };
+
     const rebuildSpecific = () => {
       specific.innerHTML = '';
       // Pour un déroulant, l'inversion se règle par « Fermé à ».
@@ -4637,6 +4711,7 @@ export class EditPanel {
           draft.swingSide ?? 'front', (v) => { draft.swingSide = v === 'back' ? 'back' : undefined; });
         slider(specific, t('partAngle'), 15, 170, 5, draft.angle ?? 90,
           (v) => `${v}°`, (v) => { draft.angle = v; });
+        if (!horizontal) buildTilt();
       } else {
         field(t('partSlideDir'), segmented([
           ['down', t('partSlideDown'), 'down'], ['up', t('partSlideUp'), 'up'],
