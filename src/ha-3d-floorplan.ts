@@ -755,18 +755,6 @@ export class Ha3dFloorplan extends HTMLElement {
       },
       importFurniture: async (files) => (await importModel(this._hass as unknown as UploadHass, files, () => {})).url,
       importSh3d: () => pickFiles((files) => void this._importModel(files)),
-      // Le décor (jardin, sol, ciel) : des réglages de scène, montrés avec la maison.
-      scenery: {
-        get: () => this._scene?.settings?.rendering ?? {},
-        set: (patch) => {
-          if (!this._scene) return;
-          const cur = this._scene.settings ?? {};
-          this._scene = { ...this._scene, settings: { ...cur, rendering: { ...(cur.rendering ?? {}), ...patch } } };
-          this._applySettingsLive();
-          this._schedulePlanSave(400);
-          this._requestRender();
-        },
-      },
       navTabs: editorTabs(true),
       onNavTab: (id) => {
         // Le plein écran reste : l'éditeur de la maison prend le relais du plan.
@@ -2935,7 +2923,30 @@ export class Ha3dFloorplan extends HTMLElement {
       // L'apparence de la façade : sur le plan, pour tous les étages.
       this._editPanel.getPlanLook = () => {
         const p = this._scene?.plan;
-        return p ? { outside: p.outside, facade: p.facade, plinth: p.plinth } : null;
+        if (!p) return null;
+        // Un toit réglé avant qu'il ne passe sur le plan compte encore.
+        const old = this._scene?.settings?.rendering;
+        const legacy = !p.roof && old?.roof === 'hip';
+        return {
+          outside: p.outside, facade: p.facade, plinth: p.plinth,
+          roof: legacy ? 'hip' : p.roof,
+          roofColor: legacy ? (old?.roof_color === 'tile' ? undefined : old?.roof_color) : p.roofColor,
+        };
+      };
+      this._editPanel.setPlanLook = (patch) => {
+        const p = this._scene?.plan;
+        if (!p || !this._scene) return;
+        // Une façade choisie ici vaut pour toute la maison : les étages la reprennent.
+        const floors = 'outside' in patch || 'facade' in patch
+          ? p.floors?.map((f) => ({ ...f, doc: { ...f.doc, outside: undefined, facade: undefined } }))
+          : p.floors;
+        // Le toit vit désormais sur le plan : l'ancien réglage de scène ne doit plus le contredire.
+        if ('roof' in patch) {
+          const cur = this._scene.settings ?? {};
+          this._scene = { ...this._scene, settings: { ...cur, rendering: { ...(cur.rendering ?? {}), roof: 'flat' } } };
+        }
+        this.applyPlan({ ...this._scene.plan!, ...patch, ...(floors ? { floors } : {}) });
+        this._schedulePlanSave(400);
       };
       this._editPanel.partFloor = (part) => {
         const k = this._partFloorIndex(part);

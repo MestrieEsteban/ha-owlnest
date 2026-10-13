@@ -114,7 +114,7 @@ export function editorTabs(withPlan: boolean): { id: string; icon: string; label
     ...(PARTS_ENABLED ? [{ id: 'parts', icon: 'door', label: t('tabParts') }] : []),
     { id: 'rules', icon: 'bolt', label: t('tabRules') },
     { id: 'camera', icon: 'camera', label: t('tabCamera') },
-    { id: 'weather', icon: 'sun', label: t('tabAmbiance') },
+    { id: 'weather', icon: 'brush', label: t('tabLook') },
     { id: 'settings', icon: 'gear', label: t('tabSettings') },
   ];
 }
@@ -289,6 +289,31 @@ function createHelpBadge(text: string): HTMLElement {
   return badge;
 }
 
+/** L'apparence d'une maison dessinée : sur le plan, pour tous ses niveaux. */
+export interface HouseLook {
+  outside?: string;
+  facade?: FacadeMaterial;
+  plinth?: boolean;
+  roof?: 'hip';
+  roofColor?: 'tile' | 'slate' | 'zinc';
+}
+
+/** La teinte d'une couverture, pour les vignettes des styles. */
+const ROOF_SWATCH = { tile: '#b5553a', slate: '#4a5260', zinc: '#9aa3ab' } as const;
+
+/**
+ * Les styles tout faits : la maison (façade, soubassement, toit) et son terrain
+ * d'un seul clic. Chaque réglage reste modifiable ensuite, dans le détail.
+ */
+const HOUSE_STYLES: { label: StringKey; house: Required<Pick<HouseLook, 'outside'>> & HouseLook; scene: { garden: 'none' | 'some' | 'lush'; ground_color: string } }[] = [
+  { label: 'lookStyleRender', house: { outside: '#efe7d8', facade: 'render', plinth: true, roof: 'hip', roofColor: undefined }, scene: { garden: 'some', ground_color: '#4a6741' } },
+  { label: 'lookStyleBrick', house: { outside: '#b5674a', facade: 'brick', plinth: undefined, roof: 'hip', roofColor: 'slate' }, scene: { garden: 'some', ground_color: '#4a6741' } },
+  { label: 'lookStyleWood', house: { outside: '#8a6a4d', facade: 'wood', plinth: true, roof: 'hip', roofColor: 'zinc' }, scene: { garden: 'lush', ground_color: '#3f5f38' } },
+  { label: 'lookStyleStone', house: { outside: '#b7ae9f', facade: 'stone', plinth: undefined, roof: 'hip', roofColor: 'slate' }, scene: { garden: 'some', ground_color: '#5a7a45' } },
+  { label: 'lookStyleModern', house: { outside: '#ecebe7', facade: undefined, plinth: undefined, roof: undefined, roofColor: undefined }, scene: { garden: 'none', ground_color: '#5b6b52' } },
+  { label: 'lookStyleDark', house: { outside: '#3d4248', facade: 'wood', plinth: undefined, roof: undefined, roofColor: undefined }, scene: { garden: 'some', ground_color: '#4a6741' } },
+];
+
 export class EditPanel {
   private _panel: HTMLDivElement | null = null;
   private _saveStatus: 'saved' | 'unsaved' | 'saving' = 'saved';
@@ -336,7 +361,9 @@ export class EditPanel {
   onPreviewTilt?: (id: string, on: boolean) => void;
 
   /** L'apparence de la maison dessinée (façade), lue et changée sur le plan ; `null` sans plan. */
-  getPlanLook?: () => { outside?: string; facade?: FacadeMaterial; plinth?: boolean } | null;
+  getPlanLook?: () => HouseLook | null;
+  /** Change l'apparence de la maison dessinée, pour tous ses niveaux. */
+  setPlanLook?: (patch: HouseLook) => void;
 
   /** Les niveaux du logement, l'étage regardé, et en changer (vide : pas d'étages). */
   floors?: { list: () => string[]; active: () => number; set: (k: number) => void };
@@ -1326,10 +1353,10 @@ export class EditPanel {
     // ── Ambiance (lumière du jour, météo, simulation) ─────────────────
     const weatherPane = tabPanes.get('weather')!;
     weatherPane.style.cssText += ';overflow-y:auto;';
-    buildTabHeader(weatherPane, t('tabAmbiance'), t('tabWeatherDesc'));
+    buildTabHeader(weatherPane, t('tabLook'), t('tabLookDesc'));
     const weatherBody = document.createElement('div');
     weatherPane.appendChild(weatherBody);
-    this._buildWeatherTab(weatherBody);
+    this._buildConfigTab(weatherBody, true);
 
     // ── Caméra : les vues enregistrées ─────────────────────────────────
     const cameraPane = tabPanes.get('camera')!;
@@ -1457,7 +1484,12 @@ export class EditPanel {
     return row;
   }
 
-  private _buildConfigTab(container: HTMLElement) {
+  /**
+   * Deux onglets sortent d'ici, avec les mêmes contrôles : « Apparence » (tout
+   * ce qui se voit : maison, terrain, ciel et lumière) et « Réglages » (la
+   * technique : scène, caméra, performance, langue). Un sujet, un endroit.
+   */
+  private _buildConfigTab(container: HTMLElement, look = false) {
     const settings = this.getSceneSettings?.() ?? {};
     const rendering = settings.rendering ?? {};
 
@@ -1485,6 +1517,8 @@ export class EditPanel {
     search.placeholder = t('cfgSearch');
     search.style.cssText = inputStyle;
     panelRoot.appendChild(search);
+    // Peu de réglages dans Apparence, et des styles tout faits au-dessus : pas de recherche.
+    if (look) search.style.display = 'none';
 
     const emptyNote = document.createElement('div');
     emptyNote.style.cssText = 'display:none;padding:14px 2px;font-size:11px;color:#64748b;';
@@ -1505,6 +1539,8 @@ export class EditPanel {
 
 
 
+    const openSet = look ? this._openLookSections : this._openConfigSections;
+
     const sec = (label: string) => {
       const box = document.createElement('details');
       box.className = 'ow-card';
@@ -1514,10 +1550,11 @@ export class EditPanel {
       // Le choix initial est inscrit dans la mémoire de pliage, et non appliqué
       // seulement à l'objet : le filtre relit cette mémoire quand la recherche
       // est vide, et refermait donc aussitôt la section qu'on venait d'ouvrir.
-      if (this._openConfigSections.size === 0 && sections.length === 0) {
-        this._openConfigSections.add(label);
+      // Dans Apparence, tout reste replié : les styles tout faits suffisent à la plupart.
+      if (!look && openSet.size === 0 && sections.length === 0) {
+        openSet.add(label);
       }
-      box.open = this._openConfigSections.has(label);
+      box.open = openSet.has(label);
 
       const head = document.createElement('summary');
       head.className = 'ow-card-h';
@@ -1552,8 +1589,8 @@ export class EditPanel {
        */
       head.addEventListener('click', () => {
         const wanted = !box.open;
-        if (wanted) this._openConfigSections.add(label);
-        else this._openConfigSections.delete(label);
+        if (wanted) openSet.add(label);
+        else openSet.delete(label);
       });
       paint();
 
@@ -1588,7 +1625,7 @@ export class EditPanel {
         // Une recherche ouvre ce qu'elle trouve ; l'effacer rend la main au
         // pliage choisi par l'utilisateur.
         if (q) box.open = matches > 0;
-        else box.open = this._openConfigSections.has(label);
+        else box.open = openSet.has(label);
         shown += matches;
       }
       emptyNote.style.display = q && shown === 0 ? '' : 'none';
@@ -1685,6 +1722,7 @@ export class EditPanel {
       root.appendChild(wrap);
     };
 
+    if (!look) {
     // ══════════════════════════════════════════════════════════════════════
     // 0) SCENE — scene ID, model URL
     // ══════════════════════════════════════════════════════════════════════
@@ -1904,6 +1942,8 @@ export class EditPanel {
       root.appendChild(newWrap);
     }
 
+    }
+
     // ── Petits contrôles de l'apparence ─────────────────────────────────
     /** Un interrupteur, à la place des cases à cocher. */
     const switchField = (labelText: string, helpText: string | null, on: boolean, onChange: (v: boolean) => void) => {
@@ -2006,30 +2046,78 @@ export class EditPanel {
     };
 
     // ══════════════════════════════════════════════════════════════════════
-    // 1) APPARENCE — façade, toit, jardin, sol, fond
+    // APPARENCE — des styles tout faits, puis le détail : maison, terrain, ciel et lumière
     // ══════════════════════════════════════════════════════════════════════
-    sec(t('cfgLook'));
+    if (look) {
+    const house = this.getPlanLook?.() ?? null;
+    if (house) {
+      // Un clic règle d'un coup façade, toit, jardin et sol : la plupart s'arrêteront là.
+      const wrap = document.createElement('div');
+      const title = document.createElement('div');
+      title.style.cssText = 'font-size:13.5px;font-weight:700;color:var(--ow-text);margin:2px 2px 4px;';
+      title.textContent = t('lookStyles');
+      const hint = document.createElement('div');
+      hint.className = 'ow-hint-line';
+      hint.style.margin = '0 2px 10px';
+      hint.textContent = t('lookStylesHint');
+      const grid = document.createElement('div');
+      grid.className = 'ow-styles';
+      for (const st of HOUSE_STYLES) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'ow-style';
+        const art = document.createElement('span');
+        art.className = 'ow-style-art';
+        art.style.background = `linear-gradient(${st.scene.ground_color} 0 0) bottom / 100% 22% no-repeat, #9cc4ea`;
+        const roof = document.createElement('i');
+        roof.style.cssText = st.house.roof
+          ? `left:14%;right:14%;bottom:58%;height:26%;background:${ROOF_SWATCH[st.house.roofColor ?? 'tile']};clip-path:polygon(18% 0,82% 0,100% 100%,0 100%);`
+          : 'display:none;';
+        const walls = document.createElement('i');
+        walls.style.cssText = `left:20%;right:20%;bottom:20%;height:${st.house.roof ? 40 : 46}%;background:${st.house.outside};`;
+        art.append(walls, roof);
+        const name = document.createElement('span');
+        name.textContent = t(st.label);
+        b.append(art, name);
+        b.addEventListener('click', () => {
+          this.setPlanLook?.(st.house);
+          this.onSceneSettingsChange?.({ rendering: st.scene });
+          // Les champs du détail reprennent les valeurs du style.
+          container.innerHTML = '';
+          this._buildConfigTab(container, true);
+        });
+        grid.appendChild(b);
+      }
+      wrap.append(title, hint, grid);
+      panelRoot.appendChild(wrap);
 
-    // Avec une maison dessinée, toute l'apparence (maison, terrain, ciel) se règle sur le plan.
-    const inPlan = !!this.getPlanLook?.();
-    if (inPlan) {
-      const go = document.createElement('button');
-      go.type = 'button';
-      go.className = 'ow-row-link';
-      go.append(icon('pencil', 16), document.createTextNode(t('cfgHouseInPlan')));
-      go.addEventListener('click', () => this.onDrawPlan?.());
-      root.appendChild(go);
-    } else {
-    segField(t('cfgSky'), t('helpSky'), [
-      ['auto', t('cfgSkyAuto')],
-      ['clear', t('cfgSkyClear')],
-      ['clouds', t('cfgSkyClouds')],
-      ['studio', t('cfgSkyStudio')],
-      ['simple', t('cfgSkySimple')],
-    ], rendering.sky_style ?? 'auto', (v) => {
-      this.onSceneSettingsChange?.({ rendering: { sky_style: v as 'auto' | 'clear' | 'clouds' | 'studio' | 'simple' } });
-    });
+      sec(t('lookHouse'));
+      swatchField(t('cfgFacadeColor'), FACADE_COLORS, house.outside ?? '#e4ddd0', (c) => this.setPlanLook?.({ outside: c }));
+      segField(t('cfgFacade'), null, [
+        ['smooth', t('cfgFacadeSmooth')],
+        ['render', t('cfgFacadeRender')],
+        ['brick', t('cfgFacadeBrick')],
+        ['wood', t('cfgFacadeWood')],
+        ['stone', t('cfgFacadeStone')],
+      ], house.facade ?? 'smooth', (v) => this.setPlanLook?.({ facade: v === 'smooth' ? undefined : v as FacadeMaterial }));
+      switchField(t('cfgPlinth'), t('helpPlinth'), !!house.plinth, (v) => this.setPlanLook?.({ plinth: v || undefined }));
+      let coverWrap: HTMLElement | null = null;
+      segField(t('cfgRoof'), t('helpRoof'), [
+        ['flat', t('cfgRoofFlat')],
+        ['hip', t('cfgRoofHip')],
+      ], house.roof ?? 'flat', (v) => {
+        if (coverWrap) { coverWrap.dataset.off = v === 'hip' ? '' : '1'; coverWrap.style.display = v === 'hip' ? '' : 'none'; }
+        this.setPlanLook?.({ roof: v === 'hip' ? 'hip' : undefined });
+      });
+      coverWrap = segField(t('cfgRoofColor'), null, [
+        ['tile', t('cfgRoofTile')],
+        ['slate', t('cfgRoofSlate')],
+        ['zinc', t('cfgRoofZinc')],
+      ], house.roofColor ?? 'tile', (v) => this.setPlanLook?.({ roofColor: v === 'tile' ? undefined : v as 'slate' | 'zinc' }));
+      if (house.roof !== 'hip') { coverWrap.dataset.off = '1'; coverWrap.style.display = 'none'; }
+    }
 
+    sec(t('lookGround'));
     segField(t('cfgGarden'), t('helpGarden'), [
       ['none', t('cfgGardenNone')],
       ['some', t('cfgGardenSome')],
@@ -2062,12 +2150,18 @@ export class EditPanel {
     switchField(t('cfgTransparent'), t('helpTransparent'), rendering.transparent_background === true, (v) => {
       this.onSceneSettingsChange?.({ rendering: { transparent_background: v } });
     });
-    }
 
-    // ══════════════════════════════════════════════════════════════════════
-    // 2) LUMIÈRE — soleil, ambiance, luminosité, ombres
-    // ══════════════════════════════════════════════════════════════════════
-    sec(t('cfgLight'));
+    sec(t('lookSky'));
+    segField(t('cfgSky'), t('helpSky'), [
+      ['auto', t('cfgSkyAuto')],
+      ['clear', t('cfgSkyClear')],
+      ['clouds', t('cfgSkyClouds')],
+      ['studio', t('cfgSkyStudio')],
+      ['simple', t('cfgSkySimple')],
+    ], rendering.sky_style ?? 'auto', (v) => {
+      this.onSceneSettingsChange?.({ rendering: { sky_style: v as 'auto' | 'clear' | 'clouds' | 'studio' | 'simple' } });
+    });
+
 
     sliderWithHelp(t('cfgSunIntensity'), t('helpSunIntensity'), 0, 3, 0.05, rendering.sun_intensity ?? 0.8,
       (v) => `${Math.round(v * 100)} %`, (v) => this.onSceneSettingsChange?.({ rendering: { sun_intensity: v } }));
@@ -2086,6 +2180,11 @@ export class EditPanel {
       this.onSceneSettingsChange?.({ rendering: { light_occlusion: v ? 'top' : 'none' } });
     });
 
+    // Soleil, météo et simulation : ce qui fait vivre le ciel et la lumière.
+    this._buildWeatherTab(root);
+    }
+
+    if (!look) {
     // ══════════════════════════════════════════════════════════════════════
     // 3) CAMÉRA ET PASTILLES — zoom, inclinaison, voir à travers, regroupement
     // ══════════════════════════════════════════════════════════════════════
@@ -2219,6 +2318,7 @@ export class EditPanel {
       this.buildAnchorList();
     });
     root.appendChild(langSelect);
+    }
   }
 
   private _buildWeatherTab(container: HTMLElement) {
@@ -3845,6 +3945,7 @@ export class EditPanel {
    * de l'utilisateur.
    */
   private _openConfigSections = new Set<string>();
+  private _openLookSections = new Set<string>();
 
   /** Passe la carte en mode sélection, puis ouvre le formulaire sur la pièce. */
   private _startPartPick() {

@@ -138,6 +138,11 @@ details[open] > .ow-card-h .ow-chev { transform: rotate(45deg); }
 .ow-field > label { font-size: 12px; font-weight: 600; color: var(--ow-muted); }
 .ow-row-link { display: flex; align-items: center; gap: 8px; width: 100%; margin: 0 0 14px; padding: 10px 12px; border-radius: 10px; border: 1px dashed var(--ow-line, rgba(148,163,184,0.3)); background: none; color: inherit; font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
 .ow-row-link:hover { background: var(--ow-chrome2); }
+.ow-styles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 4px; }
+.ow-style { display: flex; flex-direction: column; gap: 5px; padding: 5px 5px 7px; border-radius: 12px; border: 1px solid var(--ow-line); background: var(--ow-chrome2); color: var(--ow-text); font: 600 11.5px inherit; cursor: pointer; text-align: center; }
+.ow-style:hover { border-color: var(--ow-acc); }
+.ow-style-art { position: relative; display: block; height: 52px; border-radius: 8px; overflow: hidden; }
+.ow-style-art i { position: absolute; display: block; }
 .ow-hint-line { font-size: 11.5px; color: var(--ow-muted); line-height: 1.45; }
 .ow-link { background: none; border: 0; padding: 0; margin: -6px 0 12px; font: inherit; font-size: 11.5px; color: var(--ow-accent, #7aa2ff); cursor: pointer; text-decoration: underline; }
 .ow-seg { display: flex; flex-wrap: wrap; gap: 3px; padding: 3px; border-radius: 10px; background: var(--ow-chrome2); border: 1px solid var(--ow-line); }

@@ -88,3 +88,15 @@ Tout le français est au **« tu »** depuis le 9 octobre 2026, et chaque texte 
 ## Reste à faire
 
 - La simulation météo de l'onglet Ambiance garde son ancien style, agrandi (`zoom: 1.15`), avec des icônes au trait.
+
+## Un sujet, un endroit (13 octobre 2026)
+
+Retour d'Esteban après une journée d'ajouts : « il y a des options partout, l'utilisateur va se perdre ». L'apparence de la maison se réglait à trois endroits (bulle du plan, onglet Ambiance, onglet Réglages). Rangement retenu, une question par endroit :
+
+- **Plan : la forme.** Murs, pièces, portes, hauteur et épaisseur des murs, image à calquer. Plus aucune option d'apparence, sauf la couleur d'une pièce quand on la sélectionne. Le plan garde sa bulle flottante et sa barre sur la moitié gauche : le panneau ancré à droite, essayé le même jour, a été retiré à sa demande.
+- **Apparence** (l'ancien onglet Ambiance, renommé) : tout ce qui se voit. En haut, six **styles tout faits** (Enduit clair, Brique, Bois, Pierre, Moderne, Sombre) : un clic règle façade, soubassement, toit, jardin et couleur du sol. En dessous, trois groupes repliés par défaut : Maison, Terrain, Ciel et lumière (ciel, intensités, ombres, puis soleil, météo et simulation).
+- **Réglages : la technique.** Scène, Caméra et pastilles, Performance, Langue. Rien de visuel.
+
+Dans le code : `_buildConfigTab(container, look)` dans `card/edit-panel.ts` construit les deux onglets avec les mêmes contrôles ; `HOUSE_STYLES` porte les styles ; `getPlanLook` / `setPlanLook` lisent et écrivent l'apparence sur le plan (façade et toit restent des données du plan, valables pour tous les niveaux), le reste est dans `rendering`. Sans plan (modèle importé), les styles et le groupe Maison n'apparaissent pas.
+
+Leçon : « tout mettre dans le plan » avait été demandé le matin et c'est ce qui a surchargé le plan. Dessiner et décorer sont deux moments différents. Avant d'ajouter un réglage, se demander s'il mérite d'être visible, ou s'il peut être couvert par un style tout fait.

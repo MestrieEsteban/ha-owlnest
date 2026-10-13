@@ -13,7 +13,6 @@
  */
 
 import { t, getLang, type StringKey } from '../i18n';
-import type { RenderingConfig } from '../types';
 import { icon } from '../ui/icons';
 import { Tour, type TourStep } from '../ui/tour';
 import type { PlanDoc, PlanOpening, OpeningKind, PlanWall, FloorMaterial, FacadeMaterial, DoorStyle, WindowStyle, PlanItem } from './types';
@@ -33,7 +32,7 @@ import {
   loadFurniture, itemSize, topView, isoView, furnitureTints, tintKind, overItem, baseSize, itemElevation, supportOf, isFlat,
 } from './furniture';
 import {
-  ROOM_TYPES, FLOOR_COLORS, WALL_COLORS, FACADE_COLORS, GROUND_COLORS, DOOR_COLORS, FRAME_COLORS, FLOOR_MATERIALS, type RoomType,
+  ROOM_TYPES, FLOOR_COLORS, WALL_COLORS, DOOR_COLORS, FRAME_COLORS, FLOOR_MATERIALS, type RoomType,
 } from './rooms';
 
 type Tool = 'select' | 'room' | 'wall' | 'boundary' | OpeningKind | 'furniture' | 'erase' | 'calibrate' | 'image';
@@ -80,9 +79,6 @@ const PREVIEW_MS = 60;
 /** Largeur du tiroir des meubles, en pixels. */
 const DRAWER_W = 236;
 
-/** Les réglages de décor que le plan montre avec la maison. */
-export type Scenery = Pick<RenderingConfig, 'garden' | 'ground_style' | 'ground_color' | 'ground_scale' | 'sky_style' | 'transparent_background'>;
-
 export interface PlanEditorOptions {
   container: HTMLElement;
   plan: PlanDoc;
@@ -99,8 +95,6 @@ export interface PlanEditorOptions {
   pickEntity?: (current: string | undefined, done: (entityId: string) => void) => void;
   /** Le nom d'une entité tel que l'utilisateur le connaît, avec sa pièce. */
   entityLabel?: (entityId: string) => string;
-  /** Le décor autour de la maison (jardin, sol, ciel) : des réglages de la scène, pas du plan. */
-  scenery?: { get: () => Scenery; set: (patch: Scenery) => void };
   /** Ouvre le choix d'un fichier Sweet Home 3D, qui remplacera le plan. */
   importSh3d?: () => void;
   /** Envoie un meuble importé (GLB, ou OBJ et ses fichiers) et rend son adresse. */
@@ -2398,59 +2392,6 @@ export class PlanEditor {
     this.bubble.append(row);
   }
 
-  /** Le terrain et le ciel : hors du plan, donc hors de son historique (annuler n'y touche pas). */
-  private sceneryFields() {
-    const api = this.opts.scenery;
-    if (!api) return;
-    const cur = api.get();
-    const set = (patch: Scenery) => { api.set(patch); this.renderBubble(); };
-    // Hors de l'historique du plan : appliqué tout de suite.
-    const pick = <T extends string>(label: string, options: [T, string][], value: T, apply: (v: T) => void) =>
-      this.chips(label, options, value, apply, true);
-
-    this.bubble.append(el('div', `height:1px;background:${C.line};margin:12px 0;`));
-    this.heading(t('planScenery'), 'sun');
-    pick(t('cfgSky'), [
-      ['auto', t('cfgSkyAuto')], ['clear', t('cfgSkyClear')], ['clouds', t('cfgSkyClouds')], ['studio', t('cfgSkyStudio')], ['simple', t('cfgSkySimple')],
-    ], cur.sky_style ?? 'auto', (v) => set({ sky_style: v }));
-    pick(t('cfgGarden'), [
-      ['none', t('cfgGardenNone')], ['some', t('cfgGardenSome')], ['lush', t('cfgGardenLush')],
-    ], cur.garden ?? 'none', (v) => set({ garden: v }));
-    const style = cur.ground_style ?? 'square';
-    pick(t('cfgGroundStyle'), [
-      ['square', t('cfgGroundSquare')], ['disc', t('cfgGroundDisc')], ['podium', t('cfgGroundPodium')],
-      ['infinite', t('cfgGroundInfinite')], ['none', t('cfgGroundNone')],
-    ], style, (v) => set({ ground_style: v }));
-    if (style !== 'none') {
-      const color = cur.ground_color ?? '#4a6741';
-      this.swatches(t('cfgGroundColor'), GROUND_COLORS, color, (c) => set({ ground_color: c }), true);
-      // La sienne : un sélecteur de couleur habillé en pastille arc-en-ciel, à la suite des autres.
-      const own = !GROUND_COLORS.some((c) => c.toLowerCase() === color.toLowerCase());
-      const custom = el('label', `position:relative;aspect-ratio:1;border-radius:8px;cursor:pointer;overflow:hidden;background:conic-gradient(#f87171,#fbbf24,#34d399,#38bdf8,#a78bfa,#f87171);border:2px solid ${own ? '#38bdf8' : 'rgba(255,255,255,0.12)'};box-sizing:border-box;`);
-      custom.title = t('cfgCustomColor');
-      const input = el('input', 'position:absolute;inset:0;opacity:0;cursor:pointer;');
-      input.type = 'color';
-      input.value = /^#[0-9a-f]{6}$/i.test(color) ? color : '#4a6741';
-      // Pendant qu'on fait glisser, la 3D suit ; le panneau ne se redessine qu'à la fin (sinon le sélecteur se ferme).
-      input.addEventListener('input', () => api.set({ ground_color: input.value }));
-      input.addEventListener('change', () => set({ ground_color: input.value }));
-      custom.append(input);
-      this.bubble.lastElementChild?.append(custom);
-    }
-    if (style !== 'none' && style !== 'infinite') {
-      const scale = cur.ground_scale ?? 1;
-      const row = el('div', 'display:flex;align-items:center;gap:10px;margin-bottom:10px;');
-      const range = el('input', 'flex:1;min-width:0;');
-      range.type = 'range'; range.min = '0.5'; range.max = '3'; range.step = '0.1'; range.value = String(scale);
-      const out = el('span', `min-width:34px;text-align:right;font-variant-numeric:tabular-nums;color:${C.text};`, `×${scale.toFixed(1)}`);
-      range.addEventListener('input', () => { out.textContent = `×${parseFloat(range.value).toFixed(1)}`; api.set({ ground_scale: parseFloat(range.value) }); });
-      row.append(range, out);
-      this.bubble.append(el('div', `font-size:12px;font-weight:600;color:${C.muted};margin:10px 0 6px;`, t('cfgGroundScale')), row);
-    }
-    pick(t('cfgTransparent'), [['no', t('planNo')], ['yes', t('planYes')]],
-      cur.transparent_background ? 'yes' : 'no', (v) => set({ transparent_background: v === 'yes' }));
-  }
-
   private actions(...buttons: HTMLButtonElement[]) {
     const row = el('div', 'display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;');
     row.append(...buttons);
@@ -2628,25 +2569,6 @@ export class PlanEditor {
     this.bubble.append(close);
     this.stepper(t('planWallHeight'), this.plan.wallHeight, 0.1, 1, 10, (v) => { this.plan.wallHeight = v; });
     this.stepper(t('planWallThickness'), this.plan.wallThickness, 0.01, 0.03, 1, (v) => { this.plan.wallThickness = v; });
-    this.swatches(t('planOutsideColor'), FACADE_COLORS, this.plan.outside ?? PLAN_COLORS.outside, (c) => { this.plan.outside = c; });
-    // La matière des façades et le soubassement : le même réglage que dans
-    // l'onglet Réglages, là où l'on dessine sa maison.
-    this.chips(t('cfgFacade'), ([
-      ['smooth', t('cfgFacadeSmooth')], ['render', t('cfgFacadeRender')], ['brick', t('cfgFacadeBrick')],
-      ['wood', t('cfgFacadeWood')], ['stone', t('cfgFacadeStone')],
-    ] as [FacadeMaterial, string][]), this.plan.facade ?? 'smooth', (m) => { this.plan.facade = m === 'smooth' ? undefined : m; });
-    this.chips(t('cfgPlinth'), ([['no', t('planPlinthNo')], ['yes', t('planPlinthYes')]] as ['no' | 'yes', string][]),
-      this.plan.plinth ? 'yes' : 'no', (v) => { this.plan.plinth = v === 'yes' || undefined; });
-    // Le toit : sur le dernier niveau, visible murs debout.
-    this.chips(t('cfgRoof'), ([['flat', t('cfgRoofFlat')], ['hip', t('cfgRoofHip')]] as ['flat' | 'hip', string][]),
-      this.plan.roof ?? 'flat', (v) => { this.plan.roof = v === 'hip' ? 'hip' : undefined; this.renderBubble(); });
-    if (this.plan.roof === 'hip') {
-      this.chips(t('cfgRoofColor'), ([
-        ['tile', t('cfgRoofTile')], ['slate', t('cfgRoofSlate')], ['zinc', t('cfgRoofZinc')],
-      ] as ['tile' | 'slate' | 'zinc', string][]), this.plan.roofColor ?? 'tile', (v) => { this.plan.roofColor = v === 'tile' ? undefined : v; });
-    }
-
-    this.sceneryFields();
 
     this.bubble.append(el('div', `height:1px;background:${C.line};margin:12px 0;`));
     this.heading(t('planImage'), 'image');
