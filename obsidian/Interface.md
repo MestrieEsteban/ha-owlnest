@@ -88,3 +88,14 @@ Tout le français est au **« tu »** depuis le 9 octobre 2026, et chaque texte 
 ## Reste à faire
 
 - La simulation météo de l'onglet Ambiance garde son ancien style, agrandi (`zoom: 1.15`), avec des icônes au trait.
+
+## Le plan dans le même cadre que les autres onglets (13 octobre 2026)
+
+L'éditeur de plan avait sa propre mise en page : barre sur la moitié gauche seulement, réglages dans une bulle flottante sur le dessin. Il reprend le cadre des autres onglets :
+
+- **La barre du haut** couvre toute la largeur, dans les trois vues (Plan, Plan + 3D, 3D). La petite barre flottante du mode 3D a disparu.
+- **Les réglages** (pièce, mur, porte sélectionnés, ou « Mon logement » quand rien ne l'est) sont dans un panneau ancré à droite, large de `PANEL_W` comme celui des autres onglets. Toujours ouvert : plus de bulle à déplier.
+- **Les outils de dessin** restent une colonne à gauche : c'est une palette, pas un panneau de réglages.
+- **Écran étroit** (moins de 1100 px en Plan + 3D, 760 px sinon) : on retombe sur la bulle, repliée par défaut. Rien ne change sur téléphone.
+
+Dans le code : `side`, `dock()` et `layout()` dans `plan/editor-ui.ts`. `onLayout(gauche, droite)` donne à la carte la place prise de chaque côté ; `_viewCover` sert au cadrage quand la 3D est prise des deux côtés.
