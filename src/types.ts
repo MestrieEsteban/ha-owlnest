@@ -242,6 +242,8 @@ export interface RenderingConfig {
   roof?: 'flat' | 'hip';
   /** Arbres et buissons autour de la maison. */
   garden?: 'none' | 'some' | 'lush';
+  /** Le ciel peint : `auto` (défaut) suit la météo et l'heure ; ou fixe (dégagé, nuageux, studio sombre). `simple` : le dégradé physique d'origine. */
+  sky_style?: 'auto' | 'clear' | 'clouds' | 'studio' | 'simple';
   /** Couverture du toit en pente. */
   roof_color?: 'tile' | 'slate' | 'zinc';
   /** Quality/performance preset — see quality.ts. 'auto' probes the hardware. */

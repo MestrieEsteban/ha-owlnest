@@ -39,3 +39,16 @@ Ajoutée le 11 octobre 2026, à la demande d'Esteban : « la maison ressemble to
 Toute l'apparence de la maison se règle dans le plan, bulle « Mon logement » : couleur et matière de façade, soubassement, toit (`plan.roof`, `plan.roofColor`). L'onglet Réglages n'a plus qu'un renvoi vers le plan ; il garde le jardin, le sol et le fond, qui sont le décor.
 
 Ces réglages valent pour tous les niveaux : ils vivent sur le rez-de-chaussée. Quand on dessine un étage, la carte les injecte dans le niveau montré et les remonte à l'enregistrement (`HOUSE` dans `openPlanEditor`). L'ancien `rendering.roof` reste lu tant que le plan ne dit rien.
+
+## Terrain et ciel (13 octobre 2026)
+
+**Dans le plan.** « Mon logement » porte aussi le décor : ciel, jardin, style et couleur du sol, fond transparent. Ce sont des réglages de scène (`rendering`), pas du plan : l'éditeur les lit et les écrit par `opts.scenery`, hors de son historique (annuler n'y touche pas). L'onglet Réglages ne garde ces champs que pour une maison importée sans plan.
+
+**Ciel peint** (`card/sky-paint.ts`, `rendering.sky_style`). Le ciel est peint une fois sur un canevas 4096 × 1024 (dégradé, nuages, étoiles), posé sur un dôme centré sur la caméra, dessiné en premier, sans brume ni exposition : les couleurs sont celles du canevas. Aucun fichier à télécharger.
+
+- `auto` (défaut) : suit la météo de Home Assistant et l'heure. Dégagé par `sunny` / `clear-night`, quelques nuages par `partlycloudy`, vent ou sans météo connue, couvert pour tout le reste (pluie, neige, brouillard, nuageux).
+- `clear`, `clouds` : fixes, mais suivent quand même jour, crépuscule et nuit.
+- `studio` : dégradé sombre, toujours le même.
+- `simple` : l'ancien dégradé physique de three.js.
+
+Pièges rencontrés : `scene.background` avec une image équirectangulaire sortait flou (three la convertit en cube de 512) et délavé (elle passe par l'exposition). D'où le dôme à part. La brume reprend la couleur de l'horizon, atténuée de jour puisqu'elle, passe par l'exposition.

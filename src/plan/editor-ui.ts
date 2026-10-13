@@ -14,6 +14,7 @@
 
 import { t, getLang, type StringKey } from '../i18n';
 import { PANEL_W } from '../ui/editor-styles';
+import type { RenderingConfig } from '../types';
 import { icon } from '../ui/icons';
 import { Tour, type TourStep } from '../ui/tour';
 import type { PlanDoc, PlanOpening, OpeningKind, PlanWall, FloorMaterial, FacadeMaterial, DoorStyle, WindowStyle, PlanItem } from './types';
@@ -33,7 +34,7 @@ import {
   loadFurniture, itemSize, topView, isoView, furnitureTints, tintKind, overItem, baseSize, itemElevation, supportOf, isFlat,
 } from './furniture';
 import {
-  ROOM_TYPES, FLOOR_COLORS, WALL_COLORS, FACADE_COLORS, DOOR_COLORS, FRAME_COLORS, FLOOR_MATERIALS, type RoomType,
+  ROOM_TYPES, FLOOR_COLORS, WALL_COLORS, FACADE_COLORS, GROUND_COLORS, DOOR_COLORS, FRAME_COLORS, FLOOR_MATERIALS, type RoomType,
 } from './rooms';
 
 type Tool = 'select' | 'room' | 'wall' | 'boundary' | OpeningKind | 'furniture' | 'erase' | 'calibrate' | 'image';
@@ -80,6 +81,9 @@ const PREVIEW_MS = 60;
 /** Largeur du tiroir des meubles, en pixels. */
 const DRAWER_W = 236;
 
+/** Les réglages de décor que le plan montre avec la maison. */
+export type Scenery = Pick<RenderingConfig, 'garden' | 'ground_style' | 'ground_color' | 'ground_scale' | 'sky_style' | 'transparent_background'>;
+
 export interface PlanEditorOptions {
   container: HTMLElement;
   plan: PlanDoc;
@@ -97,6 +101,8 @@ export interface PlanEditorOptions {
   pickEntity?: (current: string | undefined, done: (entityId: string) => void) => void;
   /** Le nom d'une entité tel que l'utilisateur le connaît, avec sa pièce. */
   entityLabel?: (entityId: string) => string;
+  /** Le décor autour de la maison (jardin, sol, ciel) : des réglages de la scène, pas du plan. */
+  scenery?: { get: () => Scenery; set: (patch: Scenery) => void };
   /** Ouvre le choix d'un fichier Sweet Home 3D, qui remplacera le plan. */
   importSh3d?: () => void;
   /** Envoie un meuble importé (GLB, ou OBJ et ses fichiers) et rend son adresse. */
@@ -2423,6 +2429,36 @@ export class PlanEditor {
     this.bubble.append(row);
   }
 
+  /** Le terrain et le ciel : hors du plan, donc hors de son historique (annuler n'y touche pas). */
+  private sceneryFields() {
+    const api = this.opts.scenery;
+    if (!api) return;
+    const cur = api.get();
+    const set = (patch: Scenery) => { api.set(patch); this.renderBubble(); };
+    // Hors de l'historique du plan : appliqué tout de suite.
+    const pick = <T extends string>(label: string, options: [T, string][], value: T, apply: (v: T) => void) =>
+      this.chips(label, options, value, apply, true);
+
+    this.bubble.append(el('div', `height:1px;background:${C.line};margin:12px 0;`));
+    this.heading(t('planScenery'), 'sun');
+    pick(t('cfgSky'), [
+      ['auto', t('cfgSkyAuto')], ['clear', t('cfgSkyClear')], ['clouds', t('cfgSkyClouds')], ['studio', t('cfgSkyStudio')], ['simple', t('cfgSkySimple')],
+    ], cur.sky_style ?? 'auto', (v) => set({ sky_style: v }));
+    pick(t('cfgGarden'), [
+      ['none', t('cfgGardenNone')], ['some', t('cfgGardenSome')], ['lush', t('cfgGardenLush')],
+    ], cur.garden ?? 'none', (v) => set({ garden: v }));
+    const style = cur.ground_style ?? 'square';
+    pick(t('cfgGroundStyle'), [
+      ['square', t('cfgGroundSquare')], ['disc', t('cfgGroundDisc')], ['podium', t('cfgGroundPodium')],
+      ['infinite', t('cfgGroundInfinite')], ['none', t('cfgGroundNone')],
+    ], style, (v) => set({ ground_style: v }));
+    if (style !== 'none') {
+      this.swatches(t('cfgGroundColor'), GROUND_COLORS, cur.ground_color ?? '#4a6741', (c) => set({ ground_color: c }), true);
+    }
+    pick(t('cfgTransparent'), [['no', t('planPlinthNo')], ['yes', t('planYes')]],
+      cur.transparent_background ? 'yes' : 'no', (v) => set({ transparent_background: v === 'yes' }));
+  }
+
   private actions(...buttons: HTMLButtonElement[]) {
     const row = el('div', 'display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;');
     row.append(...buttons);
@@ -2620,6 +2656,8 @@ export class PlanEditor {
       ] as ['tile' | 'slate' | 'zinc', string][]), this.plan.roofColor ?? 'tile', (v) => { this.plan.roofColor = v === 'tile' ? undefined : v; });
     }
 
+    this.sceneryFields();
+
     this.bubble.append(el('div', `height:1px;background:${C.line};margin:12px 0;`));
     this.heading(t('planImage'), 'image');
     const bg = this.plan.background;
@@ -2683,26 +2721,26 @@ export class PlanEditor {
   }
 
   /** Pastilles de couleur. */
-  private swatches(label: string, colors: readonly string[], value: string | undefined, apply: (c: string) => void) {
+  private swatches(label: string, colors: readonly string[], value: string | undefined, apply: (c: string) => void, direct = false) {
     if (label) this.bubble.append(el('div', `font-size:12px;font-weight:600;color:${C.muted};margin:10px 0 6px;`, label));
     const grid = el('div', 'display:grid;grid-template-columns:repeat(6,minmax(0,40px));gap:6px;margin-bottom:10px;');
     for (const c of colors) {
       const on = value?.toLowerCase() === c.toLowerCase();
       const b = el('button', `aspect-ratio:1;border-radius:8px;cursor:pointer;background:${c};border:2px solid ${on ? '#38bdf8' : 'rgba(255,255,255,0.12)'};box-shadow:${on ? '0 0 0 2px #0b1220 inset' : 'none'};`);
-      b.addEventListener('click', () => { if (on) return; this.commit(); apply(c); this.changed(); });
+      b.addEventListener('click', () => { if (on) return; if (direct) { apply(c); return; } this.commit(); apply(c); this.changed(); });
       grid.append(b);
     }
     this.bubble.append(grid);
   }
 
   /** Une rangée de choix en pastilles, qui passe à la ligne. */
-  private chips<T extends string>(label: string, options: [T, string][], value: T, apply: (v: T) => void) {
+  private chips<T extends string>(label: string, options: [T, string][], value: T, apply: (v: T) => void, direct = false) {
     if (label) this.bubble.append(el('div', `font-size:12px;font-weight:600;color:${C.muted};margin:10px 0 6px;`, label));
     const wrap = el('div', 'display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px;');
     for (const [v, text] of options) {
       const on = v === value;
       const b = el('button', `padding:5px 10px;border-radius:999px;cursor:pointer;font-size:12px;font-family:${FONT};font-weight:600;border:1px solid ${on ? 'color-mix(in srgb, #0ea5e9 55%, transparent)' : C.line};background:${on ? 'color-mix(in srgb, #0ea5e9 16%, transparent)' : C.chrome2};color:${on ? C.text : C.muted};`, text);
-      b.addEventListener('click', () => { if (on) return; this.commit(); apply(v); this.changed(); });
+      b.addEventListener('click', () => { if (on) return; if (direct) { apply(v); return; } this.commit(); apply(v); this.changed(); });
       wrap.append(b);
     }
     this.bubble.append(wrap);

@@ -4,6 +4,7 @@ import type { CardConfig, Hass, SunMode, GroundStyle } from '../types';
 import { qualityFromConfig } from '../quality';
 import { modelScale } from '../scale';
 import { buildGarden } from './garden';
+import { SkyDome, skyHorizon, skyUnder, skyPhase, skyLook } from './sky-paint';
 
 let grassCache: THREE.Texture | null | undefined;
 
@@ -66,6 +67,8 @@ const HA_WEATHER_MAP: Record<string, WeatherEffect> = {
 export class EnvironmentController {
   private _weatherParticles: THREE.Object3D | null = null;
   private _weatherType: WeatherEffect = 'none';
+  /** L'état météo de Home Assistant tel quel ; vide sans entité météo. */
+  private _weatherState = '';
   private _weatherTime = 0;
 
   /**
@@ -302,9 +305,16 @@ export class EnvironmentController {
 
   applyWeather(weatherState: string) {
     const wanted: WeatherEffect = HA_WEATHER_MAP[weatherState] ?? 'none';
-    if (wanted === this._weatherType) return;
+    // Le ciel peint suit l'état exact (« sunny » et « partlycloudy » ont le même effet, pas le même ciel).
+    const skyChanged = weatherState !== this._weatherState;
+    this._weatherState = weatherState;
+    if (wanted === this._weatherType) {
+      if (skyChanged) { this.refreshSky(); this._applyAtmosphere(wanted); this.requestRender(); }
+      return;
+    }
     this._weatherType = wanted;
     this.removeWeatherParticles();
+    this.refreshSky();
     this._applyAtmosphere(wanted);
     this._createWeatherForEffect(wanted);
     this.requestRender();
@@ -787,8 +797,17 @@ export class EnvironmentController {
 
   // ── Sky position ──────────────────────────────────────────────────────────
 
+  private _lastSky: [number, number] = [60, 180];
+  private _dome: SkyDome | null = null;
+
+  /** Le style de ciel a changé : on le repose, au même soleil. */
+  refreshSky() {
+    this.setSkyPos(...this._lastSky);
+  }
+
   setSkyPos(elevation: number, azimuth = 180) {
     if (!this.sky) return;
+    this._lastSky = [elevation, azimuth];
     const phi = THREE.MathUtils.degToRad(90 - elevation);
     const theta = THREE.MathUtils.degToRad(azimuth - 180);
     const sunPos = new THREE.Vector3().setFromSphericalCoords(1, phi, theta);
@@ -797,8 +816,20 @@ export class EnvironmentController {
     this.sky.material.uniforms['turbidity'].value = THREE.MathUtils.lerp(10, 3, t);
     this.sky.material.uniforms['rayleigh'].value = THREE.MathUtils.lerp(3, 1.2, t);
     const transparentBg = this.getConfig()?.rendering?.transparent_background === true;
+    const style = this.getConfig()?.rendering?.sky_style ?? 'auto';
+    const painted = style !== 'simple' && !transparentBg;
+    if (!painted && this._dome) { this._dome.dispose(); this._dome = null; }
     if (transparentBg) {
       this.sky.visible = false;
+    } else if (style !== 'simple') {
+      // Un ciel peint, qui suit le jour, le crépuscule et la nuit ; en automatique, la météo aussi.
+      const phase = skyPhase(elevation);
+      const look = skyLook(style, this._weatherState);
+      this.sky.visible = false;
+      if (!this._dome) { this._dome = new SkyDome(); this.scene.add(this._dome.mesh); }
+      this._dome.set(look, phase);
+      this.scene.background = skyUnder(look, phase);
+      if (this.scene.fog) (this.scene.fog as THREE.FogExp2).color.copy(skyHorizon(look, phase));
     } else if (elevation < -5) {
       this.sky.visible = false;
       this.scene.background = new THREE.Color(0x05080f);

@@ -2010,15 +2010,25 @@ export class EditPanel {
     // ══════════════════════════════════════════════════════════════════════
     sec(t('cfgLook'));
 
-    // La façade et le toit se règlent sur le plan, avec le reste de la maison.
-    if (this.getPlanLook?.()) {
+    // Avec une maison dessinée, toute l'apparence (maison, terrain, ciel) se règle sur le plan.
+    const inPlan = !!this.getPlanLook?.();
+    if (inPlan) {
       const go = document.createElement('button');
       go.type = 'button';
       go.className = 'ow-row-link';
       go.append(icon('pencil', 16), document.createTextNode(t('cfgHouseInPlan')));
       go.addEventListener('click', () => this.onDrawPlan?.());
       root.appendChild(go);
-    }
+    } else {
+    segField(t('cfgSky'), t('helpSky'), [
+      ['auto', t('cfgSkyAuto')],
+      ['clear', t('cfgSkyClear')],
+      ['clouds', t('cfgSkyClouds')],
+      ['studio', t('cfgSkyStudio')],
+      ['simple', t('cfgSkySimple')],
+    ], rendering.sky_style ?? 'auto', (v) => {
+      this.onSceneSettingsChange?.({ rendering: { sky_style: v as 'auto' | 'clear' | 'clouds' | 'studio' | 'simple' } });
+    });
 
     segField(t('cfgGarden'), t('helpGarden'), [
       ['none', t('cfgGardenNone')],
@@ -2052,6 +2062,7 @@ export class EditPanel {
     switchField(t('cfgTransparent'), t('helpTransparent'), rendering.transparent_background === true, (v) => {
       this.onSceneSettingsChange?.({ rendering: { transparent_background: v } });
     });
+    }
 
     // ══════════════════════════════════════════════════════════════════════
     // 2) LUMIÈRE — soleil, ambiance, luminosité, ombres

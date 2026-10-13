@@ -755,6 +755,18 @@ export class Ha3dFloorplan extends HTMLElement {
       },
       importFurniture: async (files) => (await importModel(this._hass as unknown as UploadHass, files, () => {})).url,
       importSh3d: () => pickFiles((files) => void this._importModel(files)),
+      // Le décor (jardin, sol, ciel) : des réglages de scène, montrés avec la maison.
+      scenery: {
+        get: () => this._scene?.settings?.rendering ?? {},
+        set: (patch) => {
+          if (!this._scene) return;
+          const cur = this._scene.settings ?? {};
+          this._scene = { ...this._scene, settings: { ...cur, rendering: { ...(cur.rendering ?? {}), ...patch } } };
+          this._applySettingsLive();
+          this._schedulePlanSave(400);
+          this._requestRender();
+        },
+      },
       navTabs: editorTabs(true),
       onNavTab: (id) => {
         // Le plein écran reste : l'éditeur de la maison prend le relais du plan.
@@ -4052,6 +4064,8 @@ export class Ha3dFloorplan extends HTMLElement {
         }
       }
     }
+    // Le ciel peint (ou le retour au ciel physique) se repose au même soleil.
+    if (rl.transparent_background !== true) this._env?.refreshSky();
     // Sun / ambient intensities are now applied as multipliers inside
     // applySunLight(), so we don't set them directly here — updateFromHass
     // at the end will pick up the new config values.
