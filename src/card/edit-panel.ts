@@ -337,7 +337,6 @@ export class EditPanel {
 
   /** L'apparence de la maison dessinée (façade), lue et changée sur le plan ; `null` sans plan. */
   getPlanLook?: () => { outside?: string; facade?: FacadeMaterial; plinth?: boolean } | null;
-  setPlanLook?: (patch: { outside?: string; facade?: FacadeMaterial; plinth?: boolean }) => void;
 
   /** Les niveaux du logement, l'étage regardé, et en changer (vide : pas d'étages). */
   floors?: { list: () => string[]; active: () => number; set: (k: number) => void };
@@ -2011,35 +2010,14 @@ export class EditPanel {
     // ══════════════════════════════════════════════════════════════════════
     sec(t('cfgLook'));
 
-    // La façade appartient au plan dessiné (elle vaut pour tous les étages).
-    const look = this.getPlanLook?.();
-    if (look) {
-      swatchField(t('cfgFacadeColor'), FACADE_COLORS, look.outside ?? '#e4ddd0', (c) => this.setPlanLook?.({ outside: c }));
-      segField(t('cfgFacade'), null, [
-        ['smooth', t('cfgFacadeSmooth')],
-        ['render', t('cfgFacadeRender')],
-        ['brick', t('cfgFacadeBrick')],
-        ['wood', t('cfgFacadeWood')],
-        ['stone', t('cfgFacadeStone')],
-      ], look.facade ?? 'smooth', (v) => this.setPlanLook?.({ facade: v as FacadeMaterial }));
-      switchField(t('cfgPlinth'), t('helpPlinth'), !!look.plinth, (v) => this.setPlanLook?.({ plinth: v }));
-
-      let coverWrap: HTMLElement | null = null;
-      segField(t('cfgRoof'), t('helpRoof'), [
-        ['flat', t('cfgRoofFlat')],
-        ['hip', t('cfgRoofHip')],
-      ], rendering.roof ?? 'flat', (v) => {
-        if (coverWrap) { coverWrap.dataset.off = v === 'hip' ? '' : '1'; coverWrap.style.display = v === 'hip' ? '' : 'none'; }
-        this.onSceneSettingsChange?.({ rendering: { roof: v as 'flat' | 'hip' } });
-      });
-      coverWrap = segField(t('cfgRoofColor'), null, [
-        ['tile', t('cfgRoofTile')],
-        ['slate', t('cfgRoofSlate')],
-        ['zinc', t('cfgRoofZinc')],
-      ], rendering.roof_color ?? 'tile', (v) => {
-        this.onSceneSettingsChange?.({ rendering: { roof_color: v as 'tile' | 'slate' | 'zinc' } });
-      });
-      if ((rendering.roof ?? 'flat') !== 'hip') { coverWrap.dataset.off = '1'; coverWrap.style.display = 'none'; }
+    // La façade et le toit se règlent sur le plan, avec le reste de la maison.
+    if (this.getPlanLook?.()) {
+      const go = document.createElement('button');
+      go.type = 'button';
+      go.className = 'ow-row-link';
+      go.append(icon('pencil', 16), document.createTextNode(t('cfgHouseInPlan')));
+      go.addEventListener('click', () => this.onDrawPlan?.());
+      root.appendChild(go);
     }
 
     segField(t('cfgGarden'), t('helpGarden'), [

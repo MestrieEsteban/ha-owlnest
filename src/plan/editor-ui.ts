@@ -2578,6 +2578,14 @@ export class PlanEditor {
     ] as [FacadeMaterial, string][]), this.plan.facade ?? 'smooth', (m) => { this.plan.facade = m === 'smooth' ? undefined : m; });
     this.chips(t('cfgPlinth'), ([['no', t('planPlinthNo')], ['yes', t('planPlinthYes')]] as ['no' | 'yes', string][]),
       this.plan.plinth ? 'yes' : 'no', (v) => { this.plan.plinth = v === 'yes' || undefined; });
+    // Le toit : sur le dernier niveau, visible murs debout.
+    this.chips(t('cfgRoof'), ([['flat', t('cfgRoofFlat')], ['hip', t('cfgRoofHip')]] as ['flat' | 'hip', string][]),
+      this.plan.roof ?? 'flat', (v) => { this.plan.roof = v === 'hip' ? 'hip' : undefined; this.renderBubble(); });
+    if (this.plan.roof === 'hip') {
+      this.chips(t('cfgRoofColor'), ([
+        ['tile', t('cfgRoofTile')], ['slate', t('cfgRoofSlate')], ['zinc', t('cfgRoofZinc')],
+      ] as ['tile' | 'slate' | 'zinc', string][]), this.plan.roofColor ?? 'tile', (v) => { this.plan.roofColor = v === 'tile' ? undefined : v; });
+    }
 
     this.bubble.append(el('div', `height:1px;background:${C.line};margin:12px 0;`));
     this.heading(t('planImage'), 'image');

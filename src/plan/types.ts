@@ -136,6 +136,10 @@ export interface PlanDoc {
   facade?: FacadeMaterial;
   /** Une bande plus sombre au pied des façades. */
   plinth?: boolean;
+  /** Toit du dernier niveau : plat (absent) ou en pente, vu murs debout. */
+  roof?: 'hip';
+  /** Couverture du toit en pente. Absente : tuile. */
+  roofColor?: 'tile' | 'slate' | 'zinc';
   /**
    * Point du plan placé au centre de la scène 3D. Fixé au premier dessin et
    * plus jamais recalculé : les ancres sont posées en coordonnées de la scène,

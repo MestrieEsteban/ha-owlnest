@@ -33,3 +33,9 @@ Ajoutée le 11 octobre 2026, à la demande d'Esteban : « la maison ressemble to
 - Interrupteurs à la place des cases à cocher, choix en boutons, pastilles de couleur avec une pastille « la mienne ».
 - **Corrigé** : chaque réglage renvoyait toute la section rendu figée à l'ouverture du menu (un réglage en annulait un autre) ; le menu n'envoie plus que ce qui change, la carte fusionne. Les intensités de lumière n'agissaient pas sans entité soleil, et la météo écrasait le cycle du soleil (une nuit pluvieuse redevenait claire) : l'éclairage est maintenant réglage × cycle du soleil × météo.
 - **Corrigé** : le sol se pose sous le point le plus bas de la maison (une maison chargée sur son étage flottait 1,4 m au-dessus).
+
+## Où ça se règle (13 octobre 2026)
+
+Toute l'apparence de la maison se règle dans le plan, bulle « Mon logement » : couleur et matière de façade, soubassement, toit (`plan.roof`, `plan.roofColor`). L'onglet Réglages n'a plus qu'un renvoi vers le plan ; il garde le jardin, le sol et le fond, qui sont le décor.
+
+Ces réglages valent pour tous les niveaux : ils vivent sur le rez-de-chaussée. Quand on dessine un étage, la carte les injecte dans le niveau montré et les remonte à l'enregistrement (`HOUSE` dans `openPlanEditor`). L'ancien `rendering.roof` reste lu tant que le plan ne dit rien.

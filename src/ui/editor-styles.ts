@@ -136,6 +136,8 @@ details[open] > .ow-card-h .ow-chev { transform: rotate(45deg); }
 .ow-card-b { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 12px; }
 .ow-field { display: flex; flex-direction: column; gap: 6px; }
 .ow-field > label { font-size: 12px; font-weight: 600; color: var(--ow-muted); }
+.ow-row-link { display: flex; align-items: center; gap: 8px; width: 100%; margin: 0 0 14px; padding: 10px 12px; border-radius: 10px; border: 1px dashed var(--ow-line, rgba(148,163,184,0.3)); background: none; color: inherit; font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
+.ow-row-link:hover { background: var(--ow-chrome2); }
 .ow-hint-line { font-size: 11.5px; color: var(--ow-muted); line-height: 1.45; }
 .ow-link { background: none; border: 0; padding: 0; margin: -6px 0 12px; font: inherit; font-size: 11.5px; color: var(--ow-accent, #7aa2ff); cursor: pointer; text-decoration: underline; }
 .ow-seg { display: flex; flex-wrap: wrap; gap: 3px; padding: 3px; border-radius: 10px; background: var(--ow-chrome2); border: 1px solid var(--ow-line); }

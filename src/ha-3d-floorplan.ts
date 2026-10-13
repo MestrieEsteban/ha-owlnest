@@ -661,16 +661,31 @@ export class Ha3dFloorplan extends HTMLElement {
     this._setFullscreen('plan', true);
     queueMicrotask(() => this._updateRoofVisibility());
     // L'éditeur dessine un niveau à la fois : son plan, sans la liste des étages.
+    // L'apparence de la maison (façade, toit) vaut pour tous les niveaux : elle
+    // vit sur le rez-de-chaussée, et se règle depuis n'importe quel étage.
+    const HOUSE = ['outside', 'facade', 'plinth', 'roof', 'roofColor'] as const;
     const levelDoc = (): PlanDoc | null => {
       const root = this._planDoc();
       if (!root) return null;
-      const { floors: _f, groundName: _g, ...doc } = floorDoc(root, this._floorIndex());
-      return doc as PlanDoc;
+      const { floors: _f, groundName: _g, ...rest } = floorDoc(root, this._floorIndex());
+      const doc = rest as PlanDoc;
+      const look = doc as unknown as Record<string, unknown>;
+      for (const k of HOUSE) look[k] = root[k];
+      // Un toit réglé avant qu'il ne passe dans le plan.
+      const old = this._effectiveConfig?.rendering;
+      if (!root.roof && old?.roof === 'hip') { doc.roof = 'hip'; doc.roofColor = root.roofColor ?? (old.roof_color === 'tile' ? undefined : old.roof_color); }
+      return doc;
     };
     // Le niveau dessiné remis dans le logement.
     const withLevel = (doc: PlanDoc): PlanDoc => {
       const root = this._scene?.plan;
-      return root && !fromDemo ? withFloorDoc(root, this._floorIndex(), doc) : doc;
+      if (!root || fromDemo) return doc;
+      const k = this._floorIndex();
+      if (k === 0) return withFloorDoc(root, 0, doc);
+      const level = { ...doc } as unknown as Record<string, unknown>;
+      const house: Record<string, unknown> = {};
+      for (const key of HOUSE) { house[key] = level[key]; delete level[key]; }
+      return { ...withFloorDoc(root, k, level as unknown as PlanDoc), ...house };
     };
     const saveHouse = (plan: PlanDoc) => {
       this.applyPlan(plan);
@@ -2165,10 +2180,11 @@ export class Ha3dFloorplan extends HTMLElement {
       });
     }
     const plan = this._plan;
-    const want = this._effectiveConfig?.rendering?.roof === 'hip';
+    const want = this._roofKind() === 'hip';
     if (plan && want && this._floorIndex() === this._floors().length - 1) {
       const doc = this._activeDoc() ?? plan;
-      const roof = buildRoof(doc, ROOF_COLORS[this._effectiveConfig?.rendering?.roof_color ?? 'tile'] ?? ROOF_COLORS.tile);
+      const cover = plan.roof ? plan.roofColor ?? 'tile' : this._effectiveConfig?.rendering?.roof_color ?? 'tile';
+      const roof = buildRoof(doc, ROOF_COLORS[cover] ?? ROOF_COLORS.tile);
       if (roof) {
         // Construit caché : `_updateRoofVisibility` le montre si la vue s'y prête.
         roof.visible = false;
@@ -2177,6 +2193,11 @@ export class Ha3dFloorplan extends HTMLElement {
       }
     }
     this._updateRoofVisibility();
+  }
+
+  /** Le toit se règle sur le plan ; l'ancien réglage de scène vaut tant que le plan n'en dit rien. */
+  private _roofKind(): 'flat' | 'hip' {
+    return this._plan?.roof ?? this._effectiveConfig?.rendering?.roof ?? 'flat';
   }
 
   private _updateRoofVisibility() {
@@ -2521,7 +2542,7 @@ export class Ha3dFloorplan extends HTMLElement {
       label.textContent = t(WALL_VIEW_LABELS[view]);
       const hint = document.createElement('small');
       // Le toit en pente se montre murs debout : on le dit là.
-      const roofed = view === 'up' && !!this._plan && this._effectiveConfig?.rendering?.roof === 'hip';
+      const roofed = view === 'up' && !!this._plan && this._roofKind() === 'hip';
       hint.textContent = t(roofed ? 'wallViewUpRoofHint' : WALL_VIEW_HINTS[view]);
       text.append(label, hint);
       item.append(uiIcon(WALL_VIEW_ICONS[view], 20), text);
@@ -2903,16 +2924,6 @@ export class Ha3dFloorplan extends HTMLElement {
       this._editPanel.getPlanLook = () => {
         const p = this._scene?.plan;
         return p ? { outside: p.outside, facade: p.facade, plinth: p.plinth } : null;
-      };
-      this._editPanel.setPlanLook = (patch) => {
-        const p = this._scene?.plan;
-        if (!p) return;
-        // Une couleur choisie ici vaut pour toute la maison : les étages la reprennent.
-        const floors = patch.outside !== undefined || patch.facade !== undefined
-          ? p.floors?.map((f) => ({ ...f, doc: { ...f.doc, outside: undefined, facade: undefined } }))
-          : p.floors;
-        this.applyPlan({ ...p, ...patch, ...(floors ? { floors } : {}) });
-        this._schedulePlanSave(400);
       };
       this._editPanel.partFloor = (part) => {
         const k = this._partFloorIndex(part);
