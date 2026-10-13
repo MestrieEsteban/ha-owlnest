@@ -775,9 +775,8 @@ export class Ha3dFloorplan extends HTMLElement {
         if (this.modelLoaded && this._modelRoot) this._enterEditMode(id);
         else this._setFullscreen('edit', false);
       },
-      onLayout: (covered, right = 0) => {
-        this._viewShift = covered - right;
-        this._viewCover = covered + right;
+      onLayout: (covered) => {
+        this._viewShift = covered;
         this._applyViewShift();
         if (this._plan && !this._framedBox) this._frameEditor();
       },
@@ -786,7 +785,6 @@ export class Ha3dFloorplan extends HTMLElement {
         this._updateRoofVisibility();
         this._framedBox = null;
         this._viewShift = 0;
-        this._viewCover = null;
         this._ui?.setHidden(false);
         this._setFullscreen('plan', false);
         this._applyViewShift();
@@ -2462,7 +2460,7 @@ export class Ha3dFloorplan extends HTMLElement {
     const plan = this._plan;
     const room = this._rooms().find((r) => r.id === id);
     if (!plan || !room || !this.camera) return;
-    const visible = this.canvas?.clientWidth ? 1 - (this._viewCover ?? Math.abs(this._viewShift)) / this.canvas.clientWidth : 1;
+    const visible = this.canvas?.clientWidth ? 1 - Math.abs(this._viewShift) / this.canvas.clientWidth : 1;
     const doc = this._activeDoc() ?? plan;
     const pose = roomCamera(room, this._planOrigin(plan), {
       fovDeg: this.camera.fov, aspect: this.camera.aspect, wallHeight: doc.wallHeight ?? 2.5, visible,
@@ -4206,7 +4204,7 @@ export class Ha3dFloorplan extends HTMLElement {
     const radius = Math.max(size.length() / 2, 1e-3);
     const vfov = (this.camera.fov * Math.PI) / 180;
     // Seule la partie de la carte que l'éditeur de plan ne couvre pas compte.
-    const visible = this.canvas?.clientWidth ? 1 - (this._viewCover ?? Math.abs(this._viewShift)) / this.canvas.clientWidth : 1;
+    const visible = this.canvas?.clientWidth ? 1 - Math.abs(this._viewShift) / this.canvas.clientWidth : 1;
     const hfov = 2 * Math.atan(Math.tan(vfov / 2) * this.camera.aspect * Math.max(visible, 0.2));
     const dist = (radius / Math.sin(Math.min(vfov, hfov) / 2)) * 0.85;
 
@@ -5256,8 +5254,6 @@ export class Ha3dFloorplan extends HTMLElement {
    * pour rester dans la partie visible de la carte.
    */
   private _viewShift = 0;
-  /** Largeur totale prise sur la 3D quand elle l'est des deux côtés (plan à gauche, panneau à droite). */
-  private _viewCover: number | null = null;
 
   private _applyViewShift() {
     if (!this.camera || !this.canvas) return;

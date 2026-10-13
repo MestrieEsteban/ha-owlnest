@@ -13,7 +13,6 @@
  */
 
 import { t, getLang, type StringKey } from '../i18n';
-import { PANEL_W } from '../ui/editor-styles';
 import type { RenderingConfig } from '../types';
 import { icon } from '../ui/icons';
 import { Tour, type TourStep } from '../ui/tour';
@@ -92,8 +91,7 @@ export interface PlanEditorOptions {
   /** Pendant un geste : la 3D suit, sans rien enregistrer. */
   onPreview?: (plan: PlanDoc) => void;
   /** Largeur couverte à gauche, en pixels : la 3D occupe le reste. */
-  /** La largeur que l'éditeur prend sur la 3D : à gauche (le plan), à droite (le panneau de réglages). */
-  onLayout: (covered: number, right?: number) => void;
+  onLayout: (covered: number) => void;
   /**
    * Ouvre le sélecteur d'entités d'Owlnest (groupé par étage et par pièce,
    * avec recherche) pour relier une lampe posée à une entité.
@@ -209,10 +207,7 @@ export class PlanEditor {
   private bubble: HTMLDivElement;
   private hintEl: HTMLDivElement;
   private modeBar: HTMLDivElement;
-  /** Le panneau de droite, comme dans les autres onglets ; il porte les réglages quand la place le permet. */
-  private side: HTMLDivElement;
-  private docked: boolean | null = null;
-  private started = false;
+  private floating: HTMLDivElement;
   private emptyState: HTMLDivElement | null = null;
   private popup: HTMLElement | null = null;
   private undoBtn!: HTMLButtonElement;
@@ -330,8 +325,8 @@ export class PlanEditor {
     const bar = this.floorBar;
     if (!bar) return;
     const narrow = this.stage.getBoundingClientRect().width < 560;
-    bar.style.top = narrow && !this.docked ? '62px' : '12px';
-    bar.style.maxWidth = narrow || this.docked ? 'calc(100% - 24px)' : 'calc(100% - 290px)';
+    bar.style.top = narrow ? '62px' : '12px';
+    bar.style.maxWidth = narrow ? 'calc(100% - 24px)' : 'calc(100% - 290px)';
   }
 
   /** Un autre niveau à dessiner : son plan, et un historique neuf (annuler ne traverse pas les étages). */
@@ -366,18 +361,16 @@ export class PlanEditor {
     this.plan = clone(opts.plan);
     this.roomCounter = this.plan.rooms.length;
 
-    // Le même cadre que les autres onglets : la barre sur toute la largeur, la
-    // 3D dessous, le panneau de réglages à droite. Le plan, lui, vient à gauche.
-    this.root = el('div', `position:absolute;inset:0;z-index:120;pointer-events:none;display:flex;flex-direction:column;font-family:${FONT};color:${C.text};`);
+    this.root = el('div', `position:absolute;inset:0;z-index:120;pointer-events:none;font-family:${FONT};color:${C.text};`);
 
-    // Panneau du plan : outils et dessin.
+    // Panneau du plan : barre du haut, outils, dessin.
     this.panel = el('div', [
       'position:absolute', 'left:0', 'top:0', 'bottom:0', 'display:flex', 'flex-direction:column',
       `background:${C.chrome}`, 'pointer-events:auto', 'box-shadow:6px 0 28px rgba(0,0,0,0.35)',
       'transition:width .25s ease',
     ].join(';'));
 
-    const top = el('div', `display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid ${C.line};min-height:52px;box-sizing:border-box;container-type:inline-size;background:${C.chrome};pointer-events:auto;flex-shrink:0;position:relative;z-index:2;`);
+    const top = el('div', `display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid ${C.line};min-height:52px;box-sizing:border-box;container-type:inline-size;`);
     top.className = 'owp-top';
     const title = el('div', 'font-weight:700;font-size:14px;color:#7dd3fc;display:flex;align-items:center;gap:8px;white-space:nowrap;');
     title.append(icon('pencil', 18), document.createTextNode(t('planTitle')));
@@ -440,17 +433,15 @@ export class PlanEditor {
     ].join(';'));
     this.stage.append(this.hintEl, zoom, this.bubble);
     body.append(this.rail, this.stage);
-    this.panel.append(body);
+    this.panel.append(top, body);
 
-    this.side = el('div', [
-      'position:absolute', 'right:0', 'top:0', 'bottom:0', `width:${PANEL_W}px`, 'display:none', 'flex-direction:column',
-      `background:${C.chrome}`, `border-left:1px solid ${C.line}`, 'pointer-events:auto', 'overflow-y:auto', 'box-sizing:border-box',
+    // En mode 3D, le plan s'efface : une petite barre permet d'y revenir.
+    this.floating = el('div', [
+      'position:absolute', 'left:12px', 'top:12px', 'display:none', 'gap:8px', 'align-items:center', 'pointer-events:auto',
+      `background:${C.chrome}`, 'padding:6px', 'border-radius:12px', 'box-shadow:0 8px 24px rgba(0,0,0,0.4)',
     ].join(';'));
-    this.side.dataset.owPlanSide = '';
 
-    const main = el('div', 'flex:1;position:relative;min-height:0;');
-    main.append(this.panel, this.side);
-    this.root.append(top, main);
+    this.root.append(this.panel, this.floating);
     opts.container.append(this.root);
 
     this.buildModeBar();
@@ -461,20 +452,17 @@ export class PlanEditor {
     window.addEventListener('keydown', this.onKey, true);
     let fitted = false;
     this.resize = new ResizeObserver(() => {
-      // D'abord la place de chacun : en mode 3D le dessin est caché, mais le
-      // panneau de droite doit suivre la largeur lui aussi.
-      this.layout();
       const r = this.svg.getBoundingClientRect();
       if (!r.width || !r.height) return;
       if (!fitted) { fitted = true; this.fit(); }
       this.render();
+      this.layout();
       this.placeFloorBar();
     });
     this.resize.observe(this.root);
     this.setMode(this.plan.walls.length ? 'split' : 'plan');
     this.renderFloorBar();
     this.refresh();
-    this.started = true;
   }
 
   // ── Cycle de vie ─────────────────────────────────────────────────────────
@@ -493,35 +481,11 @@ export class PlanEditor {
     const total = this.root.getBoundingClientRect().width;
     // Sur un téléphone, plan et 3D côte à côte seraient trop étroits.
     if (this.mode === 'split' && total < 700) { this.mode = 'plan'; this.buildModeBar(); }
-    // Le panneau de droite tient à côté du plan quand il reste de quoi dessiner ;
-    // sinon les réglages redeviennent une bulle sur le dessin (téléphone).
-    const docked = total >= (this.mode === 'split' ? 1100 : 760);
-    const sideW = docked ? PANEL_W : 0;
-    const w = this.mode === 'plan' ? total - sideW
-      : this.mode === 'split' ? Math.round((total - sideW) * (total < 900 ? 0.6 : 0.55)) : 0;
+    const w = this.mode === 'plan' ? total : this.mode === 'split' ? Math.round(total * (total < 900 ? 0.6 : 0.55)) : 0;
     this.panel.style.width = `${w}px`;
     this.panel.style.display = this.mode === '3d' ? 'none' : 'flex';
-    this.dock(docked);
-    this.opts.onLayout(this.mode === 'plan' ? total : w, this.mode === 'plan' ? 0 : sideW);
-  }
-
-  /** Les réglages dans le panneau de droite, ou en bulle sur le dessin. */
-  private dock(docked: boolean) {
-    if (this.docked === docked) return;
-    this.docked = docked;
-    this.side.style.display = docked ? 'flex' : 'none';
-    if (docked) {
-      this.bubble.style.cssText = 'padding:14px 14px 20px;font-size:12.5px;box-sizing:border-box;';
-      this.side.append(this.bubble);
-    } else {
-      this.bubble.style.cssText = [
-        'position:absolute', 'top:12px', 'right:12px', 'width:250px', 'max-height:calc(100% - 24px)', 'overflow-y:auto',
-        `background:${C.chrome}`, 'border-radius:14px', 'box-shadow:0 10px 30px rgba(0,0,0,0.28)', 'padding:14px',
-        'font-size:12.5px', 'box-sizing:border-box',
-      ].join(';');
-      this.stage.append(this.bubble);
-    }
-    if (this.started) { this.renderBubble(); this.renderEmpty(); this.placeFloorBar(); }
+    this.floating.style.display = this.mode === '3d' ? 'flex' : 'none';
+    this.opts.onLayout(this.mode === 'plan' ? total : w);
   }
 
   private setMode(mode: ViewMode) {
@@ -685,6 +649,12 @@ export class PlanEditor {
       b.addEventListener('click', () => this.setMode(mode));
       this.modeBar.append(b);
     }
+    // Barre flottante du mode 3D.
+    this.floating.innerHTML = '';
+    this.floating.append(
+      this.pill(t('planBackToPlan'), () => this.setMode('split'), false, 'pencil'),
+      this.pill(t('planDone'), () => this.close(), true, 'check'),
+    );
   }
 
   private buildRail() {
@@ -2293,7 +2263,7 @@ export class PlanEditor {
       this.swatches(label, kind === 'wood' ? WOOD : FABRIC, it.colors?.[tint], (col) => { it.colors = { ...it.colors, [tint]: col }; });
     }
     if (c?.light) {
-      this.bubble.append(el('div', `font-size:12px;font-weight:600;color:${C.muted};margin:10px 0 6px;`, t('planLampEntity')));
+      this.bubble.append(el('div', 'color:#cbd5e1;margin:8px 0 6px;', t('planLampEntity')));
       const row = el('div', 'display:flex;gap:6px;align-items:center;margin-bottom:6px;');
       const label = it.entity ? (this.opts.entityLabel?.(it.entity) ?? it.entity) : t('planLampNone');
       const pick = el('button', `flex:1;min-width:0;display:flex;align-items:center;gap:8px;text-align:left;background:${C.chrome2};border:1px solid rgba(255,255,255,0.14);border-radius:9px;color:${it.entity ? '#fff' : C.muted};padding:8px 10px;font-size:13px;font-family:${FONT};cursor:pointer;`);
@@ -2319,8 +2289,7 @@ export class PlanEditor {
   private renderEmpty() {
     const empty = !this.plan.walls.length && !(this.plan.items ?? []).length && this.tool === 'select';
     if (!empty) { this.emptyState?.remove(); this.emptyState = null; this.bubble.style.display = ''; this.hintEl.style.display = ''; return; }
-    // Dans le panneau de droite, « Mon logement » reste : l'image à décalquer et l'import y sont.
-    this.bubble.style.display = this.docked ? '' : 'none';
+    this.bubble.style.display = 'none';
     this.hintEl.style.display = 'none';
     if (this.emptyState) return;
     const box = el('div', 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;overflow:auto;');
@@ -2379,7 +2348,7 @@ export class PlanEditor {
   // ── Réglages de ce qui est sélectionné ───────────────────────────────────
 
   private heading(text: string, iconName?: string) {
-    const h = el('div', 'display:flex;align-items:center;gap:8px;font-size:15px;font-weight:700;color:#fff;margin-bottom:12px;');
+    const h = el('div', 'display:flex;align-items:center;gap:8px;font-size:14px;font-weight:700;color:#fff;margin-bottom:12px;');
     if (iconName) h.append(icon(iconName, 20));
     h.append(document.createTextNode(text));
     this.bubble.append(h);
@@ -2392,7 +2361,7 @@ export class PlanEditor {
   /** Une ligne « libellé ... valeur », avec − et + pour les doigts. */
   private stepper(label: string, value: number, step: number, min: number, max: number, apply: (v: number) => void) {
     const row = el('div', 'display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:9px;');
-    row.append(el('span', `font-size:12px;font-weight:600;color:${C.muted};`, label));
+    row.append(el('span', 'color:#cbd5e1;', label));
     const ctl = el('div', `display:flex;align-items:center;background:${C.chrome2};border:1px solid rgba(255,255,255,0.1);border-radius:9px;overflow:hidden;`);
     const btn = (txt: string, dv: number) => {
       const b = el('button', `width:28px;height:30px;border:none;background:transparent;color:#e2e8f0;font-size:16px;cursor:pointer;font-family:${FONT};`, txt);
@@ -2417,11 +2386,11 @@ export class PlanEditor {
 
   private choice<T extends string>(label: string, options: [T, string][], value: T, apply: (v: T) => void) {
     const row = el('div', 'margin-bottom:10px;');
-    row.append(el('div', `font-size:12px;font-weight:600;color:${C.muted};margin-bottom:6px;`, label));
-    const wrap = el('div', `display:flex;background:${C.chrome2};border:1px solid ${C.line};border-radius:10px;padding:3px;gap:3px;`);
+    row.append(el('div', 'color:#cbd5e1;margin-bottom:6px;', label));
+    const wrap = el('div', `display:flex;background:${C.chrome2};border-radius:9px;padding:3px;gap:2px;`);
     for (const [v, text] of options) {
       const on = v === value;
-      const b = el('button', `flex:1;padding:7px 4px;border-radius:8px;border:none;cursor:pointer;font-size:12px;font-family:${FONT};font-weight:600;${on ? `background:${C.chrome};color:${C.text};box-shadow:0 1px 3px rgba(0,0,0,0.3)` : `background:transparent;color:${C.muted}`}`, text);
+      const b = el('button', `flex:1;padding:6px 4px;border-radius:7px;border:none;cursor:pointer;font-size:12px;font-family:${FONT};font-weight:600;${on ? 'background:#0ea5e9;color:#fff' : `background:transparent;color:${C.muted}`}`, text);
       b.addEventListener('click', () => { if (on) return; this.commit(); apply(v); this.changed(); });
       wrap.append(b);
     }
@@ -2490,8 +2459,8 @@ export class PlanEditor {
 
   private renderBubble() {
     this.bubble.innerHTML = '';
-    this.bubble.style.width = this.docked ? 'auto' : '250px';
-    this.bubble.style.padding = this.docked ? '14px 14px 20px' : '14px';
+    this.bubble.style.width = '250px';
+    this.bubble.style.padding = '14px';
     const sel = this.sel;
     if (sel?.type === 'room') return this.roomBubble(sel.id);
     if (sel?.type === 'wall') return this.wallBubble(sel.id);
@@ -2644,7 +2613,7 @@ export class PlanEditor {
   }
 
   private generalBubble() {
-    if (!this.showSettings && !this.docked) {
+    if (!this.showSettings) {
       // Replié : un simple bouton, pour laisser tout le plan visible.
       this.bubble.style.width = 'auto';
       this.bubble.style.padding = '4px';
@@ -2654,11 +2623,9 @@ export class PlanEditor {
       return;
     }
     this.heading(t('planSettings'), 'sparkle');
-    if (!this.docked) {
-      const close = this.iconButton('close', '', () => { this.showSettings = false; this.renderBubble(); });
-      close.style.cssText += ';position:absolute;top:10px;right:10px;width:28px;height:28px;';
-      this.bubble.append(close);
-    }
+    const close = this.iconButton('close', '', () => { this.showSettings = false; this.renderBubble(); });
+    close.style.cssText += ';position:absolute;top:10px;right:10px;width:28px;height:28px;';
+    this.bubble.append(close);
     this.stepper(t('planWallHeight'), this.plan.wallHeight, 0.1, 1, 10, (v) => { this.plan.wallHeight = v; });
     this.stepper(t('planWallThickness'), this.plan.wallThickness, 0.01, 0.03, 1, (v) => { this.plan.wallThickness = v; });
     this.swatches(t('planOutsideColor'), FACADE_COLORS, this.plan.outside ?? PLAN_COLORS.outside, (c) => { this.plan.outside = c; });
@@ -2745,8 +2712,8 @@ export class PlanEditor {
 
   /** Pastilles de couleur. */
   private swatches(label: string, colors: readonly string[], value: string | undefined, apply: (c: string) => void, direct = false) {
-    if (label) this.bubble.append(el('div', `font-size:12px;font-weight:600;color:${C.muted};margin:10px 0 6px;`, label));
-    const grid = el('div', 'display:grid;grid-template-columns:repeat(6,minmax(0,40px));gap:6px;margin-bottom:10px;');
+    if (label) this.bubble.append(el('div', 'color:#cbd5e1;margin:8px 0 6px;', label));
+    const grid = el('div', 'display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-bottom:10px;');
     for (const c of colors) {
       const on = value?.toLowerCase() === c.toLowerCase();
       const b = el('button', `aspect-ratio:1;border-radius:8px;cursor:pointer;background:${c};border:2px solid ${on ? '#38bdf8' : 'rgba(255,255,255,0.12)'};box-shadow:${on ? '0 0 0 2px #0b1220 inset' : 'none'};`);
@@ -2758,11 +2725,11 @@ export class PlanEditor {
 
   /** Une rangée de choix en pastilles, qui passe à la ligne. */
   private chips<T extends string>(label: string, options: [T, string][], value: T, apply: (v: T) => void, direct = false) {
-    if (label) this.bubble.append(el('div', `font-size:12px;font-weight:600;color:${C.muted};margin:10px 0 6px;`, label));
+    if (label) this.bubble.append(el('div', 'color:#cbd5e1;margin:8px 0 6px;', label));
     const wrap = el('div', 'display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px;');
     for (const [v, text] of options) {
       const on = v === value;
-      const b = el('button', `padding:5px 10px;border-radius:999px;cursor:pointer;font-size:12px;font-family:${FONT};font-weight:600;border:1px solid ${on ? 'color-mix(in srgb, #0ea5e9 55%, transparent)' : C.line};background:${on ? 'color-mix(in srgb, #0ea5e9 16%, transparent)' : C.chrome2};color:${on ? C.text : C.muted};`, text);
+      const b = el('button', `padding:5px 10px;border-radius:999px;cursor:pointer;font-size:12px;font-family:${FONT};font-weight:600;border:1px solid ${on ? '#38bdf8' : 'rgba(255,255,255,0.12)'};background:${on ? '#0ea5e9' : 'transparent'};color:${on ? '#fff' : '#cbd5e1'};`, text);
       b.addEventListener('click', () => { if (on) return; if (direct) { apply(v); return; } this.commit(); apply(v); this.changed(); });
       wrap.append(b);
     }
