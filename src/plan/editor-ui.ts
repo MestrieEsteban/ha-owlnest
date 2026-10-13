@@ -2453,9 +2453,32 @@ export class PlanEditor {
       ['infinite', t('cfgGroundInfinite')], ['none', t('cfgGroundNone')],
     ], style, (v) => set({ ground_style: v }));
     if (style !== 'none') {
-      this.swatches(t('cfgGroundColor'), GROUND_COLORS, cur.ground_color ?? '#4a6741', (c) => set({ ground_color: c }), true);
+      const color = cur.ground_color ?? '#4a6741';
+      this.swatches(t('cfgGroundColor'), GROUND_COLORS, color, (c) => set({ ground_color: c }), true);
+      // La sienne : un sélecteur de couleur habillé en pastille arc-en-ciel, à la suite des autres.
+      const own = !GROUND_COLORS.some((c) => c.toLowerCase() === color.toLowerCase());
+      const custom = el('label', `position:relative;aspect-ratio:1;border-radius:8px;cursor:pointer;overflow:hidden;background:conic-gradient(#f87171,#fbbf24,#34d399,#38bdf8,#a78bfa,#f87171);border:2px solid ${own ? '#38bdf8' : 'rgba(255,255,255,0.12)'};box-sizing:border-box;`);
+      custom.title = t('cfgCustomColor');
+      const input = el('input', 'position:absolute;inset:0;opacity:0;cursor:pointer;');
+      input.type = 'color';
+      input.value = /^#[0-9a-f]{6}$/i.test(color) ? color : '#4a6741';
+      // Pendant qu'on fait glisser, la 3D suit ; le panneau ne se redessine qu'à la fin (sinon le sélecteur se ferme).
+      input.addEventListener('input', () => api.set({ ground_color: input.value }));
+      input.addEventListener('change', () => set({ ground_color: input.value }));
+      custom.append(input);
+      this.bubble.lastElementChild?.append(custom);
     }
-    pick(t('cfgTransparent'), [['no', t('planPlinthNo')], ['yes', t('planYes')]],
+    if (style !== 'none' && style !== 'infinite') {
+      const scale = cur.ground_scale ?? 1;
+      const row = el('div', 'display:flex;align-items:center;gap:10px;margin-bottom:10px;');
+      const range = el('input', 'flex:1;min-width:0;');
+      range.type = 'range'; range.min = '0.5'; range.max = '3'; range.step = '0.1'; range.value = String(scale);
+      const out = el('span', `min-width:34px;text-align:right;font-variant-numeric:tabular-nums;color:${C.text};`, `×${scale.toFixed(1)}`);
+      range.addEventListener('input', () => { out.textContent = `×${parseFloat(range.value).toFixed(1)}`; api.set({ ground_scale: parseFloat(range.value) }); });
+      row.append(range, out);
+      this.bubble.append(el('div', `font-size:12px;font-weight:600;color:${C.muted};margin:10px 0 6px;`, t('cfgGroundScale')), row);
+    }
+    pick(t('cfgTransparent'), [['no', t('planNo')], ['yes', t('planYes')]],
       cur.transparent_background ? 'yes' : 'no', (v) => set({ transparent_background: v === 'yes' }));
   }
 
