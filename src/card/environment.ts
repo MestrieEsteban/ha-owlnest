@@ -4,7 +4,11 @@ import type { CardConfig, Hass, SunMode, GroundStyle } from '../types';
 import { qualityFromConfig } from '../quality';
 import { modelScale } from '../scale';
 import { buildGarden } from './garden';
-import { SkyDome, skyHorizon, skyUnder, skyPhase, skyLook } from './sky-paint';
+import { SkyDome, SkyClouds, skyHorizon, skyUnder, skyPhase, skyLook } from './sky-paint';
+
+/** Sol infini, en multiples de la plus grande dimension de la maison : plein jusqu'ici, puis il s'efface jusque-là. */
+const INFINITE_SOLID = 8;
+const INFINITE_EDGE = 15;
 
 let grassCache: THREE.Texture | null | undefined;
 
@@ -409,6 +413,8 @@ export class EnvironmentController {
         this._setFogDensity(baseDensity * 1.9);
         break;
     }
+    // Le ciel peint porte déjà la météo (gris quand il pleut) : la brume garde sa couleur d'horizon.
+    if (fog && this._skyFog) fog.color.copy(this._skyFog);
   }
 
   // ── Particle creation dispatch ─────────────────────────────────────────────
@@ -799,6 +805,9 @@ export class EnvironmentController {
 
   private _lastSky: [number, number] = [60, 180];
   private _dome: SkyDome | null = null;
+  /** Sous un ciel peint, la brume a la couleur de son horizon, quelle que soit la météo : le sol s'y fond. */
+  private _skyFog: THREE.Color | null = null;
+  private _clouds: SkyClouds | null = null;
 
   /** Le style de ciel a changé : on le repose, au même soleil. */
   refreshSky() {
@@ -818,7 +827,8 @@ export class EnvironmentController {
     const transparentBg = this.getConfig()?.rendering?.transparent_background === true;
     const style = this.getConfig()?.rendering?.sky_style ?? 'auto';
     const painted = style !== 'simple' && !transparentBg;
-    if (!painted && this._dome) { this._dome.dispose(); this._dome = null; }
+    if (!painted) this._skyFog = null;
+    if (!painted && this._dome) { this._dome.dispose(); this._dome = null; this._clouds?.dispose(); this._clouds = null; }
     if (transparentBg) {
       this.sky.visible = false;
     } else if (style !== 'simple') {
@@ -828,8 +838,11 @@ export class EnvironmentController {
       this.sky.visible = false;
       if (!this._dome) { this._dome = new SkyDome(); this.scene.add(this._dome.mesh); }
       this._dome.set(look, phase);
+      if (!this._clouds) { this._clouds = new SkyClouds(); this.scene.add(this._clouds.mesh); }
+      this._clouds.set(look, phase);
       this.scene.background = skyUnder(look, phase);
-      if (this.scene.fog) (this.scene.fog as THREE.FogExp2).color.copy(skyHorizon(look, phase));
+      this._skyFog = skyHorizon(look, phase, this.getConfig()?.rendering?.exposure ?? 1.4);
+      if (this.scene.fog) (this.scene.fog as THREE.FogExp2).color.copy(this._skyFog);
     } else if (elevation < -5) {
       this.sky.visible = false;
       this.scene.background = new THREE.Color(0x05080f);
@@ -1035,8 +1048,9 @@ export class EnvironmentController {
         break;
       }
       case 'infinite': {
-        const spread = maxDim * 30;
-        geo = new THREE.PlaneGeometry(spread, spread);
+        // Un disque plein, puis une couronne qui s'efface (ajoutée plus bas) :
+        // le sol se fond dans le ciel au lieu de s'arrêter net sur une arête.
+        geo = new THREE.CircleGeometry(maxDim * INFINITE_SOLID, 64);
         reach = maxDim * 2.5;
         break;
       }
@@ -1064,6 +1078,30 @@ export class EnvironmentController {
     mesh.rotation.x = -Math.PI / 2;
     mesh.position.y = groundY;
     mesh.receiveShadow = true;
+    if (style === 'infinite') {
+      // La couronne : opaque au bord du disque, transparente au loin. Derrière
+      // elle, on voit le bas du ciel peint, de la couleur de l'horizon.
+      const ring = new THREE.RingGeometry(maxDim * INFINITE_SOLID, maxDim * INFINITE_EDGE, 64, 1);
+      const pos = ring.getAttribute('position');
+      const rgba = new Float32Array(pos.count * 4);
+      const uv = ring.getAttribute('uv') as THREE.BufferAttribute;
+      const mid = maxDim * (INFINITE_SOLID + INFINITE_EDGE) / 2;
+      const offset = (maxDim * INFINITE_SOLID) / metres;
+      for (let i = 0; i < pos.count; i++) {
+        const far = Math.hypot(pos.getX(i), pos.getY(i)) > mid;
+        rgba.set([1, 1, 1, far ? 0 : 1], i * 4);
+        // Le même grain que le disque, sans décalage au raccord.
+        uv.setXY(i, pos.getX(i) / metres + offset, pos.getY(i) / metres + offset);
+      }
+      ring.setAttribute('color', new THREE.BufferAttribute(rgba, 4));
+      const fade = mat.clone();
+      fade.vertexColors = true;
+      fade.transparent = true;
+      fade.depthWrite = false;
+      const edge = new THREE.Mesh(ring, fade);
+      edge.receiveShadow = false;
+      mesh.add(edge);
+    }
     this.scene.add(mesh);
     this._groundMesh = mesh;
     this._plantGarden(originalBox, groundY, reach, config);
@@ -1079,11 +1117,8 @@ export class EnvironmentController {
         mat.needsUpdate = true;
       }
     };
-    if (this._groundMesh instanceof THREE.Group) {
-      this._groundMesh.traverse(applyColor);
-    } else {
-      applyColor(this._groundMesh);
-    }
+    // Le sol peut porter d'autres mailles (socle, couronne du sol infini).
+    this._groundMesh.traverse(applyColor);
   }
 
   removeGround() {
@@ -1108,11 +1143,7 @@ export class EnvironmentController {
           else (mat as THREE.Material).dispose();
         }
       };
-      if (this._groundMesh instanceof THREE.Group) {
-        this._groundMesh.traverse(dispose);
-      } else {
-        dispose(this._groundMesh);
-      }
+      this._groundMesh.traverse(dispose);
       this._groundMesh = null;
     }
   }

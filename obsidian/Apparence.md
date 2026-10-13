@@ -52,3 +52,22 @@ Ces réglages valent pour tous les niveaux : ils vivent sur le rez-de-chaussée.
 - `simple` : l'ancien dégradé physique de three.js.
 
 Pièges rencontrés : `scene.background` avec une image équirectangulaire sortait flou (three la convertit en cube de 512) et délavé (elle passe par l'exposition). D'où le dôme à part. La brume reprend la couleur de l'horizon, atténuée de jour puisqu'elle, passe par l'exposition.
+
+## Ciel : ce qui a été retenu (13 octobre 2026, suite)
+
+Trois essais, un seul gardé :
+
+1. **Nuages peints sur le canevas** (taches floues) : faisaient faux. Abandonné.
+2. **Photos de ciel** (panoramas Poly Haven, CC0) : très réalistes, donc en décalage complet avec une maison stylisée et des arbres en facettes. Abandonné sur l'avis d'Esteban, rien n'en reste dans le dépôt.
+3. **Nuages en volumes à facettes** (`SkyClouds` dans `card/sky-paint.ts`) : le même langage que le jardin et la maison. Retenu.
+
+Les nuages : un seul maillage instancié (un appel de dessin), des boules à facettes dont l'ombrage est figé dans les couleurs des sommets, sans calcul de lumière. Ils suivent la caméra comme le dôme, donc sans parallaxe. Ils écrivent leur profondeur pour se recouvrir correctement entre eux, puis l'effacent (`renderer.clearDepth()` dans `onAfterRender`) pour que rien de la scène ne passe derrière. Ils sont placés bas (2° à 24° au-dessus de l'horizon) : une carte se regarde de haut, on ne voit que cette bande. Immobiles exprès : les faire dériver obligerait à redessiner en continu, ce qui coûte sur une tablette.
+
+La nuit claire reste un fond sombre étoilé peint.
+
+**Raccord sol et ciel.** Le ciel s'affiche tel que peint, alors que la brume (donc le sol au loin) passe par l'exposition et le rendu ACES : les deux ne se rejoignaient pas, d'où une coupure nette à l'horizon en sol infini, surtout la nuit. Deux corrections :
+
+- le sol infini est un disque plein suivi d'une couronne qui s'efface (alpha par sommet) : il se fond dans le bas du ciel au lieu de finir sur une arête ;
+- `untoned()` calcule la couleur de brume qui, une fois rendue, donne exactement celle de l'horizon. Pour les teintes claires ou vives (jour, couchant) le calcul demande des valeurs très fortes qui font une bande criarde à mi-distance : on retombe alors sur une simple atténuation.
+
+Sous un ciel peint, la brume garde la couleur de l'horizon quelle que soit la météo (`_skyFog`) : le ciel porte déjà le temps qu'il fait.

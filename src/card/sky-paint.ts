@@ -73,10 +73,41 @@ export function skyPhase(elevation: number): SkyPhase {
 }
 
 /** La couleur de la brume : celle de l'horizon, pour que le sol lointain s'y fonde. */
-export function skyHorizon(style: SkyLook, phase: SkyPhase): THREE.Color {
+export function skyHorizon(style: SkyLook, phase: SkyPhase, exposure = 1.4): THREE.Color {
   const hex = style === 'studio' ? STUDIO.low : pal(style, phase).low;
-  // Le ciel s'affiche tel que peint, la brume passe par l'exposition du rendu : on la retient d'autant.
-  return new THREE.Color(hex).multiplyScalar(style === 'studio' || phase === 'night' ? 1 : phase === 'day' ? 0.6 : 0.7);
+  return untoned(new THREE.Color(hex), exposure);
+}
+
+/** Le rendu ACES de three.js, tel qu'il l'applique à tout ce qui n'est pas le ciel. */
+function aces(r: number, g: number, b: number, exposure: number): [number, number, number] {
+  const k = exposure / 0.6;
+  r *= k; g *= k; b *= k;
+  const fit = (v: number) => (v * (v + 0.0245786) - 0.000090537) / (v * (0.983729 * v + 0.432951) + 0.238081);
+  const x = fit(0.59719 * r + 0.35458 * g + 0.04823 * b);
+  const y = fit(0.076 * r + 0.90834 * g + 0.01566 * b);
+  const z = fit(0.0284 * r + 0.13383 * g + 0.83777 * b);
+  const sat = (v: number) => Math.min(1, Math.max(0, v));
+  return [sat(1.60475 * x - 0.53108 * y - 0.07367 * z), sat(-0.10208 * x + 1.10813 * y - 0.00605 * z), sat(-0.00327 * x - 0.07276 * y + 1.07602 * z)];
+}
+
+/**
+ * La couleur à donner à la brume pour qu'elle s'affiche exactement comme
+ * `shown`. Le ciel est dessiné tel que peint, mais la brume (donc le sol au
+ * loin) passe par l'exposition et le rendu ACES : sans cette correction les
+ * deux ne se rejoignent pas, et on voit une coupure nette à l'horizon, surtout
+ * la nuit. Le rendu n'a pas d'inverse simple : on l'approche en quelques pas.
+ */
+export function untoned(shown: THREE.Color, exposure: number): THREE.Color {
+  const want = [shown.r, shown.g, shown.b];
+  const x = [...want];
+  for (let i = 0; i < 40; i++) {
+    const got = aces(x[0], x[1], x[2], exposure);
+    for (let c = 0; c < 3; c++) x[c] = Math.max(0, x[c] * ((want[c] + 1e-4) / (got[c] + 1e-4)));
+  }
+  // Une teinte claire ou vive demande des valeurs très fortes : mêlées au sol à
+  // mi-distance, elles donnent une bande criarde (bleu de jour, orange au couchant). On retombe alors sur une simple atténuation.
+  if (Math.max(x[0], x[1], x[2]) > 0.6) return shown.clone().multiplyScalar(0.6);
+  return new THREE.Color().setRGB(x[0], x[1], x[2]);
 }
 
 /** La couleur sous l'horizon, là où ni sol ni brume ne couvrent. */
@@ -122,37 +153,6 @@ export function paintSky(style: SkyLook, phase: SkyPhase, canvas: HTMLCanvasElem
     }
   }
 
-  if (style === 'clear') return;
-  const c = pal(style, phase);
-  const heavy = style === 'overcast';
-  // Une touffe : un rond flou, dessiné aussi de l'autre côté du raccord gauche-droite.
-  const puff = (x: number, y: number, r: number, rgb: string, alpha: number) => {
-    for (const dx of [-W, 0, W]) {
-      if (x + dx + r < 0 || x + dx - r > W) continue;
-      const grad = g.createRadialGradient(x + dx, y, 0, x + dx, y, r);
-      grad.addColorStop(0, `rgba(${rgb},${alpha})`);
-      grad.addColorStop(0.55, `rgba(${rgb},${alpha * 0.55})`);
-      grad.addColorStop(1, `rgba(${rgb},0)`);
-      g.fillStyle = grad;
-      g.fillRect(x + dx - r, y - r, r * 2, r * 2);
-    }
-  };
-  const strength = (phase === 'night' ? 0.4 : 1) * (heavy ? 1.15 : 1);
-  for (let i = 0; i < (heavy ? 170 : 64); i++) {
-    // Les nuages se tiennent entre l'horizon et 45° de hauteur, plus petits au loin : plus haut, la projection les étirerait.
-    const up = heavy ? 0.02 + rand() * 0.62 : 0.03 + Math.pow(rand(), 1.3) * 0.47;
-    const cy = horizon - up * horizon * 0.95;
-    const cx = rand() * W;
-    const size = (7 + up * 34 + rand() * 12) * K * (heavy ? 2 : 1);
-    const n = 9 + Math.floor(rand() * 8);
-    g.save();
-    g.translate(0, cy);
-    g.scale(1, 0.38);
-    // Le dessous d'abord, plus sombre, puis le dessus éclairé.
-    for (let k = 0; k < n; k++) puff(cx + (rand() - 0.5) * size * 3.2, size * 0.55 + (rand() - 0.5) * size * 0.4, size * (0.55 + rand() * 0.45), c.shade, 0.36 * strength);
-    for (let k = 0; k < n; k++) puff(cx + (rand() - 0.5) * size * 3, (rand() - 0.5) * size * 0.7, size * (0.4 + rand() * 0.5), c.cloud, 0.62 * strength);
-    g.restore();
-  }
 }
 
 const cache = new Map<string, THREE.Texture>();
@@ -211,5 +211,101 @@ export class SkyDome {
     this.mesh.removeFromParent();
     this.mesh.geometry.dispose();
     this.mesh.material.dispose();
+  }
+}
+
+// ── Nuages ──────────────────────────────────────────────────────────────────
+
+/** Combien de nuages, leur taille, et leur teinte selon le moment. */
+const CLOUDS: Record<Exclude<SkyLook, 'studio'>, { count: number; size: number; tint: Record<SkyPhase, number> }> = {
+  clear: { count: 12, size: 0.8, tint: { day: 0xffffff, dusk: 0xffd9c2, night: 0x232c44 } },
+  clouds: { count: 72, size: 1, tint: { day: 0xffffff, dusk: 0xffcfb4, night: 0x232c44 } },
+  overcast: { count: 54, size: 1.6, tint: { day: 0xc3c9d1, dusk: 0x8f8088, night: 0x161b27 } },
+};
+
+/**
+ * Des nuages en volumes à facettes, comme les arbres du jardin et la maison :
+ * un ciel photographié jurait avec le reste, des taches floues faisaient faux.
+ *
+ * Ils suivent la caméra comme le dôme (aucune parallaxe : ils sont « à
+ * l'infini ») et se dessinent juste après lui, avant tout le reste. Un seul
+ * maillage instancié, donc un seul appel de dessin. Leur ombrage est figé
+ * dans les couleurs des sommets (dessus clair, dessous sombre) : pas de calcul
+ * de lumière. La profondeur qu'ils écrivent pour se recouvrir correctement
+ * entre eux est effacée aussitôt, pour que rien de la scène ne passe derrière.
+ */
+export class SkyClouds {
+  readonly mesh: THREE.InstancedMesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
+  private key = '';
+
+  constructor() {
+    // Une boule à facettes ; chaque face porte une seule teinte, selon qu'elle regarde le ciel ou le sol.
+    const geo = new THREE.IcosahedronGeometry(1, 1).toNonIndexed();
+    geo.computeVertexNormals();
+    const n = geo.getAttribute('normal');
+    const col = new Float32Array(n.count * 3);
+    for (let f = 0; f < n.count; f += 3) {
+      const up = (n.getY(f) + n.getY(f + 1) + n.getY(f + 2)) / 3;
+      const side = (n.getX(f) + n.getX(f + 1) + n.getX(f + 2)) / 3;
+      const v = THREE.MathUtils.clamp(0.8 + up * 0.2 + side * 0.06, 0.55, 1);
+      for (let k = 0; k < 3; k++) col.set([v, v, Math.min(1, v + 0.03)], (f + k) * 3);
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    const mat = new THREE.MeshBasicMaterial({ vertexColors: true, fog: false, toneMapped: false });
+    const mesh = new THREE.InstancedMesh(geo, mat, 72 * 8);
+    mesh.name = 'owlnest_clouds';
+    mesh.userData.owlnestHelper = true;
+    mesh.renderOrder = -999;
+    mesh.frustumCulled = false;
+    mesh.matrixAutoUpdate = false;
+    mesh.raycast = () => {};
+    mesh.count = 0;
+    mesh.onBeforeRender = (_r, _s, camera) => {
+      const cam = camera as THREE.PerspectiveCamera;
+      const r = (cam.near + cam.far) / 2;
+      mesh.matrixWorld.makeScale(r, r, r).copyPosition(cam.matrixWorld);
+    };
+    mesh.onAfterRender = (renderer) => renderer.clearDepth();
+    this.mesh = mesh;
+  }
+
+  set(look: SkyLook, phase: SkyPhase) {
+    if (look === 'studio') { this.mesh.count = 0; return; }
+    const cfg = CLOUDS[look];
+    this.mesh.material.color.setHex(cfg.tint[phase]);
+    if (this.key === look) return;
+    this.key = look;
+    const rand = rng(look === 'clear' ? 5 : look === 'clouds' ? 17 : 29);
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), pos = new THREE.Vector3(), scale = new THREE.Vector3();
+    const dir = new THREE.Vector3(), right = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
+    let at = 0;
+    for (let i = 0; i < cfg.count; i++) {
+      // Réparti autour de l'horizon, bas dans le ciel : une carte se regarde de haut, on ne voit que cette bande.
+      // Plus petit quand il est bas (donc loin).
+      const az = ((i + rand() * 0.7) / cfg.count) * Math.PI * 2;
+      const el = THREE.MathUtils.degToRad(look === 'overcast' ? 2 + rand() * 40 : 2 + Math.pow(rand(), 1.8) * 22);
+      dir.set(Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az));
+      right.crossVectors(up, dir).normalize();
+      const base = cfg.size * (0.026 + el * 0.11 + rand() * 0.014);
+      const puffs = 5 + Math.floor(rand() * 4);
+      for (let k = 0; k < puffs; k++) {
+        // Une rangée de boules, les plus grosses au milieu, aplatie : la silhouette d'un cumulus.
+        const t = puffs > 1 ? k / (puffs - 1) - 0.5 : 0;
+        const r = base * (1 - Math.abs(t) * 1.1) * (0.8 + rand() * 0.4);
+        pos.copy(dir).addScaledVector(right, t * base * 3.4).addScaledVector(up, r * 0.45 + (rand() - 0.5) * base * 0.25);
+        scale.set(r * 1.25, r * 0.8, r * 1.25);
+        q.setFromAxisAngle(up, rand() * Math.PI);
+        this.mesh.setMatrixAt(at++, m.compose(pos, q, scale));
+      }
+    }
+    this.mesh.count = at;
+    this.mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  dispose() {
+    this.mesh.removeFromParent();
+    this.mesh.geometry.dispose();
+    this.mesh.material.dispose();
+    this.mesh.dispose();
   }
 }
