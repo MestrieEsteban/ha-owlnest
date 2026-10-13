@@ -32,6 +32,20 @@ function isMoving(o: THREE.Object3D, root: THREE.Object3D): boolean {
   return false;
 }
 
+/** Porte-t-il quelque chose qui doit rester visible : un ouvrant, ou une maille qu'on ne fusionne pas ? */
+function carriesSomething(mesh: THREE.Object3D, merged: Set<THREE.Object3D>): boolean {
+  let found = false;
+  const visit = (o: THREE.Object3D) => {
+    for (const c of o.children) {
+      if (found || !c.visible) continue;
+      if (c.userData.owlnestPartId || c.userData.owlnestLive || ((c as THREE.Mesh).isMesh && !merged.has(c))) { found = true; return; }
+      visit(c);
+    }
+  };
+  visit(mesh);
+  return found;
+}
+
 /**
  * L'apparence d'un matériau. Un export Sweet Home 3D répète souvent le même
  * blanc ou le même bois sous des noms différents (243 matériaux pour 163
@@ -93,6 +107,20 @@ export class StaticBatch {
       if (list) list.push(mesh);
       else groups.set(key, [mesh]);
     });
+
+    // Cacher un objet cache tout ce qu'il porte. Un objet qui porte un ouvrant
+    // (son pivot est monté dessous) ou une maille restée à part garde donc sa
+    // place : sinon la porte disparaît avec lui dès qu'on quitte l'édition.
+    for (let changed = true; changed;) {
+      changed = false;
+      const kept = new Set<THREE.Object3D>();
+      for (const list of groups.values()) if (list.length >= MIN_GROUP) list.forEach((m) => kept.add(m));
+      for (const [key, list] of groups) {
+        if (list.length < MIN_GROUP) continue;
+        const free = list.filter((mesh) => !carriesSomething(mesh, kept));
+        if (free.length !== list.length) { groups.set(key, free); changed = true; }
+      }
+    }
 
     let replaced = 0;
     for (const meshes of groups.values()) {
