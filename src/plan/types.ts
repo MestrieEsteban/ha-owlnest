@@ -105,6 +105,17 @@ export interface PlanItem {
 }
 
 /** Image de plan posée sous le dessin, pour le calquer. */
+/** Un escalier droit, posé sur ce niveau : il monte jusqu'au suivant. */
+export interface PlanStair {
+  id: string;
+  /** Le milieu de l'escalier, vu de dessus. */
+  x: number;
+  y: number;
+  /** Le sens de montée, en degrés : 0 monte vers les x croissants. */
+  rotation: number;
+  width: number;
+}
+
 export interface PlanBackground {
   /** Image réduite, en data URL : elle voyage avec la scène. */
   src: string;
@@ -127,6 +138,8 @@ export interface PlanDoc {
   openings: PlanOpening[];
   /** Les meubles, absents d'un plan qui n'en a jamais eu. */
   items?: PlanItem[];
+  /** Les escaliers qui partent de ce niveau. */
+  stairs?: PlanStair[];
   /** Meubles importés par l'utilisateur, proposés dans « Mes meubles ». */
   library?: { url: string; name: string }[];
   background?: PlanBackground;

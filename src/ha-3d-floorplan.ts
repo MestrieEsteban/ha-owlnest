@@ -3628,6 +3628,8 @@ export class Ha3dFloorplan extends HTMLElement {
     // lorsqu'une lumière, le soleil ou la géométrie change.
     this.renderer.shadowMap.autoUpdate = false;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    // Les trémies d'escalier percent les sols par des plans de coupe propres à leurs matériaux.
+    this.renderer.localClippingEnabled = true;
     this.renderer.toneMappingExposure = rl.exposure ?? 1.4;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     if (transparentBg) this.renderer.setClearColor(0x000000, 0);

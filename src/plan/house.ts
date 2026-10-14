@@ -22,6 +22,7 @@ import { faces, isBoundary, wallEnds, wallLength, thicknessOf } from './graph';
 import { wallFootprints } from './footprint';
 import { type Pt, add, mul, norm, perp, sub, clipAlong, pointInPolygon } from './geometry';
 import { hipRoof, planOutline, offset } from './roof';
+import { buildStair, buildStairWell, cutStairHoles, stairRise } from './stairs';
 
 export const ROOF_NAME = 'plan_roof';
 /** Les couvertures proposées : tuile, ardoise, zinc. */
@@ -269,6 +270,30 @@ export function buildHouse(plan: PlanDoc, active: number): BuiltHouse {
   for (let k = 0; k < top; k++) {
     const slab = roofSlab(views[k].doc, views[k + 1].elevation - views[k].elevation, views[k].id, footprintOf(views[k + 1].doc));
     if (slab) groups[k].add(slab);
+  }
+  // Les escaliers : chacun monte jusqu'au niveau suivant (s'il existe), dont
+  // le sol est percé au-dessus de lui, avec un garde-corps autour du trou.
+  for (let k = 0; k <= top; k++) {
+    const stairs = views[k].doc.stairs ?? [];
+    if (!stairs.length) continue;
+    const rise = views[k + 1] ? views[k + 1].elevation - views[k].elevation : stairRise(views[k].doc);
+    for (const st of stairs) groups[k].add(buildStair(st, rise));
+    if (k >= top) continue;
+    // Le sol de l'étage, son épaisseur, et la dalle du niveau de départ.
+    const own = (g: THREE.Object3D, keep: (name: string) => boolean) => {
+      const out: THREE.Mesh[] = [];
+      const visit = (o: THREE.Object3D) => {
+        if (o !== g && o.name.startsWith(FLOOR_PREFIX)) return;
+        if ((o as THREE.Mesh).isMesh && keep(o.name)) out.push(o as THREE.Mesh);
+        o.children.forEach(visit);
+      };
+      visit(g);
+      return out;
+    };
+    const above = own(groups[k + 1], (n) => n.startsWith('room_') || n.startsWith(`plan_under_${views[k + 1].id}_`));
+    const below = own(groups[k], (n) => n.startsWith(`plan_slab_${views[k].id}_`) && !n.includes('_wall_'));
+    cutStairHoles([...above, ...below], stairs, rise);
+    for (const st of stairs) groups[k + 1].add(buildStairWell(st, rise));
   }
   root.updateMatrixWorld(true);
   // Un rez-de-chaussée vide (effacé, les étages gardés) : on centre sur ce qui existe.

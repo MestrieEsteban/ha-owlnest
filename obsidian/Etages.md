@@ -66,3 +66,12 @@ Ajoutés le 10 octobre 2026. Voir [[Owlnest 2.0]], [[Import sh3d]], [[Vues des m
 - Escaliers, trémie dans la dalle, toit.
 - Choisir l'étage dans l'éditeur de la maison (Appareils, Ouvrants) : aujourd'hui il suit l'étage montré par la carte.
 - Rien n'a été essayé sur le vrai Home Assistant.
+
+## Escaliers (14 octobre 2026)
+
+Outil « Escalier » dans le plan (raccourci H). Un escalier droit se pose sur un niveau (`doc.stairs`, type `PlanStair` : milieu, sens de montée en degrés, largeur) et monte jusqu'au niveau suivant. Code : `plan/stairs.ts`, branché dans `buildHouse` (`plan/house.ts`).
+
+- **Pas de longueur à régler** : elle découle de la hauteur à monter, avec des marches de 20 cm au plus et 25 cm de profondeur (14 marches, 3,5 m pour 2,7 m).
+- **La trémie ne découpe aucune géométrie.** Les sols au-dessus de l'escalier (sol de l'étage, son épaisseur, dalle du niveau de départ) reçoivent une copie de leur matériau avec quatre plans de coupe en `clipIntersection` : seul ce qui est à l'intérieur des quatre disparaît. Les plans sont recalés sur la maille à chaque image (la carte déplace la maison pour la centrer). D'où `renderer.localClippingEnabled = true` dans la carte, et `owlnestLive` sur ces mailles pour qu'elles restent hors des regroupements d'objets immobiles.
+- **À l'étage** : l'épaisseur de dalle autour du trou et un garde-corps sur les trois côtés où l'on ne monte pas. Dans le plan de l'étage, la trémie de l'escalier du dessous est dessinée en pointillés barrés.
+- **Limites** : escalier droit seulement (pas de quart tournant ni de colimaçon) ; un escalier posé contre un mur ou à cheval sur lui n'est pas corrigé ; le dernier niveau peut porter un escalier, qui monte alors de la hauteur d'un étage dans le vide.

@@ -15,8 +15,9 @@
 import { t, getLang, type StringKey } from '../i18n';
 import { icon } from '../ui/icons';
 import { Tour, type TourStep } from '../ui/tour';
-import type { PlanDoc, PlanOpening, OpeningKind, PlanWall, FloorMaterial, FacadeMaterial, DoorStyle, WindowStyle, PlanItem } from './types';
+import type { PlanDoc, PlanOpening, OpeningKind, PlanWall, FloorMaterial, FacadeMaterial, DoorStyle, WindowStyle, PlanItem, PlanStair } from './types';
 import { OPENING_DEFAULTS, PLAN_COLORS } from './types';
+import { inStair, stairRise, stairLength, stairSteps, STAIR_WIDTH, TREAD } from './stairs';
 import {
   type Pt, sub, add, mul, dot, dist, norm, perp, project, insidePoint, pointInPolygon, clipAlong, round3,
 } from './geometry';
@@ -35,14 +36,15 @@ import {
   ROOM_TYPES, FLOOR_COLORS, WALL_COLORS, DOOR_COLORS, FRAME_COLORS, FLOOR_MATERIALS, type RoomType,
 } from './rooms';
 
-type Tool = 'select' | 'room' | 'wall' | 'boundary' | OpeningKind | 'furniture' | 'erase' | 'calibrate' | 'image';
+type Tool = 'select' | 'room' | 'wall' | 'boundary' | OpeningKind | 'stairs' | 'furniture' | 'erase' | 'calibrate' | 'image';
 type ViewMode = 'plan' | 'split' | '3d';
 type Hit =
   | { type: 'node'; id: string }
   | { type: 'wall'; id: string }
   | { type: 'opening'; id: string }
   | { type: 'room'; id: string }
-  | { type: 'item'; id: string };
+  | { type: 'item'; id: string }
+  | { type: 'stair'; id: string };
 type Guide = { x?: number; y?: number };
 
 const SVG = 'http://www.w3.org/2000/svg';
@@ -161,6 +163,7 @@ const TOOLS: { tool: Tool; icon: string; label: StringKey; key: string }[] = [
   { tool: 'window', icon: 'window', label: 'planToolWindow', key: 'f' },
   { tool: 'slider', icon: 'slider', label: 'planToolSlider', key: 'b' },
   { tool: 'passage', icon: 'passage', label: 'planToolPassage', key: 'o' },
+  { tool: 'stairs', icon: 'stairs', label: 'planToolStairs', key: 'h' },
   { tool: 'furniture', icon: 'sofa', label: 'planToolFurniture', key: 'n' },
   { tool: 'erase', icon: 'erase', label: 'planToolErase', key: 'e' },
 ];
@@ -216,6 +219,7 @@ export class PlanEditor {
     | { kind: 'room'; id: string; from: Pt; orig: Map<string, Pt>; shapes: Map<string, string[]> }
     | { kind: 'opening'; id: string; grab: number }
     | { kind: 'item'; id: string; grab: Pt }
+    | { kind: 'stair'; id: string; grab: Pt }
     | { kind: 'rect'; a: Pt; b: Pt }
     | { kind: 'image'; from: Pt; ox: number; oy: number }
     | null = null;
@@ -559,6 +563,7 @@ export class PlanEditor {
     if (h.type === 'wall') return this.plan.walls.some((w) => w.id === h.id);
     if (h.type === 'opening') return this.plan.openings.some((o) => o.id === h.id);
     if (h.type === 'item') return (this.plan.items ?? []).some((i) => i.id === h.id);
+    if (h.type === 'stair') return (this.plan.stairs ?? []).some((i) => i.id === h.id);
     return this.plan.rooms.some((r) => r.id === h.id);
   }
 
@@ -692,6 +697,7 @@ export class PlanEditor {
     switch (this.tool) {
       case 'select': key = this.sel ? 'planHintSelected' : 'planHintSelect'; break;
       case 'furniture': key = 'planHintFurniture'; break;
+      case 'stairs': key = 'planHintStairs'; break;
       case 'room': key = 'planHintRoom'; break;
       case 'wall': key = this.chain?.pts.length ? 'planHintWall2' : 'planHintWall'; break;
       case 'boundary': key = this.chain?.pts.length ? 'planHintWall2' : 'planHintBoundary'; break;
@@ -828,6 +834,7 @@ export class PlanEditor {
     // Les meubles, du plus petit au plus grand : on attrape la lampe posée sur la table.
     const items = [...(this.plan.items ?? [])].sort((a, b) => { const sa = itemSize(a), sb = itemSize(b); return sa.w * sa.d - sb.w * sb.d; });
     for (const it of items) if (this.inItem(it, p, tol * 0.3)) return { type: 'item', id: it.id };
+    for (const st of this.plan.stairs ?? []) if (inStair(st, stairRise(this.plan), p, tol * 0.3)) return { type: 'stair', id: st.id };
     const w = wallAt(this.plan, p, tol * 0.8);
     if (w) return { type: 'wall', id: w.wall.id };
     const r = roomAtPoint(this.plan, p, this.all);
@@ -895,6 +902,7 @@ export class PlanEditor {
       }
       case 'wall': case 'boundary': this.chainClick(p); return;
       case 'door': case 'window': case 'slider': case 'passage': this.placeOpening(this.tool, p); return;
+      case 'stairs': this.placeStair(p); return;
       case 'erase': {
         const h = this.hitAt(p);
         if (h) this.remove(h); else pan();
@@ -930,6 +938,9 @@ export class PlanEditor {
       const it = this.item(h.id)!;
       this.drag = { kind: 'item', id: h.id, grab: sub(p, it) };
       this.stuck = null;
+    } else if (h.type === 'stair') {
+      const st = this.stair(h.id)!;
+      this.drag = { kind: 'stair', id: h.id, grab: sub(p, st) };
     } else {
       const face = this.all.find((f) => f.nodes.length && pointInPolygon(this.plan.rooms.find((r) => r.id === h.id)!.seed, f.poly));
       // Une pièce seule (aucun mur partagé) se déplace d'un bloc ; une pièce
@@ -1078,6 +1089,15 @@ export class PlanEditor {
         if (it) this.moveItem(it, sub(p, d.grab), e.altKey || !this.magnet);
         break;
       }
+      case 'stair': {
+        const st = this.stair(d.id);
+        if (st) {
+          const to = sub(p, d.grab);
+          st.x = Math.round(to.x / STEP) * STEP;
+          st.y = Math.round(to.y / STEP) * STEP;
+        }
+        break;
+      }
     }
     if (d.kind !== 'pan' && d.kind !== 'rect' && d.kind !== 'image') this.preview();
     this.render();
@@ -1151,9 +1171,9 @@ export class PlanEditor {
         if (r) { this.sel = { type: 'room', id: r.roomId }; this.refresh(); }
         return;
       }
-      case 'node': case 'wall': case 'room': case 'opening': case 'image': case 'item':
+      case 'node': case 'wall': case 'room': case 'opening': case 'image': case 'item': case 'stair':
         if (!this.moved) { this.history.pop(); this.refresh(); return; }
-        if (d.kind !== 'opening' && d.kind !== 'image' && d.kind !== 'item') {
+        if (d.kind !== 'opening' && d.kind !== 'image' && d.kind !== 'item' && d.kind !== 'stair') {
           settle(this.plan);
           this.all = faces(this.plan);
           reseedRooms(this.plan, d.shapes, this.all);
@@ -1187,6 +1207,7 @@ export class PlanEditor {
     else if (h?.type === 'wall') this.addCorner(h.id, p);
     else if (h?.type === 'opening') this.flipOpening(h.id, 'swing');
     else if (h?.type === 'item') this.rotateItem(h.id, 90);
+    else if (h?.type === 'stair') this.turnStair(h.id, 90);
   }
 
   // ── Actions ──────────────────────────────────────────────────────────────
@@ -1278,6 +1299,8 @@ export class PlanEditor {
       this.plan.openings = this.plan.openings.filter((o) => o.id !== h.id);
     } else if (h.type === 'item') {
       this.plan.items = (this.plan.items ?? []).filter((i) => i.id !== h.id);
+    } else if (h.type === 'stair') {
+      this.plan.stairs = (this.plan.stairs ?? []).filter((i) => i.id !== h.id);
     } else if (h.type === 'wall') {
       removeWall(this.plan, h.id);
     } else if (h.type === 'node') {
@@ -1481,6 +1504,11 @@ export class PlanEditor {
       items.push(['rotr', t('planRotate'), () => this.rotateItem(h.id, 90)]);
       items.push(['copy', t('planDuplicate'), () => this.duplicateItem(h.id)]);
       items.push(['trash', t('planDelete'), () => this.remove(h), true]);
+    } else if (h?.type === 'stair') {
+      this.sel = h;
+      items.push(['rotr', t('planRotate'), () => this.turnStair(h.id, 90)]);
+      items.push(['swap', t('planStairFlip'), () => this.turnStair(h.id, 180)]);
+      items.push(['trash', t('planDelete'), () => this.remove(h), true]);
     } else {
       items.push(['room', t('planToolRoom'), () => this.setTool('room')]);
       items.push(['wall', t('planToolWall'), () => this.setTool('wall')]);
@@ -1610,6 +1638,10 @@ export class PlanEditor {
         }
       }
     }
+
+    // Escaliers, et la trémie de ceux du niveau du dessous.
+    if (under?.stairs?.length) for (const st of under.stairs) this.drawStairWell(svg, st, stairRise(under), px);
+    for (const st of plan.stairs ?? []) this.drawStair(svg, st, px);
 
     // Meubles, vus de dessus.
     for (const it of plan.items ?? []) this.drawItem(svg, it, px);
@@ -1836,6 +1868,78 @@ export class PlanEditor {
   }
 
   // ── Meubles ──────────────────────────────────────────────────────────────
+
+  // ── Escaliers ────────────────────────────────────────────────────────────
+
+  private stair(id: string): PlanStair | undefined {
+    return (this.plan.stairs ?? []).find((x) => x.id === id);
+  }
+
+  /** Pose un escalier là où l'on clique ; il monte vers le haut de l'écran. */
+  private placeStair(p: Pt) {
+    this.commit();
+    const st: PlanStair = {
+      id: newId('st'),
+      x: Math.round(p.x / STEP) * STEP,
+      y: Math.round(p.y / STEP) * STEP,
+      rotation: -90,
+      width: STAIR_WIDTH,
+    };
+    this.plan.stairs = [...(this.plan.stairs ?? []), st];
+    this.sel = { type: 'stair', id: st.id };
+    this.setTool('select');
+    this.changed();
+  }
+
+  private turnStair(id: string, deg: number) {
+    const st = this.stair(id);
+    if (!st) return;
+    this.commit();
+    st.rotation = (((st.rotation + deg) % 360) + 360) % 360;
+    this.changed();
+  }
+
+  /** Vu de dessus : les marches, et une flèche qui monte. */
+  private drawStair(svg: SVGElement, st: PlanStair, px: (n: number) => number) {
+    const rise = stairRise(this.plan);
+    const hit = { type: 'stair' as const, id: st.id };
+    const sel = this.same(this.sel, hit), hov = this.same(this.hover, hit);
+    const L = stairLength(rise), W = st.width;
+    const g = svgEl('g', { transform: `translate(${st.x} ${st.y}) rotate(${st.rotation})` });
+    g.append(svgEl('rect', { x: -L / 2, y: -W / 2, width: L, height: W, fill: '#efe4d2', stroke: sel ? C.select : hov ? C.hover : C.wall, 'stroke-width': px(sel ? 2.5 : 1.5) }));
+    for (let i = 1; i < stairSteps(rise); i++) {
+      const x = -L / 2 + i * TREAD;
+      g.append(svgEl('line', { x1: x, y1: -W / 2, x2: x, y2: W / 2, stroke: '#a8957a', 'stroke-width': px(1) }));
+    }
+    g.append(svgEl('line', { x1: -L / 2 + TREAD / 2, y1: 0, x2: L / 2 - px(9), y2: 0, stroke: C.wall, 'stroke-width': px(1.6) }));
+    g.append(svgEl('polygon', { points: `${L / 2 - px(2)},0 ${L / 2 - px(11)},${-px(5)} ${L / 2 - px(11)},${px(5)}`, fill: C.wall }));
+    g.append(svgEl('circle', { cx: -L / 2 + TREAD / 2, cy: 0, r: px(3), fill: C.wall }));
+    svg.append(g);
+  }
+
+  /** L'escalier du niveau du dessous arrive ici : son trou, barré comme sur un plan d'architecte. */
+  private drawStairWell(svg: SVGElement, st: PlanStair, rise: number, px: (n: number) => number) {
+    const L = stairLength(rise), W = st.width;
+    const g = svgEl('g', { transform: `translate(${st.x} ${st.y}) rotate(${st.rotation})`, 'pointer-events': 'none' });
+    const line = { stroke: C.wall, 'stroke-width': px(1.2), 'stroke-dasharray': `${px(5)} ${px(4)}` };
+    g.append(svgEl('rect', { x: -L / 2, y: -W / 2, width: L, height: W, fill: 'rgba(47,52,59,0.06)', ...line }));
+    g.append(svgEl('line', { x1: -L / 2, y1: -W / 2, x2: L / 2, y2: W / 2, ...line }));
+    g.append(svgEl('line', { x1: -L / 2, y1: W / 2, x2: L / 2, y2: -W / 2, ...line }));
+    svg.append(g);
+  }
+
+  private stairBubble(id: string) {
+    const st = this.stair(id);
+    if (!st) return;
+    this.heading(t('planStairTitle'), 'stairs');
+    this.small(t('planStairHelp'));
+    this.stepper(t('planWidth'), st.width, 0.05, 0.6, 2, (v) => { st.width = v; });
+    this.actions(
+      this.pill(t('planRotate'), () => this.turnStair(id, 90), false, 'rotr'),
+      this.pill(t('planStairFlip'), () => this.turnStair(id, 180), false, 'swap'),
+    );
+    this.actions(this.pill(t('planDelete'), () => this.remove({ type: 'stair', id }), false, 'trash', true));
+  }
 
   private item(id: string): PlanItem | undefined {
     return (this.plan.items ?? []).find((i) => i.id === id);
@@ -2407,6 +2511,7 @@ export class PlanEditor {
     if (sel?.type === 'wall') return this.wallBubble(sel.id);
     if (sel?.type === 'opening') return this.openingBubble(sel.id);
     if (sel?.type === 'item') return this.itemBubble(sel.id);
+    if (sel?.type === 'stair') return this.stairBubble(sel.id);
     if (sel?.type === 'node') {
       this.heading(t('planCorner'), 'corner');
       this.small(t('planCornerHelp'));
