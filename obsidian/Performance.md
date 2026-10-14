@@ -93,3 +93,12 @@ Chaque mouvement du doigt pendant un glissé dans le plan reconstruisait toute l
 Correctif : l'ancienne maison est mise de côté (`_stale`) et jetée juste après la première image de la nouvelle (`_disposeStale`, appelé après `renderer.render`). Les nouvelles matières ont déjà repris les shaders : rien n'est recompilé. Image suivante : 1,7 ms au lieu de 70. Pas de fuite (géométries et programmes stables sur 20 reconstructions).
 
 Règle à retenir : ne jamais jeter des matières avant que leurs remplaçantes aient été dessinées une fois.
+
+## Changer d'étage (14 octobre 2026)
+
+Même famille de problème. Chaque étage a des matières qui lui sont propres (toit en pente au dernier niveau, trémie et dalles percées, sous-face de dalle) : en quittant un étage, leurs shaders étaient libérés, puis recompilés au retour. Et la première visite d'un étage compilait ses shaders en bloquant la page.
+
+- Les matières de l'ancienne maison ne sont plus jetées (`_disposeStale` ne libère que les géométries) : le ramasse-miettes s'en charge, et les shaders restent prêts. Leur nombre est borné : un par sorte de matière.
+- `_setFloor` lance `renderer.compileAsync` et garde l'image précédente à l'écran le temps de la compilation (`_compiling`, garde-fou d'une seconde et demie).
+
+Plus long gel mesuré pendant les changements d'étage (PC de dev, maison à deux étages, pierre, toit, escalier) : première visite 318 ms → 95 ms, puis 98 → 23 ms, retours 28-63 → 18-23 ms (la cadence normale d'une image).

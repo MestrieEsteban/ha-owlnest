@@ -2277,6 +2277,7 @@ export class Ha3dFloorplan extends HTMLElement {
     this._ui?.setActiveRoom(null);
     this._roomsCache = null;
     this.applyPlan(this._scene.plan!);
+    this._compileInBackground();
     const dy = this._floorLift() - before;
     if (dy && this.camera && this.controls) {
       this._camAnimTo = {
@@ -3828,7 +3829,8 @@ export class Ha3dFloorplan extends HTMLElement {
       this._updateOverlayPositions(w, h);
     }
 
-    if (!this._dirty) return;
+    // Des shaders neufs se compilent en arrière-plan : on garde l'image d'avant.
+    if (!this._dirty || this._compiling) return;
     this._dirty = false;
 
     if (this._shadowsDirty && this.renderer) {
@@ -4313,6 +4315,30 @@ export class Ha3dFloorplan extends HTMLElement {
    * toujours d'un modèle propre plutôt que d'essayer de défaire un retrait.
    */
   /** Fusionne les objets immobiles, sauf en édition. */
+  /**
+   * Un étage vu pour la première fois apporte des matières neuves (toit,
+   * trémie, dalles) : compilées au premier dessin, elles figeaient la carte un
+   * quart de seconde sur le PC de dev, bien plus sur une tablette. On les
+   * compile en arrière-plan, en gardant l'image précédente à l'écran.
+   */
+  private _compiling = false;
+  private _compileToken = 0;
+
+  private _compileInBackground() {
+    const r = this.renderer, scene = this.scene, camera = this.camera;
+    if (!r || !scene || !camera) return;
+    const token = ++this._compileToken;
+    this._compiling = true;
+    const done = () => {
+      if (token !== this._compileToken) return;
+      this._compiling = false;
+      this._requestRender();
+    };
+    // Garde-fou : jamais plus d'une seconde et demie sans image.
+    setTimeout(done, 1500);
+    r.compileAsync(scene, camera).then(done, done);
+  }
+
   /** Ce que la dernière reconstruction a retiré, à jeter après la prochaine image. */
   private _stale: THREE.Object3D[] = [];
 
@@ -4322,10 +4348,11 @@ export class Ha3dFloorplan extends HTMLElement {
       if (o.name === 'plan_items') return;
       const mesh = o as THREE.Mesh;
       // Maillages, mais aussi les traits (arêtes du toit) : tout ce qui a une géométrie.
-      if (mesh.geometry && (mesh.isMesh || (o as THREE.LineSegments).isLineSegments)) {
-        mesh.geometry.dispose();
-        (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach((m) => m.dispose());
-      }
+      // Les matières, elles, ne sont pas jetées : le ramasse-miettes s'en charge.
+      // Les jeter libérerait leurs shaders, que la carte graphique recompilerait
+      // au retour sur cet étage (un toit, une trémie n'existent qu'à certains
+      // niveaux). Le nombre de shaders reste borné : un par sorte de matière.
+      if (mesh.geometry && (mesh.isMesh || (o as THREE.LineSegments).isLineSegments)) mesh.geometry.dispose();
       o.children.forEach(dispose);
     };
     const stale = this._stale;
