@@ -87,3 +87,9 @@ Quatre causes trouvées et corrigées :
 ## Glisser dans le plan (14 octobre 2026)
 
 Chaque mouvement du doigt pendant un glissé dans le plan reconstruisait toute la maison en 3D, puis la regroupait (fusion des objets immobiles) : le dessin saccadait, surtout sur tablette. Désormais l'aperçu 3D n'est appliqué qu'au plus toutes les 120 ms (le dernier état demandé gagne) et le regroupement attend la fin du geste (`_planPreviewing`). Mesure sur le banc de test, 30 mouvements d'affilée : 1,24 s avant, 0,55 s après (le rythme de l'écran).
+
+**La vraie cause, trouvée le même jour.** Le délai ne venait pas de la reconstruction elle-même (5 à 10 ms) mais de l'image suivante : 36 ms sur la maison de test, 70 ms avec étage, pierre, toit et escalier, sur le PC de dev. `applyPlan` jetait les anciennes matières avant de construire les nouvelles ; three.js libérait alors les shaders devenus orphelins et les recompilait aussitôt pour la nouvelle maison, à chaque mouvement. Plus il y a de matières différentes (façade texturée, trémie, toit), plus c'est long, d'où l'impression que « ça ne le faisait pas au début ».
+
+Correctif : l'ancienne maison est mise de côté (`_stale`) et jetée juste après la première image de la nouvelle (`_disposeStale`, appelé après `renderer.render`). Les nouvelles matières ont déjà repris les shaders : rien n'est recompilé. Image suivante : 1,7 ms au lieu de 70. Pas de fuite (géométries et programmes stables sur 20 reconstructions).
+
+Règle à retenir : ne jamais jeter des matières avant que leurs remplaçantes aient été dessinées une fois.

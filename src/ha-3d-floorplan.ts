@@ -504,19 +504,13 @@ export class Ha3dFloorplan extends HTMLElement {
     // Les meubles partagent la géométrie et les matières de leur modèle en
     // cache : les jeter forcerait à tout renvoyer au GPU au prochain dessin.
     // Ils peuvent être dans un étage : on descend sans jamais entrer chez eux.
-    const dispose = (o: THREE.Object3D) => {
-      if (o.name === 'plan_items') return;
-      const mesh = o as THREE.Mesh;
-      // Maillages, mais aussi les traits (arêtes du toit) : tout ce qui a une géométrie.
-      if (mesh.geometry && (mesh.isMesh || (o as THREE.LineSegments).isLineSegments)) {
-        mesh.geometry.dispose();
-        (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach((m) => m.dispose());
-      }
-      o.children.forEach(dispose);
-    };
+    // L'ancienne maison n'est jetée qu'après la première image de la nouvelle :
+    // jeter ses matières d'abord libérait leurs shaders, que la carte graphique
+    // recompilait aussitôt pour la nouvelle maison. Pendant un glissé dans le
+    // plan, cela coûtait des dizaines de millisecondes à chaque mouvement.
     for (const c of [...root.children]) {
       root.remove(c);
-      dispose(c);
+      this._stale.push(c);
     }
     resetOrder(root);
     const fresh = buildHouse(plan, this._floorIndex()).root;
@@ -525,6 +519,8 @@ export class Ha3dFloorplan extends HTMLElement {
     this._refreshFloorGroup(root);
     this._afterPlanBuilt(root);
     this._placeFurniture(root, plan);
+    // L'ancienne maison part après la prochaine image : il faut qu'elle vienne.
+    this._requestRender();
   }
 
   /**
@@ -3841,6 +3837,7 @@ export class Ha3dFloorplan extends HTMLElement {
     }
     const t0 = this._perfEl ? performance.now() : 0;
     this.renderer?.render(this.scene!, this.camera!);
+    if (this._stale.length) this._disposeStale();
     if (this._perfEl) { const end = performance.now(); this._perfTick(end - t0, end - loopT0, now); }
   };
 
@@ -4316,6 +4313,26 @@ export class Ha3dFloorplan extends HTMLElement {
    * toujours d'un modèle propre plutôt que d'essayer de défaire un retrait.
    */
   /** Fusionne les objets immobiles, sauf en édition. */
+  /** Ce que la dernière reconstruction a retiré, à jeter après la prochaine image. */
+  private _stale: THREE.Object3D[] = [];
+
+  private _disposeStale() {
+    const dispose = (o: THREE.Object3D) => {
+      // Les meubles partagent la géométrie et les matières de leur modèle en cache.
+      if (o.name === 'plan_items') return;
+      const mesh = o as THREE.Mesh;
+      // Maillages, mais aussi les traits (arêtes du toit) : tout ce qui a une géométrie.
+      if (mesh.geometry && (mesh.isMesh || (o as THREE.LineSegments).isLineSegments)) {
+        mesh.geometry.dispose();
+        (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach((m) => m.dispose());
+      }
+      o.children.forEach(dispose);
+    };
+    const stale = this._stale;
+    this._stale = [];
+    stale.forEach(dispose);
+  }
+
   /** Un glissé est en cours dans le plan : la maison est reconstruite souvent, on ne regroupe rien. */
   private _planPreviewing = false;
 
