@@ -1212,6 +1212,8 @@ export class Ha3dFloorplan extends HTMLElement {
       }
     });
 
+    this.canvas!.addEventListener('pointerleave', () => { if (this._pickHoverKey) this._endPickHover(); });
+
     this.canvas!.addEventListener('pointermove', (e) => {
       if (!this.camera || !this.canvas) return;
       const rect = this.canvas!.getBoundingClientRect();
@@ -1219,6 +1221,9 @@ export class Ha3dFloorplan extends HTMLElement {
         ((e.clientX - rect.left) / rect.width) * 2 - 1,
         -((e.clientY - rect.top) / rect.height) * 2 + 1,
       );
+
+      // On désigne un ouvrant : ce qu'un clic prendrait s'éclaire sous la souris.
+      if (this._editMode && this._partPickHandler && e.pointerType === 'mouse' && !e.buttons) this._queuePickHover(ndc);
 
       // Gizmo hover highlight (when not dragging)
       if (this._editMode && this._selectedCardId && this._panelGizmo?.visible && !this._gizmoDragAxis && !this._cardGrabMode) {
@@ -1328,6 +1333,7 @@ export class Ha3dFloorplan extends HTMLElement {
             this._partPickHandler = null;
             if (this.canvas) this.canvas.style.cursor = '';
             this._editPanel?.hideStatusBar();
+            this._endPickHover();
           }
           return;
         }
@@ -3465,18 +3471,63 @@ export class Ha3dFloorplan extends HTMLElement {
     if (this.canvas) this.canvas.style.cursor = 'crosshair';
   }
 
+  /** La pièce sous un point de l'écran, comme un clic la prendrait. */
+  private _pieceAt(ndc: THREE.Vector2): { hit: THREE.Intersection; source: HighlightSource; key: string } | null {
+    if (!this.camera || !this._modelRoot) return null;
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, this.camera);
+    const hit = ray.intersectObject(this._modelRoot, true).find((h) => h.faceIndex !== undefined && (h.object as THREE.Mesh).isMesh);
+    if (!hit) return null;
+    const mesh = hit.object as THREE.Mesh;
+    // Une pièce déjà détachée (un ouvrant monté) s'éclaire en entier.
+    if (mesh.userData.owlnestPartId) return { hit, source: { object: mesh }, key: mesh.uuid };
+    const index = partIndexOf(mesh);
+    const id = index.ofTriangle[hit.faceIndex!];
+    const part = id >= 0 ? index.parts[id] : null;
+    if (!part) return null;
+    return { hit, source: { mesh, tris: part.tris }, key: `${mesh.uuid}:${id}` };
+  }
+
+  private _pickHoverNdc: THREE.Vector2 | null = null;
+  private _pickHoverQueued = false;
+  private _pickHoverKey = '';
+
+  /** Au plus une recherche par image : un survol rapide ne lance pas un rayon par événement. */
+  private _queuePickHover(ndc: THREE.Vector2) {
+    this._pickHoverNdc = ndc;
+    if (this._pickHoverQueued) return;
+    this._pickHoverQueued = true;
+    requestAnimationFrame(() => {
+      this._pickHoverQueued = false;
+      if (!this._partPickHandler || !this._pickHoverNdc) return;
+      const found = this._pieceAt(this._pickHoverNdc);
+      const key = found?.key ?? '';
+      if (key === this._pickHoverKey) return;
+      this._pickHoverKey = key;
+      if (found) this._highlight.show('hover', [found.source]);
+      else this._highlight.clear('hover');
+      this._requestRender();
+    });
+  }
+
+  /** Fin du survol : l'éditeur retrouve ses propres surlignages. */
+  private _endPickHover() {
+    this._pickHoverKey = '';
+    this._pickHoverNdc = null;
+    this._applyHighlight();
+  }
+
   private _handlePartPick(ndc: THREE.Vector2): boolean {
     const cb = this._partPickHandler;
     if (!cb || !this.camera || !this._modelRoot) return false;
 
-    const ray = new THREE.Raycaster();
-    ray.setFromCamera(ndc, this.camera);
-    const hits = ray.intersectObject(this._modelRoot, true);
-    const hit = hits.find((h) => h.faceIndex !== undefined && (h.object as THREE.Mesh).isMesh);
-    if (!hit) return false;
+    const found = this._pieceAt(ndc);
+    if (!found) return false;
+    const hit = found.hit;
 
     this._partPickHandler = null;
     if (this.canvas) this.canvas.style.cursor = '';
+    this._endPickHover();
 
     const mesh = hit.object as THREE.Mesh;
     // Le modèle peut être en mètres comme en centimètres : on cale l'échelle
