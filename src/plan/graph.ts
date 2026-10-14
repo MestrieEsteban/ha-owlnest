@@ -510,3 +510,24 @@ export function reseedRooms(plan: PlanDoc, before: Map<string, string[]>, all = 
     }
   }
 }
+
+/**
+ * Une pièce fermée, par opposition à un balcon ou une terrasse : des murs
+ * pleine hauteur sur au moins la moitié de son tour. Une limite de pièce
+ * (espace ouvert) compte comme fermée : l'autre pièce la couvre.
+ */
+export function enclosed(plan: PlanDoc, nodes: string[]): boolean {
+  const pos = new Map(plan.nodes.map((n) => [n.id, n]));
+  const wallOf = (a: string, b: string) => plan.walls.find((w) => (w.a === a && w.b === b) || (w.a === b && w.b === a));
+  let full = 0, all = 0;
+  nodes.forEach((a, i) => {
+    const b = nodes[(i + 1) % nodes.length];
+    const pa = pos.get(a), pb = pos.get(b);
+    if (!pa || !pb) return;
+    const len = Math.hypot(pb.x - pa.x, pb.y - pa.y);
+    all += len;
+    const w = wallOf(a, b);
+    if (w && (isBoundary(plan, w) || heightOf(plan, w) >= (plan.wallHeight ?? 2.5) - 0.3)) full += len;
+  });
+  return all > 0 && full / all >= 0.5;
+}

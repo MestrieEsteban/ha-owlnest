@@ -17,7 +17,7 @@ import * as THREE from 'three';
 import type { PlanDoc, PlanOpening, PlanWall, PlanRoom, FacadeMaterial } from './types';
 import { PLAN_COLORS } from './types';
 import { type Pt, sub, add, mul, dot, norm, perp, clipAlong, area, pointInPolygon } from './geometry';
-import { wallEnds, heightOf, thicknessOf, openingFits, faces, wallLength, isBoundary, type Face } from './graph';
+import { wallEnds, heightOf, thicknessOf, openingFits, faces, wallLength, isBoundary, enclosed, type Face } from './graph';
 import { wallFootprints, cornerStops } from './footprint';
 import { tagWall } from './low-walls';
 import { floorTexture, TEXTURE_METERS, facadeTexture, FACADE_METERS } from './textures';
@@ -139,6 +139,17 @@ function prismFaces(poly: readonly Pt[], y0: number, y1: number, side: (p: Pt, q
   return out;
 }
 
+/**
+ * Un morceau de façade hors des murs eux-mêmes (muret de toit plat, bande de
+ * dalle entre deux étages) : le même motif que les murs, posé de la même
+ * façon, pour que rien ne se voie au raccord.
+ */
+export function facadePiece(poly: readonly Pt[], y0: number, y1: number, color: string, kind: FacadeMaterial | undefined): THREE.Mesh {
+  const uvMeters = kind && kind !== 'smooth' ? FACADE_METERS[kind] : 0;
+  const geo = [...prismFaces(poly, y0, y1, () => 0, uvMeters, true).values()][0];
+  return new THREE.Mesh(geo, new Palette().facade(color, kind));
+}
+
 /** Un prisme d'un seul tenant. */
 export function prism(poly: readonly Pt[], y0: number, y1: number, uvMeters = 0): THREE.BufferGeometry {
   return [...prismFaces(poly, y0, y1, () => 0, uvMeters).values()][0];
@@ -181,8 +192,11 @@ function buildWall(
   const half = thicknessOf(plan, w) / 2;
   const mid = mul(add(a, b), 0.5);
   const probe = half + 0.1;
-  const roomLeft = roomAt(rooms, add(mid, mul(n, probe)));
-  const roomRight = roomAt(rooms, add(mid, mul(n, -probe)));
+  // Un muret (garde-corps de balcon, de terrasse) est dehors des deux côtés :
+  // il prend la façade partout, même quand une pièce (le balcon) le borde.
+  const low = H < 1.3;
+  const roomLeft = low ? null : roomAt(rooms, add(mid, mul(n, probe)));
+  const roomRight = low ? null : roomAt(rooms, add(mid, mul(n, -probe)));
   const outside = plan.outside ?? PLAN_COLORS.outside;
   const left = roomLeft ? roomLeft.wall ?? PLAN_COLORS.wall : outside;
   const right = roomRight ? roomRight.wall ?? PLAN_COLORS.wall : outside;
@@ -190,7 +204,8 @@ function buildWall(
   const core = roomLeft || !roomRight ? left : right;
   // Côté dehors, la matière de la façade ; côté pièce, la peinture.
   const face = (color: string, room: PlanRoom | null) => (room ? pal.wall(color) : pal.facade(color, plan.facade));
-  const mats = [pal.wall(core), face(left, roomLeft), face(right, roomRight)];
+  // Sans pièce d'aucun côté (muret, mur isolé), le dessus et les chants sont de la façade aussi.
+  const mats = [roomLeft || roomRight ? pal.wall(core) : face(core, null), face(left, roomLeft), face(right, roomRight)];
   const uvMeters = plan.facade && plan.facade !== 'smooth' ? FACADE_METERS[plan.facade] : 0;
   const side = (p: Pt, q: Pt) => {
     const s = dot(sub(mul(add(p, q), 0.5), a), n);
@@ -421,9 +436,11 @@ export function buildPlan(plan: PlanDoc): THREE.Group {
   }
 
   const feet = wallFootprints(plan);
+  // Un balcon, une terrasse : dehors. Les murs qui les bordent prennent la façade de ce côté.
+  const indoor = rooms.filter((r) => !r.face.nodes.length || enclosed(plan, r.face.nodes));
   plan.walls.forEach((w, i) => {
     const foot = feet.get(w.id);
-    if (foot && wallLength(plan, w) > 1e-3) buildWall(plan, w, foot, i, pal, rooms, root);
+    if (foot && wallLength(plan, w) > 1e-3) buildWall(plan, w, foot, i, pal, indoor, root);
   });
   for (const o of plan.openings) {
     const i = plan.walls.findIndex((q) => q.id === o.wall);

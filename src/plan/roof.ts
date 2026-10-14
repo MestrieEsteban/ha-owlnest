@@ -11,7 +11,7 @@
  */
 import type { PlanDoc } from './types';
 import { type Pt, add, mul, sub, dot, norm, area } from './geometry';
-import { faces, thicknessOf, isBoundary, heightOf } from './graph';
+import { faces, thicknessOf, enclosed, isBoundary } from './graph';
 
 export type Quad = [Pt, Pt, Pt, Pt];
 /** Un pan : quatre coins (le dernier peut répéter le troisième), à deux hauteurs. */
@@ -222,23 +222,7 @@ export function hipRoof(outline: Pt[], slope: number): RoofStrip[] {
 export function planOutline(plan: PlanDoc): Pt[] {
   // Seules les pièces fermées ont un toit : un balcon ou une terrasse (murs
   // bas sur la plus grande partie du tour) reste à ciel ouvert.
-  const pos0 = new Map(plan.nodes.map((n) => [n.id, n]));
-  const wallOf = (a: string, b: string) => plan.walls.find((w) => (w.a === a && w.b === b) || (w.a === b && w.b === a));
-  const closed = (nodes: string[]) => {
-    let full = 0, all = 0;
-    nodes.forEach((a, i) => {
-      const b = nodes[(i + 1) % nodes.length];
-      const pa = pos0.get(a), pb = pos0.get(b);
-      if (!pa || !pb) return;
-      const len = Math.hypot(pb.x - pa.x, pb.y - pa.y);
-      all += len;
-      const w = wallOf(a, b);
-      // Une limite de pièce (espace ouvert) compte comme fermée : l'autre pièce la couvre.
-      if (w && (isBoundary(plan, w) || heightOf(plan, w) >= (plan.wallHeight ?? 2.5) - 0.3)) full += len;
-    });
-    return all > 0 && full / all >= 0.5;
-  };
-  const fs = faces(plan).filter((f) => closed(f.nodes));
+  const fs = faces(plan).filter((f) => enclosed(plan, f.nodes));
   const count = new Map<string, number>();
   const key = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
   for (const f of fs) f.nodes.forEach((a, i) => { const k = key(a, f.nodes[(i + 1) % f.nodes.length]); count.set(k, (count.get(k) ?? 0) + 1); });

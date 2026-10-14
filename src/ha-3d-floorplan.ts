@@ -692,10 +692,31 @@ export class Ha3dFloorplan extends HTMLElement {
       this._ui?.refreshFloors();
       this._schedulePlanSave(400);
     };
+    // Pendant un glissé, la 3D suit sans suivre chaque mouvement : reconstruire
+    // la maison à chaque déplacement du doigt figeait le dessin, surtout sur
+    // une tablette. Le dernier état demandé est appliqué toutes les 120 ms au
+    // plus, et le regroupement des objets immobiles attend la fin du geste.
+    let pending: PlanDoc | null = null;
+    let previewTimer = 0;
+    let lastPreview = 0;
+    const flushPreview = () => {
+      previewTimer = 0;
+      const doc = pending;
+      pending = null;
+      if (!doc || !this._scene || fromDemo) return;
+      lastPreview = performance.now();
+      this.applyPlan(withLevel(doc));
+    };
+    const stopPreview = () => {
+      pending = null;
+      if (previewTimer) { clearTimeout(previewTimer); previewTimer = 0; }
+      this._planPreviewing = false;
+    };
     this._planEditor = new PlanEditor({
       container: this.overlayContainer,
       plan: levelDoc() ?? emptyPlan(),
       onChange: (doc) => {
+        stopPreview();
         if (!this._scene) return;
         const plan = withLevel(doc);
         if (fromDemo && hasWalls(plan)) {
@@ -707,7 +728,12 @@ export class Ha3dFloorplan extends HTMLElement {
         this._schedulePlanSave(800);
       },
       onPreview: (doc) => {
-        if (this._scene && !fromDemo) this.applyPlan(withLevel(doc));
+        if (!this._scene || fromDemo) return;
+        pending = doc;
+        this._planPreviewing = true;
+        if (previewTimer) return;
+        const wait = Math.max(0, 120 - (performance.now() - lastPreview));
+        previewTimer = window.setTimeout(() => requestAnimationFrame(flushPreview), wait);
       },
       floors: {
         list: () => this._floors().map((f) => ({ name: f.name })),
@@ -769,6 +795,7 @@ export class Ha3dFloorplan extends HTMLElement {
         if (this._plan && !this._framedBox) this._frameEditor();
       },
       onClose: () => {
+        stopPreview();
         this._planEditor = null;
         this._updateRoofVisibility();
         this._framedBox = null;
@@ -4289,8 +4316,11 @@ export class Ha3dFloorplan extends HTMLElement {
    * toujours d'un modèle propre plutôt que d'essayer de défaire un retrait.
    */
   /** Fusionne les objets immobiles, sauf en édition. */
+  /** Un glissé est en cours dans le plan : la maison est reconstruite souvent, on ne regroupe rien. */
+  private _planPreviewing = false;
+
   private _mergeStatic() {
-    if (!this._batch || this._editMode) return;
+    if (!this._batch || this._editMode || this._planPreviewing) return;
     const n = this._batch.merge();
     // Les regroupements neufs portent les murs : leur matière et leur ombre suivent les murs bas.
     if (this._modelRoot) this._lowWalls.instrument(this._modelRoot);

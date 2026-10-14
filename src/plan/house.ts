@@ -15,7 +15,7 @@
 import * as THREE from 'three';
 import type { PlanDoc } from './types';
 import { PLAN_COLORS } from './types';
-import { buildPlan, prism } from './build';
+import { buildPlan, prism, facadePiece } from './build';
 import { floorViews, SLAB } from './floors';
 import { WALL_ATTR } from './low-walls';
 import { faces, isBoundary, wallEnds, wallLength, thicknessOf } from './graph';
@@ -167,11 +167,11 @@ function isFacade(doc: PlanDoc, rooms: Pt[][], w: PlanDoc['walls'][number]): boo
   return inside(add(mid, mul(n, off))) !== inside(sub(mid, mul(n, off)));
 }
 
-function parapets(doc: PlanDoc, above: Pt[][], y0: number): THREE.BufferGeometry[] {
+function parapets(doc: PlanDoc, above: Pt[][], y0: number, color: string, kind: PlanDoc['facade']): THREE.Mesh[] {
   const rooms = faces(doc).map((f) => f.poly);
   const covered = (p: Pt) => above.some((r) => pointInPolygon(p, r));
   const feet = wallFootprints(doc);
-  const out: THREE.BufferGeometry[] = [];
+  const out: THREE.Mesh[] = [];
   const STEP = 0.1;
   for (const w of doc.walls) {
     const foot = feet.get(w.id);
@@ -191,7 +191,7 @@ function parapets(doc: PlanDoc, above: Pt[][], y0: number): THREE.BufferGeometry
       if (!free && start !== null) {
         // Aux bouts du mur, le tronçon garde ses coins (onglets des angles).
         const piece = clipAlong(foot, a, dir, start <= 0 ? -1e3 : start, u >= L ? 1e3 : u);
-        if (piece.length >= 3) out.push(prism(piece, y0, y0 + PARAPET));
+        if (piece.length >= 3) out.push(facadePiece(piece, y0, y0 + PARAPET, color, kind));
         start = null;
       }
     }
@@ -204,7 +204,7 @@ function parapets(doc: PlanDoc, above: Pt[][], y0: number): THREE.BufferGeometry
  * des murs jusque sous le sol du niveau suivant (`top`, en hauteur locale),
  * bordée d'un muret là où l'étage ne la couvre pas.
  */
-function roofSlab(doc: PlanDoc, top: number, id: string, above: Pt[][]): THREE.Group | null {
+function roofSlab(doc: PlanDoc, top: number, id: string, above: Pt[][], look: Pick<PlanDoc, 'outside' | 'facade'>): THREE.Group | null {
   const y0 = doc.wallHeight ?? 2.5;
   // Un peu sous le sol de l'étage, pour que les deux surfaces ne se battent pas.
   const y1 = Math.max(top - 0.025, y0 + 0.05);
@@ -213,7 +213,8 @@ function roofSlab(doc: PlanDoc, top: number, id: string, above: Pt[][]): THREE.G
   // Le dessus du toit en gris ; au-dessus des murs, la façade continue
   // jusqu'au muret, sans bande de dalle entre les deux.
   const g = slabMesh(`plan_slab_${id}`, polys.map((p) => prism(p, y0, y1)), slabMaterial());
-  const wallMat = new THREE.MeshStandardMaterial({ color: doc.outside ?? PLAN_COLORS.outside, roughness: 0.9, metalness: 0 });
+  // La façade de la maison : même couleur, même matière que les murs.
+  const color = look.outside ?? PLAN_COLORS.outside;
   const feet = wallFootprints(doc);
   const slabMat = (g.children[0] as THREE.Mesh).material as THREE.Material;
   doc.walls.forEach((w, i) => {
@@ -222,14 +223,15 @@ function roofSlab(doc: PlanDoc, top: number, id: string, above: Pt[][]): THREE.G
     // Façade : à peine plus haute que le toit, les deux dessus ne se battent
     // pas. Mur intérieur : du toit, au même niveau.
     const facade = isFacade(doc, polys, w);
-    const m = new THREE.Mesh(prism(foot, y0, facade ? Math.max(top, y1 + 0.004) : y1), facade ? wallMat : slabMat);
+    const m = facade
+      ? facadePiece(foot, y0, Math.max(top, y1 + 0.004), color, look.facade)
+      : new THREE.Mesh(prism(foot, y0, y1), slabMat);
     m.name = `plan_slab_${id}_wall_${i}`;
     m.castShadow = true;
     m.receiveShadow = true;
     g.add(m);
   });
-  parapets(doc, above, y1).forEach((geo, i) => {
-    const m = new THREE.Mesh(geo, wallMat);
+  parapets(doc, above, y1, color, look.facade).forEach((m, i) => {
     m.name = `plan_parapet_${id}_${i}`;
     m.castShadow = true;
     m.receiveShadow = true;
@@ -268,7 +270,8 @@ export function buildHouse(plan: PlanDoc, active: number): BuiltHouse {
   }
   // Chaque niveau sous l'étage montré reçoit sa dalle, jusqu'au sol du suivant.
   for (let k = 0; k < top; k++) {
-    const slab = roofSlab(views[k].doc, views[k + 1].elevation - views[k].elevation, views[k].id, footprintOf(views[k + 1].doc));
+    const look = { outside: views[k].doc.outside ?? plan.outside, facade: views[k].doc.facade ?? plan.facade };
+    const slab = roofSlab(views[k].doc, views[k + 1].elevation - views[k].elevation, views[k].id, footprintOf(views[k + 1].doc), look);
     if (slab) groups[k].add(slab);
   }
   // Les escaliers : chacun monte jusqu'au niveau suivant (s'il existe), dont

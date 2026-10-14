@@ -71,3 +71,13 @@ La nuit claire reste un fond sombre étoilé peint.
 - `untoned()` calcule la couleur de brume qui, une fois rendue, donne exactement celle de l'horizon. Pour les teintes claires ou vives (jour, couchant) le calcul demande des valeurs très fortes qui font une bande criarde à mi-distance : on retombe alors sur une simple atténuation.
 
 Sous un ciel peint, la brume garde la couleur de l'horizon quelle que soit la météo (`_skyFog`) : le ciel porte déjà le temps qu'il fait.
+
+## Balcons, terrasses et toits plats (14 octobre 2026)
+
+La matière de façade (pierre, brique...) ne couvrait que les murs pleine hauteur côté dehors. Trois trous, corrigés :
+
+- **Les murets des toits plats** et la bande de dalle entre deux étages étaient d'un aplat de couleur. Ils passent par `facadePiece()` (`plan/build.ts`) : même couleur, même motif, mêmes coordonnées de texture que les murs.
+- **Un mur bas** (moins de 1,30 m : garde-corps de balcon, de terrasse) prend la façade des deux côtés, même quand une pièce (le balcon) le borde.
+- **Un balcon ou une terrasse** (pièce dont moins de la moitié du tour est en murs pleine hauteur, test `enclosed()` dans `plan/graph.ts`, le même que pour le toit) compte comme dehors : le mur entre le salon et le balcon prend la façade côté balcon.
+
+Un mur sans pièce d'aucun côté a aussi la façade sur le dessus et les chants.

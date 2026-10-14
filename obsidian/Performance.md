@@ -83,3 +83,7 @@ Quatre causes trouvées et corrigées :
 - En prime : hors qualité haute, les ombres suivent les murs bas une fois qu'ils ont fini de descendre, plus à chaque image.
 
 **Compteur de performances** : Réglages → Performance → « Afficher les performances », retenu sur l'appareil (`owlnest_perf_hud`). Images par seconde, temps total par image et part du rendu, appels de dessin, triangles, résolution, pastilles, lumières, qualité, matériel détecté.
+
+## Glisser dans le plan (14 octobre 2026)
+
+Chaque mouvement du doigt pendant un glissé dans le plan reconstruisait toute la maison en 3D, puis la regroupait (fusion des objets immobiles) : le dessin saccadait, surtout sur tablette. Désormais l'aperçu 3D n'est appliqué qu'au plus toutes les 120 ms (le dernier état demandé gagne) et le regroupement attend la fin du geste (`_planPreviewing`). Mesure sur le banc de test, 30 mouvements d'affilée : 1,24 s avant, 0,55 s après (le rythme de l'écran).
