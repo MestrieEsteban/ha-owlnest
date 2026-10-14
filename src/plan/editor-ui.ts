@@ -15,9 +15,9 @@
 import { t, getLang, type StringKey } from '../i18n';
 import { icon } from '../ui/icons';
 import { Tour, type TourStep } from '../ui/tour';
-import type { PlanDoc, PlanOpening, OpeningKind, PlanWall, FloorMaterial, FacadeMaterial, DoorStyle, WindowStyle, PlanItem, PlanStair } from './types';
+import type { PlanDoc, PlanOpening, OpeningKind, PlanWall, FloorMaterial, FacadeMaterial, DoorStyle, WindowStyle, PlanItem, PlanStair, StairShape } from './types';
 import { OPENING_DEFAULTS, PLAN_COLORS } from './types';
-import { inStair, stairRise, stairLength, stairSteps, STAIR_WIDTH, TREAD } from './stairs';
+import { inStair, stairRise, layout as stairLayout, toPlan as stairToPlan, wellCorners, STAIR_WIDTH } from './stairs';
 import {
   type Pt, sub, add, mul, dot, dist, norm, perp, project, insidePoint, pointInPolygon, clipAlong, round3,
 } from './geometry';
@@ -1899,32 +1899,41 @@ export class PlanEditor {
     this.changed();
   }
 
-  /** Vu de dessus : les marches, et une flèche qui monte. */
+  /** Vu de dessus : les marches, et une flèche qui monte en suivant l'escalier. */
   private drawStair(svg: SVGElement, st: PlanStair, px: (n: number) => number) {
     const rise = stairRise(this.plan);
     const hit = { type: 'stair' as const, id: st.id };
     const sel = this.same(this.sel, hit), hov = this.same(this.hover, hit);
-    const L = stairLength(rise), W = st.width;
-    const g = svgEl('g', { transform: `translate(${st.x} ${st.y}) rotate(${st.rotation})` });
-    g.append(svgEl('rect', { x: -L / 2, y: -W / 2, width: L, height: W, fill: '#efe4d2', stroke: sel ? C.select : hov ? C.hover : C.wall, 'stroke-width': px(sel ? 2.5 : 1.5) }));
-    for (let i = 1; i < stairSteps(rise); i++) {
-      const x = -L / 2 + i * TREAD;
-      g.append(svgEl('line', { x1: x, y1: -W / 2, x2: x, y2: W / 2, stroke: '#a8957a', 'stroke-width': px(1) }));
+    const { steps } = stairLayout(st, rise);
+    const g = svgEl('g', {});
+    const stroke = sel ? C.select : hov ? C.hover : '#a8957a';
+    for (const step of steps) {
+      g.append(svgEl('polygon', {
+        points: poly(step.poly.map((p) => stairToPlan(st, p))),
+        fill: step.landing ? '#e6d8c2' : '#efe4d2', stroke, 'stroke-width': px(sel ? 1.6 : 1), 'stroke-linejoin': 'round',
+      }));
     }
-    g.append(svgEl('line', { x1: -L / 2 + TREAD / 2, y1: 0, x2: L / 2 - px(9), y2: 0, stroke: C.wall, 'stroke-width': px(1.6) }));
-    g.append(svgEl('polygon', { points: `${L / 2 - px(2)},0 ${L / 2 - px(11)},${-px(5)} ${L / 2 - px(11)},${px(5)}`, fill: C.wall }));
-    g.append(svgEl('circle', { cx: -L / 2 + TREAD / 2, cy: 0, r: px(3), fill: C.wall }));
+    // Le chemin de montée : du milieu de la première marche au milieu de la dernière.
+    const mid = (pts: Pt[]) => ({ x: pts.reduce((a, p) => a + p.x, 0) / pts.length, y: pts.reduce((a, p) => a + p.y, 0) / pts.length });
+    const path = steps.map((step) => stairToPlan(st, mid(step.poly)));
+    g.append(svgEl('polyline', { points: poly(path), fill: 'none', stroke: C.wall, 'stroke-width': px(1.6), 'stroke-linejoin': 'round' }));
+    const a = path[path.length - 2], b = path[path.length - 1];
+    const d = norm(sub(b, a)), n = perp(d);
+    const tip = add(b, mul(d, px(4)));
+    const base = sub(tip, mul(d, px(10)));
+    g.append(svgEl('polygon', { points: poly([tip, add(base, mul(n, px(5))), sub(base, mul(n, px(5)))]), fill: C.wall }));
+    g.append(svgEl('circle', { cx: path[0].x, cy: path[0].y, r: px(3), fill: C.wall }));
     svg.append(g);
   }
 
   /** L'escalier du niveau du dessous arrive ici : son trou, barré comme sur un plan d'architecte. */
   private drawStairWell(svg: SVGElement, st: PlanStair, rise: number, px: (n: number) => number) {
-    const L = stairLength(rise), W = st.width;
-    const g = svgEl('g', { transform: `translate(${st.x} ${st.y}) rotate(${st.rotation})`, 'pointer-events': 'none' });
+    const c = wellCorners(st, rise);
+    const g = svgEl('g', { 'pointer-events': 'none' });
     const line = { stroke: C.wall, 'stroke-width': px(1.2), 'stroke-dasharray': `${px(5)} ${px(4)}` };
-    g.append(svgEl('rect', { x: -L / 2, y: -W / 2, width: L, height: W, fill: 'rgba(47,52,59,0.06)', ...line }));
-    g.append(svgEl('line', { x1: -L / 2, y1: -W / 2, x2: L / 2, y2: W / 2, ...line }));
-    g.append(svgEl('line', { x1: -L / 2, y1: W / 2, x2: L / 2, y2: -W / 2, ...line }));
+    g.append(svgEl('polygon', { points: poly(c), fill: 'rgba(47,52,59,0.06)', ...line }));
+    g.append(svgEl('line', { x1: c[0].x, y1: c[0].y, x2: c[2].x, y2: c[2].y, ...line }));
+    g.append(svgEl('line', { x1: c[1].x, y1: c[1].y, x2: c[3].x, y2: c[3].y, ...line }));
     svg.append(g);
   }
 
@@ -1932,8 +1941,24 @@ export class PlanEditor {
     const st = this.stair(id);
     if (!st) return;
     this.heading(t('planStairTitle'), 'stairs');
+    const shape = st.shape ?? 'straight';
+    this.chips(t('planStairShape'), [
+      ['straight', t('planStairStraight')], ['l', t('planStairL')], ['u', t('planStairU')], ['spiral', t('planStairSpiral')],
+    ] as [StairShape, string][], shape, (v) => {
+      st.shape = v === 'straight' ? undefined : v;
+      // Un colimaçon se règle par son rayon : on repart d'une taille qui lui va.
+      if (v === 'spiral' && st.width < 0.7) st.width = 0.8;
+    });
+    if (shape !== 'straight') {
+      this.chips(t('planStairTurn'), [['left', t('planStairLeft')], ['right', t('planStairRight')]] as ['left' | 'right', string][],
+        st.turn ?? 'right', (v) => { st.turn = v === 'right' ? undefined : v; });
+    }
+    this.stepper(shape === 'spiral' ? t('planStairRadius') : t('planWidth'), st.width, 0.05, 0.6, 2, (v) => { st.width = v; });
+    if (shape !== 'spiral') {
+      this.chips(t('planStairSlope'), [['gentle', t('planStairGentle')], ['normal', t('planStairNormal')], ['steep', t('planStairSteep')]] as ['gentle' | 'normal' | 'steep', string][],
+        st.slope ?? 'normal', (v) => { st.slope = v === 'normal' ? undefined : v; });
+    }
     this.small(t('planStairHelp'));
-    this.stepper(t('planWidth'), st.width, 0.05, 0.6, 2, (v) => { st.width = v; });
     this.actions(
       this.pill(t('planRotate'), () => this.turnStair(id, 90), false, 'rotr'),
       this.pill(t('planStairFlip'), () => this.turnStair(id, 180), false, 'swap'),

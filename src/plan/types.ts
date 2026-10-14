@@ -105,15 +105,25 @@ export interface PlanItem {
 }
 
 /** Image de plan posée sous le dessin, pour le calquer. */
-/** Un escalier droit, posé sur ce niveau : il monte jusqu'au suivant. */
+/** La forme d'un escalier : droit, en L (quart tournant), en U (demi-tournant), en colimaçon. */
+export type StairShape = 'straight' | 'l' | 'u' | 'spiral';
+
+/** Un escalier, posé sur ce niveau : il monte jusqu'au suivant. */
 export interface PlanStair {
   id: string;
   /** Le milieu de l'escalier, vu de dessus. */
   x: number;
   y: number;
-  /** Le sens de montée, en degrés : 0 monte vers les x croissants. */
+  /** Le sens de départ, en degrés : 0 part vers les x croissants. */
   rotation: number;
+  /** Largeur d'une volée ; pour un colimaçon, son rayon. */
   width: number;
+  /** Absente : droit. */
+  shape?: StairShape;
+  /** Le côté où il tourne (L, U, colimaçon). Absent : à droite. */
+  turn?: 'left' | 'right';
+  /** Douce, normale (absente) ou raide : la profondeur des marches, donc la longueur. */
+  slope?: 'gentle' | 'steep';
 }
 
 export interface PlanBackground {

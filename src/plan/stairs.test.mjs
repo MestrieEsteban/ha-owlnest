@@ -1,24 +1,47 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { stairSteps, stairLength, stairCorners, inStair, TREAD } from './stairs.mjs';
+import { stairSteps, layout, wellCorners, inStair, TREADS } from './stairs.mjs';
 import { buildHouse } from './house.mjs';
 import { addFloor } from './floors.mjs';
 
-test('les marches ne dépassent pas 20 cm, la longueur en découle', () => {
+const span = (pts, k) => Math.max(...pts.map((p) => p[k])) - Math.min(...pts.map((p) => p[k]));
+
+test('les marches ne dépassent pas 20 cm, la pente règle la longueur', () => {
   assert.equal(stairSteps(2.7), 14);
   assert.ok(2.7 / stairSteps(2.7) <= 0.2);
-  assert.equal(stairLength(2.7), 14 * TREAD);
+  const len = (slope) => span(layout({ id: 's', x: 0, y: 0, rotation: 0, width: 0.9, slope }, 2.7).steps.flatMap((st) => st.poly), 'y');
+  assert.ok(Math.abs(len(undefined) - 14 * TREADS.normal) < 1e-9);
+  assert.ok(len('gentle') > len(undefined) && len(undefined) > len('steep'));
 });
 
-test('un escalier tourné garde son emprise et se laisse attraper', () => {
+test('chaque forme monte marche après marche jusqu’à la hauteur de l’étage', () => {
+  for (const shape of ['straight', 'l', 'u', 'spiral']) {
+    const { steps } = layout({ id: 's', x: 0, y: 0, rotation: 0, width: 0.9, shape }, 2.7);
+    assert.equal(steps.length, 14, shape);
+    for (let i = 1; i < steps.length; i++) assert.ok(steps[i].top > steps[i - 1].top, shape);
+    assert.ok(Math.abs(steps[steps.length - 1].top - 2.7) < 1e-9, shape);
+  }
+});
+
+test('un escalier en L est plus court qu’un droit, et tourne du côté demandé', () => {
+  const straight = layout({ id: 's', x: 0, y: 0, rotation: 0, width: 0.9 }, 2.7).steps.flatMap((st) => st.poly);
+  const right = layout({ id: 's', x: 0, y: 0, rotation: 0, width: 0.9, shape: 'l' }, 2.7);
+  const left = layout({ id: 's', x: 0, y: 0, rotation: 0, width: 0.9, shape: 'l', turn: 'left' }, 2.7);
+  assert.ok(span(right.steps.flatMap((st) => st.poly), 'y') < span(straight, 'y'));
+  // La dernière marche est à droite (x > 0), ou à gauche en miroir.
+  const last = (l) => l.steps[l.steps.length - 1].poly.reduce((a, p) => a + p.x, 0) / 4;
+  assert.ok(last(right) > 0 && last(left) < 0);
+  assert.equal(right.well.exit.side, 'x1');
+  assert.equal(left.well.exit.side, 'x0');
+});
+
+test('un escalier tourné se laisse attraper où il est', () => {
   const s = { id: 's', x: 2, y: 1, rotation: 90, width: 1 };
-  const c = stairCorners(s, 2.7);
-  const xs = c.map((p) => p.x), ys = c.map((p) => p.y);
-  // À 90°, il monte vers les y croissants : 1 m de large en x, 3,5 m de long en y.
-  assert.ok(Math.abs(Math.max(...xs) - Math.min(...xs) - 1) < 1e-9);
-  assert.ok(Math.abs(Math.max(...ys) - Math.min(...ys) - stairLength(2.7)) < 1e-9);
+  // À 90°, il part vers les y croissants.
   assert.ok(inStair(s, 2.7, { x: 2.3, y: 2.5 }));
   assert.ok(!inStair(s, 2.7, { x: 2.8, y: 1 }));
+  const c = wellCorners(s, 2.7);
+  assert.ok(Math.abs(span(c, 'x') - 1) < 1e-9);
 });
 
 /** Une pièce de 6 × 4 m. */
