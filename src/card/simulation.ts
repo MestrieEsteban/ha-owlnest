@@ -214,7 +214,8 @@ export class SimulationPanel {
 
     // Apply weather — map sim presets to HA weather states
     const haState: Record<typeof this._simWeather, string> = {
-      clear:  '',
+      // Beau temps : le ciel automatique se dégage (sans météo connue, il garde quelques nuages).
+      clear:  'sunny',
       cloudy: 'cloudy',
       rain:   'rainy',
       storm:  'lightning-rainy',

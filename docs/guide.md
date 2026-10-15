@@ -2,6 +2,9 @@
 
 🇫🇷 [Version française](guide-fr.md) · ← [Back to the README](../README.md)
 
+- [Drawing your home](#drawing-your-home)
+- [Floors and stairs](#floors-and-stairs)
+- [Look](#look)
 - [Importing your floor plan](#importing-your-floor-plan)
 - [Scene navigation](#scene-navigation)
 - [Anchors](#anchors)
@@ -12,6 +15,59 @@
 - [Rendering and appearance](#rendering-and-appearance)
 - [Keyboard shortcuts (edit mode)](#keyboard-shortcuts-edit-mode)
 - [Full YAML reference](#full-yaml-reference)
+
+---
+
+## Drawing your home
+
+<p align="center">
+  <img src="../assets/draw.gif" alt="Starting from a template, adding a window and pushing a wall while the 3D follows" width="700" />
+</p>
+
+Click **Draw my home** on the card, or open the editor with the pencil and choose the **Plan** tab. The plan is on the left, the 3D on the right; **Plan**, **Plan + 3D** and **3D** switch between them.
+
+- **Start**: a blank page, a template (studio, one or two bedrooms, house, furnished), or **From a picture**: load a plan or a photo, set its scale by measuring one known length, and draw on top.
+- **Room** (R): drag a rectangle. **Wall** (M): click point after point, type a length on the keyboard if you like, close on a corner to finish. **Boundary** (L): an invisible line that splits an open space into two rooms (an open kitchen and a living room).
+- **Door** (P), **Window** (F), **Slider** (B), **Opening** (O): click a wall. Drag them along the wall; flip the hinge side or the side they open towards in their bubble.
+- **Furniture** (N): more than 200 pieces, by room. Drag one onto the plan; it snaps to walls and corners, and a small object dropped on a table rests on it (hold Alt to place freely). **My furniture** takes your own GLB or OBJ files. A lamp can be linked to a Home Assistant light: its shade lights up with it.
+- **Select** (V): drag a wall, a corner, a door or a piece of furniture. A room on its own moves as a block. Double-click a room to rename it, right-click for more. **Eraser** (E) removes what you click.
+- Select a room to set its floor (plain, wood, tiles, concrete, carpet), its colour and its wall colour.
+- **My home**, with nothing selected: wall height and thickness, the picture to trace, and the Sweet Home 3D import.
+
+Everything is saved as you draw; **Ctrl+Z** and **Ctrl+Y** undo and redo.
+
+> Name your rooms like your Home Assistant areas: in **Devices**, **Place the devices of each room** then puts every light, sensor and switch of an area in the plan room of the same name.
+
+---
+
+## Floors and stairs
+
+<p align="center">
+  <img src="../assets/floors.gif" alt="Adding a floor and an L-shaped staircase, then switching floors on the card" width="700" />
+</p>
+
+- **Add a floor** with **+** in the floor bar, at the top left of the plan. It copies the walls and rooms of the level below; remove or move what changes. The level below shows as a dashed ghost so you draw right above it. Tap the active floor to rename it.
+- **Stairs** (H): click where they start. In their bubble, choose the **shape** (straight, L-shaped, U-shaped, spiral), the side they **turn** to, the **width** (or the **radius** of a spiral) and the **slope** (gentle, normal, steep). The number of steps and the length follow from the height: steps are never taller than 20 cm. **Rotate** turns them a quarter, **Turn around** reverses the way up.
+- The floor above gets an **opening** with a **railing**, open on the side where you arrive. On its plan, the opening is shown crossed out.
+- On the card, the floor switch in the rooms bar moves between floors; the floors above the one you look at are hidden. A pitched roof shows on the top floor, with walls up.
+- A room with low walls (under 1.3 m, like a balcony) stays open to the sky; a flat roof gets a parapet.
+
+---
+
+## Look
+
+<p align="center">
+  <img src="../assets/look.gif" alt="Trying house styles, then the house with its roof under a cloudy sky" width="700" />
+</p>
+
+The **Look** tab gathers everything you see.
+
+- **Ready-made styles**: light render, brick, timber, stone, modern, dark. One tap sets the facade, the plinth, the roof, the garden and the ground colour.
+- **House**: facade colour and material (smooth, render, brick, timber, stone), a darker plinth, the roof (open to see inside, or pitched) and its covering (clay tiles, slate, zinc). These belong to the drawn home and apply to every floor.
+- **Grounds**: a garden (none, a few trees, lush), the ground style (square, disc, podium, infinite, none), its colour and size, a transparent background.
+- **Sky and light**: the sky, the sun and ambient intensity, exposure and shadows, then the sun and weather entities and the time simulation (see [Environment](#environment)).
+
+The sky is **Automatic** by default: clear in sunny weather, a few clouds when it is partly cloudy (or with no weather entity), overcast when it rains, snows or is foggy, and it follows day, dusk and night. **Clear** and **Clouds** keep the same sky whatever the weather; **Dark studio** is a plain dark backdrop; **Simple** is the previous plain gradient.
 
 ---
 
@@ -62,7 +118,7 @@ Drop your plan again after editing it in Sweet Home 3D: anchors, rules, cards an
 Anchors are interactive points placed in the 3D scene. Each anchor is linked to a Home Assistant entity.
 
 <p align="center">
-  <img src="../assets/moveLight.gif" alt="Moving an anchor in the editor" width="600" />
+  <img src="../assets/devices.gif" alt="Moving an anchor in the editor" width="600" />
 </p>
 
 ### Supported domains
@@ -203,7 +259,7 @@ Camera views let you save viewpoints and navigate between them with smooth anima
 4. The view appears in the navigation bar at the bottom of the scene
 
 <p align="center">
-  <img src="../assets/vue.gif" alt="Camera views navigation" width="600" />
+  <img src="../assets/rules.gif" alt="Camera views navigation" width="600" />
 </p>
 
 ### Hidden views
@@ -306,7 +362,7 @@ Set `weather_entity: weather.home` for dynamic visual effects:
 
 
 <p align="center">
-  <img src="../assets/meteo.gif" alt="Weather and sun effects" width="600" />
+  <img src="../assets/weather.gif" alt="Weather and sun effects" width="600" />
 </p>
 
 ---

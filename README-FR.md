@@ -37,7 +37,11 @@
 
 Owlnest est une carte Home Assistant qui affiche votre logement en 3D. Les lumières du modèle suivent vos vraies lampes : allumage, couleur et intensité. Vous pouvez aussi y placer vos capteurs et faire bouger les portes ou les volets selon leur état.
 
-**Votre logement en un geste :** glissez votre export Sweet Home 3D sur la carte. Il est converti dans votre navigateur, ses portes et fenêtres sont repérées et réglées, et il s'affiche aussitôt. Pas de Blender, pas de convertisseur, aucun fichier à copier.
+**Dessinez votre maison directement dans la carte :** pièces, portes et fenêtres, étages et escaliers, meubles, puis choisissez un style. Pas de Blender, aucun modèle à faire ailleurs. Vous avez déjà un fichier Sweet Home 3D ? Déposez-le sur la carte, il devient un plan modifiable.
+
+<p align="center">
+  <img src="assets/lights.gif" alt="Des lampes allumées depuis des tuiles de Home Assistant éclairent leurs pièces dans la maison 3D, au crépuscule" width="800" />
+</p>
 
 ## Pourquoi Owlnest ?
 
@@ -53,67 +57,75 @@ Une maison de démo est fournie pour essayer la carte avec vos propres lumières
 
 | Fonctionnalité | Détail |
 |---|---|
-| Import | Glissez un export Sweet Home 3D (dossier, fichiers ou zip) ou un `.glb` sur la carte. Portes et fenêtres sont repérées et réglées pour vous ; un plan lourd peut être allégé pour une tablette murale. |
+| Dessin | Un éditeur de plan dans la carte : pièces, murs, portes, fenêtres, limites pour les pièces ouvertes, modèles de logement, une image à décalquer et plus de 200 meubles. |
+| Étages et escaliers | Plusieurs étages empilés en 3D ; escaliers droits, en L, en U ou en colimaçon, avec la trémie et le garde-corps à l'étage. |
+| Apparence | Des styles de maison tout faits, des façades (enduit, brique, bois, pierre), un toit en pente, un jardin et un ciel qui suit la météo et l'heure. |
+| Import | Déposez un fichier Sweet Home 3D (`.sh3d`, ou son export OBJ) ou un `.glb` sur la carte. Portes et fenêtres sont trouvées et réglées pour vous. |
 | Lumières | Allumage, intensité et couleur synchronisés avec les entités `light.*`. |
-| Portes et volets | Rotation, glissement, déroulement ou lecture des animations du GLB. |
+| Portes et fenêtres | Battant, coulissant, oscillo-battant, déroulant, ou lecture des animations du GLB. |
 | Capteurs | Valeurs affichées à l'endroit où vous placez les ancres. |
 | Commandes | Clic sur une ancre pour piloter l'appareil, appui long pour ouvrir ses détails. L'action dépend du type d'entité. |
 | Règles | Déplacement de la caméra, mise en évidence d'une ancre ou message selon l'état d'une entité. |
 | Météo et soleil | Éclairage lié à `sun.sun`, pluie, neige, brouillard et orages liés à votre entité météo. |
-| Murs | Les objets qui cachent les pièces s'effacent lorsque vous tournez autour du modèle. |
-| Navigation | Souris, tactile et points de vue enregistrés. |
+| Murs | Murs debout avec le toit, coupés, fantômes ou baissés. |
+| Navigation | Souris, tactile, une barre des pièces pour aller dans une pièce, et des points de vue enregistrés. |
 
 Les ancres prennent en charge `light`, `switch`, `sensor`, `binary_sensor`, `cover`, `climate` et `media_player`. L'interface est disponible en français et en anglais.
 
 ## En action
 
+Chaque séquence ci-dessous a été enregistrée dans un vrai Home Assistant, avec ses appareils de démonstration.
+
 <table>
   <tr>
-    <th colspan="2">Lumières synchronisées en temps réel</th>
+    <th colspan="2">Dessiner sa maison</th>
   </tr>
   <tr>
-    <td colspan="2" align="center"><img src="assets/OnOffLight.gif" alt="Les lumières de la maison 3D suivent les entités Home Assistant lorsqu'elles s'allument et s'éteignent" width="800" /></td>
+    <td colspan="2" align="center"><img src="assets/draw.gif" alt="Partir d'un modèle, ajouter une fenêtre et pousser un mur dans l'éditeur de plan pendant que la 3D suit" width="800" /></td>
   </tr>
   <tr>
-    <td colspan="2">Quand une lampe s'allume ou change de couleur, la lumière dans le modèle suit. Vous pouvez aussi la commander depuis son ancre. <a href="docs/guide-fr.md#ancres">Réglages des lumières →</a></td>
+    <td colspan="2">Partez d'un modèle ou d'une page blanche, ajoutez portes et fenêtres, poussez les murs, choisissez les sols. La 3D suit pendant que vous dessinez. <a href="docs/guide-fr.md#dessiner-sa-maison">Guide du plan →</a></td>
   </tr>
   <tr>
-    <th>Placement des appareils</th>
-    <th>Portes et volets</th>
+    <th>Étages et escaliers</th>
+    <th>Un style d'un clic</th>
   </tr>
   <tr>
-    <td><img src="assets/moveLight.gif" alt="Placement et déplacement d'une ancre dans l'éditeur visuel" width="400" /></td>
-    <td><img src="assets/openings.gif" alt="Une porte suit son entité, avec sa poignée et sa couleur d'état" width="400" /></td>
+    <td><img src="assets/floors.gif" alt="Ajouter un étage et un escalier en L, puis passer d'un étage à l'autre sur la carte" width="400" /></td>
+    <td><img src="assets/look.gif" alt="Essayer des styles de maison tout faits, puis voir la maison avec son toit sous un ciel nuageux" width="400" /></td>
   </tr>
   <tr>
-    <td>Les ancres se placent sur le modèle et se déplacent dans l'éditeur. Chacune peut être reliée à une entité. <a href="docs/guide-fr.md#ancres">Guide des ancres →</a></td>
-    <td>Une porte ou un volet bouge avec son entité. Le mouvement se règle et se teste dans l'éditeur. <a href="docs/guide-fr.md#ouvrants">Guide des ouvrants →</a></td>
+    <td>Ajoutez un étage et posez un escalier : l'étage du dessus reçoit sa trémie. <a href="docs/guide-fr.md#étages-et-escaliers">Guide des étages →</a></td>
+    <td>Brique, bois, pierre ou enduit, un toit et un jardin. <a href="docs/guide-fr.md#apparence">Guide de l'apparence →</a></td>
   </tr>
   <tr>
-    <th>Vues caméra</th>
-    <th>Règles</th>
+    <th>Vos appareils, pièce par pièce</th>
+    <th>Portes et fenêtres</th>
   </tr>
   <tr>
-    <td><img src="assets/vue.gif" alt="Transitions fluides entre des points de vue enregistrés de la maison" width="400" /></td>
-    <td><img src="assets/rules.gif" alt="Des règles visuelles font réagir la scène aux états des entités Home Assistant" width="400" /></td>
+    <td><img src="assets/devices.gif" alt="Poser d'un clic chaque appareil de Home Assistant dans la pièce du même nom" width="400" /></td>
+    <td><img src="assets/openings.gif" alt="Une porte d'entrée qui s'ouvre et se referme en 3D quand son interrupteur change dans Home Assistant" width="400" /></td>
   </tr>
   <tr>
-    <td>Vous pouvez enregistrer un point de vue pour y revenir plus tard. <a href="docs/guide-fr.md#vues-caméra">Guide des vues caméra →</a></td>
-    <td>Par exemple, un capteur de mouvement peut déclencher le passage à la vue de la pièce. <a href="docs/guide-fr.md#moteur-de-règles">Guide des règles →</a></td>
+    <td>Un clic pose les appareils de chaque pièce de Home Assistant dans la pièce du plan du même nom. <a href="docs/guide-fr.md#ancres">Guide des appareils →</a></td>
+    <td>Une porte, une fenêtre ou un volet bouge avec son entité. <a href="docs/guide-fr.md#ouvrants">Guide des ouvrants →</a></td>
   </tr>
   <tr>
-    <th colspan="2">Météo et soleil</th>
+    <th>Pièces, vues et règles</th>
+    <th>Météo, ciel et nuit</th>
   </tr>
   <tr>
-    <td colspan="2" align="center"><img src="assets/meteo.gif" alt="Effets météo et changements de lumière du jour dans la scène 3D" width="400" /></td>
+    <td><img src="assets/rules.gif" alt="Aller dans une pièce depuis la barre des pièces, puis une règle de mouvement qui amène la caméra à l'entrée" width="400" /></td>
+    <td><img src="assets/weather.gif" alt="Nuages, pluie, crépuscule et nuit sur la maison 3D, fenêtres éclairées" width="400" /></td>
   </tr>
   <tr>
-    <td colspan="2">Le soleil suit <code>sun.sun</code>. La pluie, la neige et le brouillard dépendent de votre entité météo. <a href="docs/guide-fr.md#environnement">Réglages de l'environnement →</a></td>
+    <td>Allez dans une pièce d'un toucher. Une règle peut amener la caméra à l'entrée quand quelqu'un arrive. <a href="docs/guide-fr.md#moteur-de-règles">Guide des règles →</a></td>
+    <td>Le ciel suit votre entité météo et le soleil. La nuit, les pièces éclairées brillent de dehors. <a href="docs/guide-fr.md#environnement">Guide de l'environnement →</a></td>
   </tr>
 </table>
 
 <p align="center">
-  <a href="https://mestrieesteban.github.io/ha-owlnest/?lang=fr"><img src="https://img.shields.io/badge/%E2%96%B6%20Essayer%20la%20d%C3%A9mo%20en%20ligne-6C63FF?style=for-the-badge" alt="Essayer la démo en ligne" height="40" /></a>
+  <a href="https://mestrieesteban.github.io/ha-owlnest/?lang=fr"><img src="https://img.shields.io/badge/%E2%96%B6%20Essayer%20la%20d%C3%A9mo-6C63FF?style=for-the-badge" alt="Essayer la démo en ligne" height="40" /></a>
 </p>
 
 ## Installation
@@ -175,17 +187,17 @@ Sans `model_url`, Owlnest charge la maison incluse. Cliquez sur un repère **+**
 
 Essayez d'allumer une lumière reliée. Vous pouvez aussi glisser pour tourner autour de la maison, utiliser la molette pour zoomer ou naviguer avec les gestes tactiles.
 
-### Utilisez votre logement
+### Dessiner votre maison
 
-Le plus simple est [Sweet Home 3D](https://www.sweethome3d.com/fr/), un logiciel gratuit d'aménagement intérieur. [▶ Voir la vidéo de l'import](https://www.youtube.com/watch?v=4hBuNCvALFA) (2 min, en anglais).
+1. Sur la carte, cliquez sur **Dessiner mon logement** (ou le crayon, puis l'onglet **Plan**).
+2. Partez d'un modèle, d'une page blanche ou d'une image de votre plan. Tracez les pièces d'un glissé, posez portes et fenêtres sur les murs, poussez les murs à la bonne taille.
+3. Ajoutez un étage depuis la barre des niveaux, et un escalier avec l'outil **Escalier**.
+4. Nommez les pièces comme vos pièces de Home Assistant, puis dans **Appareils**, choisissez **Poser les appareils de chaque pièce**.
+5. Dans **Apparence**, choisissez un style. Tout est enregistré au fur et à mesure.
 
-1. Dans Sweet Home 3D, ouvrez votre logement et choisissez **Vue 3D → Exporter au format OBJ**. Exportez tous les éléments dans un dossier vide.
-2. **Glissez ce dossier sur la carte.** Ses fichiers ou un zip fonctionnent aussi. Vous pouvez également cliquer sur **Importer mon plan**, dans le bandeau de la démo ou en haut de l'onglet **Config** de l'éditeur.
-3. Si le plan est lourd, la carte propose de l'alléger pour une tablette murale et explique ce que cela change. L'option est décochée par défaut.
-4. La carte propose d'ajouter les portes et fenêtres trouvées. Cliquez sur **Les ajouter**, puis choisissez le capteur de chacune dans l'onglet **Ouvrants**.
-5. Ouvrez l'éditeur avec le **crayon**. Dans **Ancres**, cliquez sur **+ Ajouter**, cliquez sur le modèle pour placer l'ancre, puis choisissez une entité comme `light.salon`. Les modifications sont sauvegardées automatiquement.
+### Vous avez déjà un fichier Sweet Home 3D ?
 
-Glisser à nouveau votre plan après l'avoir retouché garde vos ancres, et demande quoi faire de vos ouvrants : les garder, ajouter seulement les nouveaux, ou les remplacer en gardant les capteurs déjà reliés. L'import demande un compte administrateur. [Guide de l'import →](docs/guide-fr.md#importer-votre-plan)
+[▶ Voir la vidéo d'import](https://www.youtube.com/watch?v=4hBuNCvALFA) (2 min). Déposez votre fichier `.sh3d` sur la carte : il devient un plan modifiable, avec ses murs, ses pièces, ses portes, ses fenêtres, ses meubles et tous ses niveaux. L'export OBJ (**Vue 3D → Exporter au format OBJ**, en dossier, fichiers ou zip) marche toujours et garde le modèle exactement tel que dessiné. L'import demande un compte administrateur. [Guide d'import →](docs/guide-fr.md#importer-votre-plan)
 
 <details>
 <summary><strong>Utiliser un GLB fait ailleurs (Blender…)</strong></summary>
@@ -202,12 +214,15 @@ Un plan importé depuis la carte passe devant `model_url`.
 
 </details>
 
-**Astuce d'édition :** appuyez sur **G** pour déplacer une ancre sélectionnée, puis sur **X**, **Y** ou **Z** pour limiter le mouvement à un axe.
+**Astuce d'édition :** dans le plan, des lettres choisissent les outils (**R** pièce, **M** mur, **P** porte, **F** fenêtre, **H** escalier, **N** meubles). Dans l'éditeur 3D, appuyez sur **G** pour déplacer l'appareil choisi, puis sur **X**, **Y** ou **Z** pour limiter le mouvement à un axe.
 
 ## Documentation
 
 | Sujet | Guide |
 |---|---|
+| Dessiner pièces, murs, portes et meubles | [Dessiner sa maison](docs/guide-fr.md#dessiner-sa-maison) |
+| Ajouter des étages et des escaliers | [Étages et escaliers](docs/guide-fr.md#étages-et-escaliers) |
+| Choisir un style, un toit, un jardin et un ciel | [Apparence](docs/guide-fr.md#apparence) |
 | Importer un plan Sweet Home 3D ou un GLB | [Importer votre plan](docs/guide-fr.md#importer-votre-plan) |
 | Naviguer à la souris ou au tactile | [Navigation dans la scène](docs/guide-fr.md#navigation-dans-la-scène) |
 | Configurer les appareils, les étiquettes et leur visibilité | [Ancres](docs/guide-fr.md#ancres) |
@@ -252,7 +267,7 @@ Pour la sauvegarde, vérifiez que l'intégration Owlnest est active et qu'une sc
 <details>
 <summary><strong>La scène est lente, ou l'échelle semble incorrecte</strong></summary>
 
-Réduisez le nombre de polygones et la taille des textures du modèle. Dans l'onglet **Config** de l'éditeur, désactivez les ombres et le ciel atmosphérique si nécessaire ; les effets météo inutilisés peuvent aussi être désactivés.
+Dans **Réglages → Performance**, baissez le niveau de qualité, et activez **Afficher les performances** pour voir si l'appareil suit. Pour un modèle importé, réduisez son nombre de polygones et la taille de ses textures.
 
 Les modèles peuvent être en mètres, centimètres ou pouces : les effets qui dépendent des distances s'adaptent à la taille globale du modèle. Si les objets sont disproportionnés entre eux, corrigez-les dans votre logiciel 3D avant l'export.
 
@@ -268,4 +283,4 @@ Pour travailler sur le code, consultez [DEVELOPMENT.md](DEVELOPMENT.md) : instal
 
 [MIT](LICENSE) · Esteban Mestrie.
 
-La maison de démonstration incluse utilise le [Furniture Kit](https://kenney.nl/assets/furniture-kit) de [Kenney](https://kenney.nl), publié sous licence CC0.
+La maison de démonstration et le catalogue de meubles utilisent le [Furniture Kit](https://kenney.nl/assets/furniture-kit) de [Kenney](https://kenney.nl) et le pack [Ultimate Home Interior](https://quaternius.com/packs/ultimatehomeinterior.html) de Quaternius, tous publiés sous CC0.

@@ -37,7 +37,11 @@
 
 Owlnest is a Home Assistant card that displays your home in 3D. Lights in the model follow your actual lamps: on/off, colour and brightness. You can also place sensors and have doors or shutters move with their entity's state.
 
-**Bring your own home in one gesture:** drop your Sweet Home 3D export on the card. It is converted in your browser, its doors and windows are found and set up, and it shows up right away. No Blender, no converter, no file to copy.
+**Draw your home right in the card:** rooms, doors and windows, floors and stairs, furniture, then pick a style. No Blender, no model to make anywhere else. Already have a Sweet Home 3D file? Drop it on the card and it becomes an editable plan.
+
+<p align="center">
+  <img src="assets/lights.gif" alt="Lights turned on from Home Assistant tiles light up their rooms in the 3D home at dusk" width="800" />
+</p>
 
 ## Why Owlnest?
 
@@ -53,62 +57,70 @@ A demo house is included so you can try the card with your own lights before mak
 
 | Feature | Details |
 |---|---|
-| Import | Drop a Sweet Home 3D export (folder, files or zip) or a `.glb` on the card. Doors and windows are found and set up for you; heavy plans can be lightened for wall tablets. |
+| Draw | A plan editor in the card: rooms, walls, doors, windows, open-plan boundaries, templates, a picture to trace over, and more than 200 pieces of furniture. |
+| Floors and stairs | Several floors stacked in 3D; straight, L, U or spiral stairs, with an opening and a railing upstairs. |
+| Look | Ready-made house styles, facades (render, brick, timber, stone), a pitched roof, a garden, and a sky that follows the weather and the time of day. |
+| Import | Drop a Sweet Home 3D file (`.sh3d`, or its OBJ export) or a `.glb` on the card. Doors and windows are found and set up for you. |
 | Lights | On/off, brightness and colour synchronized with `light.*` entities. |
-| Doors and shutters | Swinging, sliding, extending or playback of animations in the GLB. |
+| Doors and windows | Swinging, sliding, tilt-and-turn, extending, or playback of animations in the GLB. |
 | Sensors | Values displayed wherever you place their anchors. |
 | Controls | Tap an anchor to control the device, hold it to open its details. The action depends on the entity type. |
 | Rules | Move the camera, highlight an anchor or show a message based on an entity's state. |
 | Weather and sun | Lighting from `sun.sun`; rain, snow, fog and storms from your weather entity. |
-| Walls | Objects blocking the rooms fade as you orbit the model. |
-| Navigation | Mouse, touch and saved viewpoints. |
+| Walls | Walls up with the roof, cutaway, ghost walls or walls down. |
+| Navigation | Mouse, touch, a rooms bar to fly to a room, and saved viewpoints. |
 
 Anchors support `light`, `switch`, `sensor`, `binary_sensor`, `cover`, `climate` and `media_player`. The interface is available in English and French.
 
 ## In action
 
+Every clip below was recorded in a real Home Assistant, with its demo devices.
+
 <table>
   <tr>
-    <th colspan="2">Lights synchronized in real time</th>
+    <th colspan="2">Draw your home</th>
   </tr>
   <tr>
-    <td colspan="2" align="center"><img src="assets/OnOffLight.gif" alt="Lights changing in the 3D home as their Home Assistant entities are toggled" width="800" /></td>
+    <td colspan="2" align="center"><img src="assets/draw.gif" alt="Starting from a template, adding a window and pushing a wall in the plan editor while the 3D follows" width="800" /></td>
   </tr>
   <tr>
-    <td colspan="2">When a lamp turns on or changes colour, the light in the model follows. You can also control it from its anchor. <a href="docs/guide.md#anchors">Light settings →</a></td>
+    <td colspan="2">Start from a template or a blank page, add doors and windows, push walls, pick floors. The 3D follows as you draw. <a href="docs/guide.md#drawing-your-home">Plan guide →</a></td>
   </tr>
   <tr>
-    <th>Placing devices</th>
-    <th>Doors and shutters</th>
+    <th>Floors and stairs</th>
+    <th>A style in one tap</th>
   </tr>
   <tr>
-    <td><img src="assets/moveLight.gif" alt="Placing and moving a device anchor in the visual editor" width="400" /></td>
-    <td><img src="assets/openings.gif" alt="A door moving with its entity, including its handle and state colour" width="400" /></td>
+    <td><img src="assets/floors.gif" alt="Adding a floor and an L-shaped staircase, then switching floors on the card" width="400" /></td>
+    <td><img src="assets/look.gif" alt="Trying ready-made house styles, then the house with its roof under a cloudy sky" width="400" /></td>
   </tr>
   <tr>
-    <td>Place anchors on the model and move them in the editor. Each one can be linked to an entity. <a href="docs/guide.md#anchors">Anchor guide →</a></td>
-    <td>A door or shutter moves with its entity. Set up and preview the movement in the editor. <a href="docs/guide.md#openings">Opening guide →</a></td>
+    <td>Add a floor and place stairs: the floor above gets its opening. <a href="docs/guide.md#floors-and-stairs">Floors guide →</a></td>
+    <td>Brick, timber, stone or render, a roof and a garden. <a href="docs/guide.md#look">Look guide →</a></td>
   </tr>
   <tr>
-    <th>Camera views</th>
-    <th>Rules</th>
+    <th>Your devices, room by room</th>
+    <th>Doors and windows</th>
   </tr>
   <tr>
-    <td><img src="assets/vue.gif" alt="Smooth camera transitions between saved viewpoints of the home" width="400" /></td>
-    <td><img src="assets/rules.gif" alt="Visual rules making the scene react to Home Assistant entity states" width="400" /></td>
+    <td><img src="assets/devices.gif" alt="Placing every Home Assistant device in the room of the same name in one tap" width="400" /></td>
+    <td><img src="assets/openings.gif" alt="A front door opening and closing in 3D when its Home Assistant toggle changes" width="400" /></td>
   </tr>
   <tr>
-    <td>Save a viewpoint to return to it later. <a href="docs/guide.md#camera-views">Camera guide →</a></td>
-    <td>For example, a motion sensor can trigger a switch to that room's camera view. <a href="docs/guide.md#rules-engine">Rules guide →</a></td>
+    <td>One tap places the devices of each Home Assistant area in the plan room of the same name. <a href="docs/guide.md#anchors">Devices guide →</a></td>
+    <td>A door, a window or a shutter moves with its entity. <a href="docs/guide.md#openings">Openings guide →</a></td>
   </tr>
   <tr>
-    <th colspan="2">Weather and sun</th>
+    <th>Rooms, views and rules</th>
+    <th>Weather, sky and night</th>
   </tr>
   <tr>
-    <td colspan="2" align="center"><img src="assets/meteo.gif" alt="Weather effects and changing daylight in the 3D scene" width="400" /></td>
+    <td><img src="assets/rules.gif" alt="Flying to rooms from the rooms bar, then a motion rule bringing the camera to the entrance" width="400" /></td>
+    <td><img src="assets/weather.gif" alt="Clouds, rain, dusk and night over the 3D house, with lit windows" width="400" /></td>
   </tr>
   <tr>
-    <td colspan="2">The sun follows <code>sun.sun</code>. Rain, snow and fog depend on your weather entity. <a href="docs/guide.md#environment">Environment settings →</a></td>
+    <td>Fly to a room in one tap. A rule can bring the camera to the entrance when someone walks in. <a href="docs/guide.md#rules-engine">Rules guide →</a></td>
+    <td>The sky follows your weather entity and the sun. At night, lit rooms glow from outside. <a href="docs/guide.md#environment">Environment guide →</a></td>
   </tr>
 </table>
 
@@ -175,17 +187,17 @@ Without a `model_url`, Owlnest loads the included house. Click a **+** marker on
 
 Try toggling a linked light. You can also drag to orbit, scroll to zoom, or use touch gestures to explore the house.
 
-### Use your own home
+### Draw your own home
 
-The easiest way is [Sweet Home 3D](https://www.sweethome3d.com/), a free home design app. [▶ Watch the import video](https://www.youtube.com/watch?v=4hBuNCvALFA) (2 min).
+1. On the card, click **Draw my home** (or the pencil, then the **Plan** tab).
+2. Start from a template, a blank page or a picture of your plan. Draw rooms with one drag, add doors and windows on the walls, push walls to the right size.
+3. Add a floor from the floor bar, and stairs with the **Stairs** tool.
+4. Name the rooms like your Home Assistant areas, then in **Devices**, choose **Place the devices of each room**.
+5. In **Look**, pick a style. Everything is saved as you go.
 
-1. In Sweet Home 3D, open your home and choose **3D view → Export to OBJ format**. Export all the items into an empty folder.
-2. **Drop that folder onto the card.** Its files or a zip of it work too. You can also click **Import my floor plan**, in the demo banner or at the top of the editor's **Config** tab.
-3. If the plan is heavy, the card offers to lighten it for wall tablets and explains what that changes. It is unchecked by default.
-4. The card offers to add the doors and windows it found. Click **Add them**, then pick the sensor of each one in the **Openings** tab.
-5. Open the editor with the **pencil**. In **Anchors**, click **+ Add**, click the model to place the anchor, then choose an entity such as `light.living_room`. Changes are saved automatically.
+### Already have a Sweet Home 3D file?
 
-Dropping your plan again after editing it keeps your anchors, and asks what to do with your openings: keep them, add only the new ones, or replace them while keeping the sensors already linked. Importing requires an administrator account. [Import guide →](docs/guide.md#importing-your-floor-plan)
+[▶ Watch the import video](https://www.youtube.com/watch?v=4hBuNCvALFA) (2 min). Drop your `.sh3d` file on the card: it becomes an editable plan with its walls, rooms, doors, windows, furniture and every level. The OBJ export (**3D view → Export to OBJ format**, as a folder, files or zip) still works and keeps the model exactly as drawn. Importing requires an administrator account. [Import guide →](docs/guide.md#importing-your-floor-plan)
 
 <details>
 <summary><strong>Using a GLB made elsewhere (Blender…)</strong></summary>
@@ -202,12 +214,15 @@ A plan imported from the card takes precedence over `model_url`.
 
 </details>
 
-**Editing tip:** press **G** to move a selected anchor, then **X**, **Y** or **Z** to constrain movement to an axis.
+**Editing tip:** in the plan, letters pick the tools (**R** room, **M** wall, **P** door, **F** window, **H** stairs, **N** furniture). In the 3D editor, press **G** to move a selected device, then **X**, **Y** or **Z** to constrain movement to an axis.
 
 ## Documentation
 
 | Topic | Guide |
 |---|---|
+| Draw rooms, walls, doors and furniture | [Drawing your home](docs/guide.md#drawing-your-home) |
+| Add floors and stairs | [Floors and stairs](docs/guide.md#floors-and-stairs) |
+| Pick a style, a roof, a garden and a sky | [Look](docs/guide.md#look) |
 | Import a Sweet Home 3D plan or a GLB | [Importing your floor plan](docs/guide.md#importing-your-floor-plan) |
 | Navigate with mouse or touch | [Scene navigation](docs/guide.md#scene-navigation) |
 | Configure devices, labels and visibility | [Anchors](docs/guide.md#anchors) |
@@ -252,7 +267,7 @@ For saving, check that the Owlnest integration is active and that a scene is sel
 <details>
 <summary><strong>The scene runs slowly, or the scale looks wrong</strong></summary>
 
-Reduce the model's polygon count and texture sizes. In the editor's **Config** tab, disable shadows and the atmospheric sky if needed; unused weather effects can also be disabled.
+In **Settings → Performance**, lower the quality level, and turn on **Show performance** to see how the device keeps up. For an imported model, reduce its polygon count and texture sizes.
 
 Models can use metres, centimetres or inches: distance-dependent effects adapt to the model's overall size. If objects are out of proportion within the model, correct them in your 3D software before exporting.
 
@@ -268,4 +283,4 @@ To work on the code, see [DEVELOPMENT.md](DEVELOPMENT.md) for local setup, testi
 
 [MIT](LICENSE) · Esteban Mestrie.
 
-The included demo house uses the [Furniture Kit](https://kenney.nl/assets/furniture-kit) by [Kenney](https://kenney.nl), released under CC0.
+The included demo house and the furniture catalogue use the [Furniture Kit](https://kenney.nl/assets/furniture-kit) by [Kenney](https://kenney.nl) and the [Ultimate Home Interior](https://quaternius.com/packs/ultimatehomeinterior.html) pack by Quaternius, all released under CC0.

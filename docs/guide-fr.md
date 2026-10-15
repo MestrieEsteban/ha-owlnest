@@ -2,6 +2,9 @@
 
 🇬🇧 [English version](guide.md) · ← [Retour au README](../README-FR.md)
 
+- [Dessiner sa maison](#dessiner-sa-maison)
+- [Étages et escaliers](#étages-et-escaliers)
+- [Apparence](#apparence)
 - [Importer votre plan](#importer-votre-plan)
 - [Navigation dans la scène](#navigation-dans-la-scène)
 - [Ancres](#ancres)
@@ -12,6 +15,59 @@
 - [Rendu et apparence](#rendu-et-apparence)
 - [Raccourcis clavier (mode édition)](#raccourcis-clavier-mode-édition)
 - [Configuration YAML complète](#configuration-yaml-complète)
+
+---
+
+## Dessiner sa maison
+
+<p align="center">
+  <img src="../assets/draw.gif" alt="Partir d'un modèle, ajouter une fenêtre et pousser un mur pendant que la 3D suit" width="700" />
+</p>
+
+Cliquez sur **Dessiner mon logement** sur la carte, ou ouvrez l'éditeur avec le crayon et choisissez l'onglet **Plan**. Le plan est à gauche, la 3D à droite ; **Plan**, **Plan + 3D** et **3D** passent de l'un à l'autre.
+
+- **Pour commencer** : une page blanche, un modèle (studio, une ou deux chambres, maison, meublés), ou **Depuis une image** : chargez un plan ou une photo, réglez son échelle en mesurant une longueur connue, et dessinez par-dessus.
+- **Pièce** (R) : tirez un rectangle. **Mur** (M) : cliquez point après point, tapez une longueur au clavier si besoin, refermez sur un coin pour finir. **Limite** (L) : une ligne invisible qui sépare un espace ouvert en deux pièces (une cuisine ouverte et un salon).
+- **Porte** (P), **Fenêtre** (F), **Baie** (B), **Passage** (O) : cliquez sur un mur. Faites-les glisser le long du mur ; inversez le côté des gonds ou le sens d'ouverture dans leur bulle.
+- **Meubles** (N) : plus de 200 meubles, rangés par pièce. Glissez-en un sur le plan ; il s'aimante aux murs et aux coins, et un petit objet posé sur une table reste dessus (Alt pour le placer librement). **Mes meubles** accueille vos propres fichiers GLB ou OBJ. Une lampe peut être reliée à une lumière de Home Assistant : son abat-jour s'allume avec elle.
+- **Sélection** (V) : faites glisser un mur, un coin, une porte ou un meuble. Une pièce isolée se déplace d'un bloc. Double-cliquez sur une pièce pour la renommer, clic droit pour plus de choix. **Gomme** (E) efface ce que vous touchez.
+- Sélectionnez une pièce pour régler son sol (uni, parquet, carrelage, béton, moquette), sa couleur et celle de ses murs.
+- **Mon logement**, sans rien de sélectionné : hauteur et épaisseur des murs, image à décalquer et import Sweet Home 3D.
+
+Tout est enregistré au fur et à mesure ; **Ctrl+Z** et **Ctrl+Y** annulent et rétablissent.
+
+> Nommez vos pièces comme vos pièces de Home Assistant : dans **Appareils**, **Poser les appareils de chaque pièce** place alors les lampes, capteurs et prises de chaque pièce dans la pièce du plan du même nom.
+
+---
+
+## Étages et escaliers
+
+<p align="center">
+  <img src="../assets/floors.gif" alt="Ajouter un étage et un escalier en L, puis passer d'un étage à l'autre sur la carte" width="700" />
+</p>
+
+- **Ajoutez un étage** avec **+** dans la barre des niveaux, en haut à gauche du plan. Il reprend les murs et les pièces du niveau du dessous ; retirez ou déplacez ce qui change. Le niveau du dessous apparaît en pointillés, pour dessiner pile au-dessus. Touchez l'étage actif pour le renommer.
+- **Escalier** (H) : cliquez là où il commence. Dans sa bulle, choisissez la **forme** (droit, en L, en U, colimaçon), le côté où il **tourne**, la **largeur** (ou le **rayon** d'un colimaçon) et la **pente** (douce, normale, raide). Le nombre de marches et la longueur découlent de la hauteur : une marche ne dépasse jamais 20 cm. **Tourner** le fait pivoter d'un quart de tour, **Retourner** inverse le sens de montée.
+- L'étage du dessus reçoit une **trémie** avec un **garde-corps**, ouverte du côté où l'on arrive. Sur son plan, la trémie est barrée.
+- Sur la carte, le choix d'étage de la barre des pièces passe d'un niveau à l'autre ; les étages au-dessus de celui qu'on regarde sont masqués. Un toit en pente se voit au dernier étage, murs debout.
+- Une pièce aux murs bas (moins de 1,30 m, comme un balcon) reste à ciel ouvert ; un toit plat reçoit un muret.
+
+---
+
+## Apparence
+
+<p align="center">
+  <img src="../assets/look.gif" alt="Essayer des styles de maison, puis la maison avec son toit sous un ciel nuageux" width="700" />
+</p>
+
+L'onglet **Apparence** rassemble tout ce qui se voit.
+
+- **Styles tout faits** : enduit clair, brique, bois, pierre, moderne, sombre. Un clic règle la façade, le soubassement, le toit, le jardin et la couleur du sol.
+- **Maison** : couleur et matière de la façade (lisse, enduit, brique, bois, pierre), un soubassement plus sombre, le toit (ouvert pour voir dedans, ou en pente) et sa couverture (tuiles, ardoise, zinc). Ces réglages appartiennent à la maison dessinée et valent pour tous les étages.
+- **Terrain** : un jardin (aucun, quelques arbres, fourni), le style du sol (carré, disque, podium, infini, aucun), sa couleur et sa taille, un fond transparent.
+- **Ciel et lumière** : le ciel, l'intensité du soleil et de l'ambiance, l'exposition et les ombres, puis les entités soleil et météo et la simulation de l'heure (voir [Environnement](#environnement)).
+
+Le ciel est **Automatique** par défaut : dégagé par beau temps, quelques nuages par temps variable (ou sans entité météo), couvert quand il pleut, neige ou qu'il y a du brouillard, et il suit le jour, le crépuscule et la nuit. **Dégagé** et **Nuageux** gardent le même ciel quel que soit le temps ; **Studio sombre** est un fond sombre uni ; **Simple** est l'ancien dégradé.
 
 ---
 
@@ -62,7 +118,7 @@ Glissez à nouveau votre plan après l'avoir retouché dans Sweet Home 3D : ancr
 Les ancres sont des points interactifs placés dans la scène 3D. Chaque ancre est liée à une entité Home Assistant.
 
 <p align="center">
-  <img src="../assets/moveLight.gif" alt="Déplacement d'une ancre dans l'éditeur" width="600" />
+  <img src="../assets/devices.gif" alt="Déplacement d'une ancre dans l'éditeur" width="600" />
 </p>
 
 ### Domaines supportés
@@ -203,7 +259,7 @@ Les vues caméra vous permettent de sauvegarder des points de vue et de naviguer
 4. La vue apparaît dans la barre de navigation en bas de la scène
 
 <p align="center">
-  <img src="../assets/vue.gif" alt="Navigation entre vues caméra" width="600" />
+  <img src="../assets/rules.gif" alt="Navigation entre vues caméra" width="600" />
 </p>
 
 ### Vues cachées
@@ -306,7 +362,7 @@ Configurez `weather_entity: weather.maison` pour des effets visuels dynamiques :
 
 
 <p align="center">
-  <img src="../assets/meteo.gif" alt="Effets météo et soleil" width="600" />
+  <img src="../assets/weather.gif" alt="Effets météo et soleil" width="600" />
 </p>
 
 ---
