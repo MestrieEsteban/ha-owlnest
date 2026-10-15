@@ -25367,7 +25367,10 @@ class uM {
     return { ok: l, missing: n };
   }
   _mountClips(e) {
-    const t = this._root, n = new sM(t ?? new _t(), (t == null ? void 0 : t.animations) ?? [], e.clips ?? []), i = t ? rM(n.nodes, t) : null;
+    const t = this._root, n = new sM(t ?? new _t(), (t == null ? void 0 : t.animations) ?? [], e.clips ?? []);
+    for (const s of n.nodes)
+      s.userData.owlnestAnimated = (s.userData.owlnestAnimated ?? 0) + 1;
+    const i = t ? rM(n.nodes, t) : null;
     return {
       cfg: e,
       rig: n,
@@ -25380,7 +25383,12 @@ class uM {
   }
   _unmountClips(e) {
     var t;
-    (t = e.tint) == null || t.restore(), e.rig.restore();
+    (t = e.tint) == null || t.restore();
+    for (const n of e.rig.nodes) {
+      const i = Number(n.userData.owlnestAnimated) - 1;
+      i > 0 ? n.userData.owlnestAnimated = i : delete n.userData.owlnestAnimated;
+    }
+    e.rig.restore();
   }
   _placeClips(e) {
     var t;
@@ -29790,7 +29798,7 @@ function vM(a, e, t = 1) {
 const ko = 2;
 function wM(a, e) {
   for (let t = a; t && t !== e; t = t.parent)
-    if (t.userData.owlnestPartId || t.userData.owlnestHelper || t.userData.owlnestBatch) return !0;
+    if (t.userData.owlnestPartId || t.userData.owlnestAnimated || t.userData.owlnestHelper || t.userData.owlnestBatch) return !0;
   return !1;
 }
 function MM(a, e) {
@@ -29798,7 +29806,7 @@ function MM(a, e) {
   const n = (i) => {
     for (const s of i.children)
       if (!(t || !s.visible)) {
-        if (s.userData.owlnestPartId || s.userData.owlnestLive || s.isMesh && !e.has(s)) {
+        if (s.userData.owlnestPartId || s.userData.owlnestAnimated || s.userData.owlnestLive || s.isMesh && !e.has(s)) {
           t = !0;
           return;
         }

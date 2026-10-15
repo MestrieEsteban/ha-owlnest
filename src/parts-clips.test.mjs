@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { clipRange, clipInfos, ClipRig, commonAncestor } from './parts-clips.mjs';
 import { PartController } from './parts-runtime.mjs';
+import { StaticBatch } from './batching.mjs';
 
 const T0 = 1 / 24;
 const T1 = 41 / 24;
@@ -138,6 +139,31 @@ test('PartController pose les animations d’après la position de l’entité',
 
   c.dispose(root);
   assert.ok(right.quaternion.angleTo(qRest()) < NEAR);
+});
+
+test('une transition HA animée reste visible et demande des images jusqu’à sa fin', () => {
+  const { root, right, mesh, meshL } = sofa();
+  const autre = meshL.clone();
+  root.add(autre);
+  const c = new PartController();
+  c.build(root, [ANIM]);
+
+  const batch = new StaticBatch(root);
+  assert.equal(batch.merge(), 2, 'les objets réellement statiques restent regroupés');
+  assert.equal(mesh.visible, true, 'la géométrie pilotée par le clip ne doit pas être figée puis cachée');
+
+  assert.equal(c.applyStates({
+    'cover.sofa': { state: 'open', attributes: { current_position: 100 } },
+  }), true);
+  assert.equal(c.update(0.25), true, 'la boucle doit redessiner la première fraction');
+  const quarter = qRest().slerp(qOpen(), 0.25);
+  assert.ok(right.quaternion.angleTo(quarter) < NEAR, 'la pose intermédiaire doit être échantillonnée');
+
+  let frames = 1;
+  while (c.update(0.25)) frames++;
+  assert.ok(frames > 1, 'la boucle doit continuer tant que la cible n’est pas atteinte');
+  assert.ok(right.quaternion.angleTo(qOpen()) < NEAR);
+  assert.equal(c.update(0.25), false, 'la boucle peut se rendormir une fois la pose atteinte');
 });
 
 test('invert et aperçu avancent la même course', () => {

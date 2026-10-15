@@ -26,7 +26,7 @@ const MIN_GROUP = 2;
 /** Un objet qui appartient à un ouvrant, ou que la carte a ajouté elle-même. */
 function isMoving(o: THREE.Object3D, root: THREE.Object3D): boolean {
   for (let n: THREE.Object3D | null = o; n && n !== root; n = n.parent) {
-    if (n.userData.owlnestPartId || n.userData.owlnestHelper || n.userData.owlnestBatch) return true;
+    if (n.userData.owlnestPartId || n.userData.owlnestAnimated || n.userData.owlnestHelper || n.userData.owlnestBatch) return true;
   }
   return false;
 }
@@ -37,7 +37,10 @@ function carriesSomething(mesh: THREE.Object3D, merged: Set<THREE.Object3D>): bo
   const visit = (o: THREE.Object3D) => {
     for (const c of o.children) {
       if (found || !c.visible) continue;
-      if (c.userData.owlnestPartId || c.userData.owlnestLive || ((c as THREE.Mesh).isMesh && !merged.has(c))) { found = true; return; }
+      if (
+        c.userData.owlnestPartId || c.userData.owlnestAnimated || c.userData.owlnestLive
+        || ((c as THREE.Mesh).isMesh && !merged.has(c))
+      ) { found = true; return; }
       visit(c);
     }
   };
