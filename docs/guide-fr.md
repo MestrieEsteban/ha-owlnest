@@ -87,8 +87,25 @@ Pour les entités `light`, trois styles sont disponibles :
 | `point` | Lumière omnidirectionnelle (ampoule classique) |
 | `spot` | Faisceau conique dirigé (spot encastré) |
 | `beam` | Faisceau étroit et concentré (projecteur) |
+| `mesh` | **Forme objet** — une lumière rectangulaire par hôte GLB choisi (approximation de la boîte englobante). Disponible seulement si au moins un objet hôte est sélectionné. |
 
-Le style et la direction se configurent dans les propriétés de l'ancre en mode édition.
+On peut **activer plusieurs types à la fois** (ex. point + mesh). Persistance : `lightStyle` s’il n’y en a qu’un, sinon `lightStyles: [...]`. Le style, la direction et les options ci-dessous se règlent dans le **flotante lumière** (mode édition : placer une lumière, ou cliquer son marqueur / sa ligne → **Modifier la lumière…**).
+
+### Modes, objet et émisivité
+
+Une ancre lumière peut :
+
+| Mode | Comment |
+|---|---|
+| **Lumière 3D seule** | Émettre une Point/Spot (défaut). Aucun objet GLB requis. |
+| **Émisivité seule** | Décocher « Émettre une lumière 3D » et choisir une ou plusieurs mailles — les objets brillent, sans Point/Spot. |
+| **Les deux** | Lumière 3D + maille(s) hôte(s) pour l’émisivité. |
+
+- **Objet(s)** : optionnel sauf pour l’émisivité ou le style **forme objet** (alors au moins un). Clic sur le modèle ou arbre d’objets ; **Ctrl+clic** ajoute/retire une maille (clic simple remplace). Tout retirer fait repasser `mesh` en `point`.
+- **Émisivité** : lueur sur **chaque** hôte choisi avec la **même couleur** que la lumière 3D ; curseur d’intensité ; liaison optionnelle à la luminosité HA.
+- **Forme objet (`mesh`)** : éclaire via un rectangle calé sur la boîte englobante de chaque hôte (pas une vraie lumière maillée). Combinable avec point/spot/beam.
+- **Ancrer la lumière à l’objet** : si des hôtes sont choisis et qu’un type positionnel (point/spot/beam) est actif, ces lumières passent au **centre AABB combiné**. Les rectangles mesh restent sur chaque hôte.
+- **Couleur / intensité** : partagées par **tous** les casts sélectionnés et l’émisivité ; HA prime, sinon secours du panneau.
 
 
 ### Interactions
@@ -112,6 +129,15 @@ Configurez cela dans les propriétés de l'ancre → **Visible si** dans l'édit
 | `icon` | Icône MDI personnalisée (ex: `mdi:thermometer`) |
 | `precision` | Nombre de décimales pour les capteurs (ex: `0` → "18", `1` → "17.6") |
 | `lightIntensity` | Multiplicateur d'intensité lumineuse (défaut: 1) |
+| `castLight` | Émettre une Point/Spot 3D (`false` = émisivité seule) |
+| `lightStyle` | Type de cast unique (`point` / `spot` / `beam` / `mesh`) |
+| `lightStyles` | Plusieurs types de cast à la fois (si plus d’un) |
+| `lightMesh` / `lightMeshIndex` / `lightTriangle` | Hôte GLB unique (historique / un seul) |
+| `lightMeshes` | Plusieurs hôtes GLB `{ mesh, meshIndex?, triangle? }[]` (si plus d’un) |
+| `emissiveLevel` | Intensité émissive max sur le(s) hôte(s) (défaut 0.8) |
+| `linkEmissiveBrightness` | Émisivité × luminosité HA (défaut true s’il y a un hôte) |
+| `attachLightToObject` | Placer la lumière 3D au centre AABB combiné des hôtes |
+| `lightColor` / `lightColorTemp` | Couleur de secours (`#rrggbb`) / mireds pour la Point/Spot et l’émisivité |
 
 ---
 
