@@ -6,6 +6,7 @@
  */
 
 import type { Hass, CardConfig, OwlnestScene, OwlnestAnchor, CameraView, EditableAnchor } from './types';
+import { uniqueSceneId } from './scene-file';
 
 // ── WebSocket helpers ──────────────────────────────────────────────────────
 
@@ -97,6 +98,56 @@ export async function deleteScene(hass: Hass, sceneId: string): Promise<boolean>
   });
   failedSceneFallbacks.delete(sceneId);
   return res?.success === true;
+}
+
+/**
+ * Lit la scène telle que le serveur la garde, sans repli : exporter ou copier
+ * une scène vide à la place d'une scène illisible détruirait l'originale.
+ */
+export async function readScene(hass: Hass, sceneId: string): Promise<OwlnestScene> {
+  return hass.callWS<OwlnestScene>({ type: 'owlnest/load_scene', scene_id: sceneId });
+}
+
+/**
+ * Renomme une scène : copie sous le nouveau nom, puis suppression de l'ancienne.
+ *
+ * Le backend n'a pas de commande de renommage ; composer les commandes
+ * existantes évite d'exiger une mise à jour de l'intégration. Si la
+ * suppression échoue, il reste deux copies — rien n'est perdu.
+ */
+export async function renameScene(hass: Hass, from: string, to: string): Promise<void> {
+  const dest = to.trim();
+  if (!dest) throw new Error('Scene name is empty');
+  if (dest === from) return;
+  if ((await listScenes(hass)).includes(dest)) throw new Error(`Scene "${dest}" already exists`);
+  const scene = await readScene(hass, from);
+  await hass.callWS<{ success: boolean }>({
+    type: 'owlnest/save_scene',
+    scene_id: dest,
+    data: { ...scene, scene_id: dest },
+  });
+  forgetSceneFailure(dest);
+  await deleteScene(hass, from);
+  forgetSceneFailure(from);
+}
+
+/**
+ * Duplique une scène sous un identifiant libre (`salon` → `salon_2`).
+ *
+ * Même contenu que l'originale, y compris le modèle, les ancres et les
+ * ouvrants. La carte reste sur la scène ouverte : comme à l'import, c'est
+ * l'utilisateur qui clique pour l'ouvrir.
+ */
+export async function duplicateScene(hass: Hass, from: string): Promise<string> {
+  const dest = uniqueSceneId(from, await listScenes(hass));
+  const scene = await readScene(hass, from);
+  await hass.callWS<{ success: boolean }>({
+    type: 'owlnest/save_scene',
+    scene_id: dest,
+    data: { ...scene, scene_id: dest },
+  });
+  forgetSceneFailure(dest);
+  return dest;
 }
 
 /**
