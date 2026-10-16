@@ -12,7 +12,7 @@ export type EntityDomain =
   | 'binary_sensor'
   | string;
 
-export type LightStyle = 'point' | 'spot' | 'beam';
+export type LightStyle = 'point' | 'spot' | 'beam' | 'mesh';
 
 /**
  * Nature d'une ancre — orthogonale au domaine de l'entité.
@@ -98,6 +98,13 @@ export interface CameraView {
   hidden?: boolean;                    // When true: available for rules/fly-to but hidden from HUD
 }
 
+/** Réf. d'un mesh GLB hôte d'une ancre lumière (émisivité / ancrage). */
+export interface LightHostRef {
+  mesh: string;
+  meshIndex?: number;
+  triangle?: number;
+}
+
 /** Anchor config stored in YAML (legacy) or derived from an OwlnestScene */
 export interface AnchorConfig {
   entity: string;
@@ -105,8 +112,21 @@ export interface AnchorConfig {
   label?: string;
   hidden?: boolean;
   lightStyle?: LightStyle;
+  /** Plusieurs styles de cast actifs (si >1). Un seul reste en `lightStyle`. */
+  lightStyles?: LightStyle[];
   lightIntensity?: number;
   lightDirection?: [number, number, number];
+  castLight?: boolean;
+  lightMesh?: string;
+  lightMeshIndex?: number;
+  lightTriangle?: number;
+  /** Plusieurs hôtes GLB (si >1). Un seul hôte reste en `lightMesh*`. */
+  lightMeshes?: LightHostRef[];
+  emissiveLevel?: number;
+  linkEmissiveBrightness?: boolean;
+  attachLightToObject?: boolean;
+  lightColor?: string;
+  lightColorTemp?: number;
   visibleIf?: import('./rules/types').EntityCondition;
   precision?: number;   // decimal places for sensor display (e.g. 0 → "18", 1 → "17.6")
   icon?: string;        // override icon, e.g. "mdi:thermometer"
@@ -149,8 +169,37 @@ export interface OwlnestAnchor {
   visible?: boolean;
   variant?: string;
   lightStyle?: LightStyle;
+  /** Plusieurs styles de cast actifs (si >1). Un seul reste en `lightStyle`. */
+  lightStyles?: LightStyle[];
   lightIntensity?: number;
   lightDirection?: [number, number, number];
+  /**
+   * Émet une Point/Spot 3D. Défaut `true` (comportement historique).
+   * `false` = emisivité seule, sans lumière.
+   */
+  castLight?: boolean;
+  /** Maille GLB hôte pour l'émisivité (et ancrage optionnel de position). */
+  lightMesh?: string;
+  lightMeshIndex?: number;
+  lightTriangle?: number;
+  /** Plusieurs hôtes GLB (si >1). Un seul hôte reste en `lightMesh*`. */
+  lightMeshes?: LightHostRef[];
+  /** Tope d'`emissiveIntensity` (0–1). Défaut 0.8 s'il y a un hôte. */
+  emissiveLevel?: number;
+  /**
+   * Si `true`, l'émisivité suit `brightness/255` (0 si off).
+   * Défaut `true` s'il y a un hôte.
+   */
+  linkEmissiveBrightness?: boolean;
+  /**
+   * Si hôte + `castLight` : position de la lumière = centre du mesh.
+   * Défaut `false`.
+   */
+  attachLightToObject?: boolean;
+  /** Couleur manuelle `#rrggbb` pour la Point/Spot (repli si HA n'en fournit pas). */
+  lightColor?: string;
+  /** Température manuelle en mireds pour la Point/Spot (repli). */
+  lightColorTemp?: number;
   visibleIf?: import('./rules/types').EntityCondition; // show/hide overlay based on entity state
   precision?: number;
   icon?: string;
@@ -466,8 +515,14 @@ export interface CardConfig {
 // ── Runtime types ──────────────────────────────────────────────────────────
 
 export interface AnchorEntry {
-  light: THREE.PointLight | THREE.SpotLight | null;
+  light: THREE.PointLight | THREE.SpotLight | THREE.RectAreaLight | null;
+  /** Point/Spot additionnels quand plusieurs styles de cast sont actifs. */
+  extraLights?: Array<THREE.PointLight | THREE.SpotLight>;
+  /** RectAreaLights (style `mesh`, un rectangle par hôte). */
+  meshLights?: THREE.RectAreaLight[];
   lightTarget?: THREE.Object3D;
+  /** Cibles Spot additionnelles (spot+beam, etc.). */
+  extraLightTargets?: THREE.Object3D[];
   worldPos: THREE.Vector3;
   entityId: string;
   domain: EntityDomain;
@@ -476,8 +531,19 @@ export interface AnchorEntry {
   label: string;
   hidden?: boolean;
   lightStyle?: LightStyle;
+  lightStyles?: LightStyle[];
   lightIntensity?: number;
   lightDirection?: [number, number, number];
+  castLight?: boolean;
+  lightMesh?: string;
+  lightMeshIndex?: number;
+  lightTriangle?: number;
+  lightMeshes?: LightHostRef[];
+  emissiveLevel?: number;
+  linkEmissiveBrightness?: boolean;
+  attachLightToObject?: boolean;
+  lightColor?: string;
+  lightColorTemp?: number;
   visibleIf?: import('./rules/types').EntityCondition;
   precision?: number;
   icon?: string;
@@ -522,8 +588,19 @@ export interface EditableAnchor {
   label: string;
   hidden?: boolean;
   lightStyle?: LightStyle;
+  lightStyles?: LightStyle[];
   lightIntensity?: number;
   lightDirection?: [number, number, number];
+  castLight?: boolean;
+  lightMesh?: string;
+  lightMeshIndex?: number;
+  lightTriangle?: number;
+  lightMeshes?: LightHostRef[];
+  emissiveLevel?: number;
+  linkEmissiveBrightness?: boolean;
+  attachLightToObject?: boolean;
+  lightColor?: string;
+  lightColorTemp?: number;
   visibleIf?: import('./rules/types').EntityCondition;
   precision?: number;
   icon?: string;

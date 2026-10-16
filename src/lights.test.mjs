@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { lightScale, intensityScale, LIGHT_REFERENCE_SPAN } from './lights.mjs';
+import {
+  lightScale, intensityScale, LIGHT_REFERENCE_SPAN,
+  resolveLightColor, haProvidesLightColor, miredsToColor, kelvinToColor,
+} from './lights.mjs';
 
 /** Envergures relevées sur de vrais modèles. */
 const METRES = 12;      // une maison exprimée en mètres
@@ -61,4 +64,28 @@ test('la mise à l’échelle est monotone', () => {
     assert.ok(k > prev, `${span} devrait donner plus que ${prev}`);
     prev = k;
   }
+});
+
+test('resolveLightColor : priorité rgb → hs → temp → manuel → blanc', () => {
+  assert.equal(resolveLightColor({ rgb_color: [255, 0, 0] }).source, 'rgb_color');
+  assert.equal(resolveLightColor({ hs_color: [120, 100] }).source, 'hs_color');
+  assert.equal(resolveLightColor({ color_temp: 370 }).source, 'color_temp');
+  assert.equal(resolveLightColor({ color_temp_kelvin: 2700 }).source, 'color_temp');
+  assert.equal(resolveLightColor({}, '#ff00ff').source, 'lightColor');
+  assert.equal(resolveLightColor({}, undefined, 300).source, 'lightColorTemp');
+  assert.equal(resolveLightColor({}).source, 'white');
+});
+
+test('haProvidesLightColor détecte rgb/hs/temp', () => {
+  assert.equal(haProvidesLightColor({ rgb_color: [1, 2, 3] }), true);
+  assert.equal(haProvidesLightColor({ color_temp: 200 }), true);
+  assert.equal(haProvidesLightColor({}), false);
+});
+
+test('mireds et kelvin produisent une couleur chaude plausible', () => {
+  const warm = miredsToColor(370);
+  // ~2700 K : rouge > bleu
+  assert.ok(warm.r > warm.b);
+  const fromK = kelvinToColor(2700);
+  assert.ok(Math.abs(warm.r - fromK.r) < 0.05);
 });
