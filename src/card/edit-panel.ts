@@ -21,6 +21,15 @@ import {
   filterOutline, ancestorsOf, locatePart, revealRanks, outlineRows, centredScrollTop, PIECE_ROW,
   type ModelOutline, type OutlineRow,
 } from '../model-outline';
+import { haProvidesLightColor } from '../lights';
+import {
+  DEFAULT_EMISSIVE_LEVEL, hasLightHost, listLightHosts, setLightHosts, sameLightHost,
+  copyLightHostFields, listLightStyles, setLightStyles, hasDirectionalStyle, hasMeshStyle,
+} from '../light-fields';
+import type { LightHostRef, LightStyle } from '../types';
+
+/** Mode du pick partagé ouvrants / hôte lumière. */
+export type PartPickMode = 'part' | 'lightHost';
 
 /** Ce que la carte renvoie quand l'utilisateur clique une pièce du modèle. */
 export interface PickedPart {
@@ -33,6 +42,8 @@ export interface PickedPart {
   triangles: number;
   /** Renseigné quand le clic tombe sur la pièce détachée d'un ouvrant existant. */
   partId?: string;
+  /** Ctrl/Meta : bascule dans une sélection multiple (hôtes lumière). */
+  toggle?: boolean;
 }
 
 /**
@@ -50,7 +61,8 @@ export interface PartHighlightTarget {
 
 export interface PartHighlightRequest {
   hover: PartHighlightTarget | null;
-  selected: PartHighlightTarget | null;
+  /** Une cible, ou plusieurs (hôtes lumière multi-sélection). */
+  selected: PartHighlightTarget | PartHighlightTarget[] | null;
 }
 
 const MOTION_LABEL: Record<string, () => string> = {
@@ -272,6 +284,8 @@ export class EditPanel {
   onReplaceDetectedOpenings?: () => Promise<void>;
   /** Ouvre le sélecteur de fichiers pour importer un plan (admin seulement). */
   onImportModel?: () => void;
+  /** Hôtes émissifs changés : la carte doit remarquer / refusionner. */
+  onLightHostsChanged?: () => void;
 
   private _ruleUndoStack: OwlnestRule[][] = [];
   private _ruleRedoStack: OwlnestRule[][] = [];
@@ -315,7 +329,7 @@ export class EditPanel {
     private getParts?: () => OwlnestPart[],
     private saveParts?: (parts: OwlnestPart[]) => Promise<void>,
     /** Passe la carte en mode « clique une pièce du modèle ». */
-    private onStartPartPicking?: (onPicked: (hit: PickedPart) => void) => void,
+    private onStartPartPicking?: (onPicked: (hit: PickedPart) => void, mode?: PartPickMode) => void,
     /** Entrouvre un ouvrant pour vérifier son sens sans toucher à la maison. */
     private onPreviewPart?: (id: string, fraction: number) => void,
     /**
@@ -519,6 +533,7 @@ export class EditPanel {
 
   hideToolbar() {
     this._closePartModal?.();
+    this._closeLightModal?.();
     this._panel?.remove();
     this._panel = null;
     this.hud.querySelector('#editor-hint-bar')?.remove();
@@ -2461,94 +2476,32 @@ export class EditPanel {
       container.appendChild(precHint);
     }
 
-    // ── Section: Lumière ─────────────────────────────────────────────
+    // ── Section: Lumière → flotante dédié ─────────────────────────────
     if (isLight) {
       secDiv(t('anchorSectionLight'));
-
-      sliderField(t('anchorLightIntensity'), 0.1, 3, 0.1, anchor.lightIntensity ?? 1, '#fbbf24',
-        (v) => `×${v.toFixed(1)}`,
-        (v) => this.getEditor()?.updateAnchor(key, { lightIntensity: v }),
-      );
-
-      // Style buttons
-      const styleRow = document.createElement('div');
-      styleRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin-bottom:4px;';
-      const styleConfigs: { id: import('../types').LightStyle; label: string; icon: string }[] = [
-        { id: 'point', label: t('lightStyleAmbient'), icon: '○' },
-        { id: 'spot',  label: t('lightStyleSpot'),    icon: '◎' },
-        { id: 'beam',  label: t('lightStyleBeam'),    icon: '⊙' },
-      ];
-      let currentStyle = anchor.lightStyle ?? 'point';
-      const styleBtns: HTMLButtonElement[] = [];
-      let dirSection: HTMLDivElement | null = null;
-
-      const syncStyleBtns = () => {
-        styleBtns.forEach((b, i) => {
-          const on = styleConfigs[i].id === currentStyle;
-          b.style.background = on ? 'rgba(251,191,36,0.2)' : 'rgba(255,255,255,0.05)';
-          b.style.color = on ? '#fbbf24' : 'rgba(255,255,255,0.4)';
-          b.style.borderColor = on ? 'rgba(251,191,36,0.5)' : 'rgba(255,255,255,0.08)';
-        });
-      };
-
-      styleConfigs.forEach(({ id, label, icon }) => {
-        const btn = document.createElement('button');
-        btn.style.cssText = [
-          'border:1px solid rgba(255,255,255,0.08)',
-          'border-radius:7px', 'padding:5px 2px', 'cursor:pointer',
-          'font-size:10px', 'font-family:inherit', 'line-height:1.3',
-          'transition:all .15s', 'color:rgba(255,255,255,0.4)',
-          'background:rgba(255,255,255,0.05)',
-          'display:flex', 'flex-direction:column', 'align-items:center', 'gap:2px',
-        ].join(';');
-        btn.innerHTML = `<span style="font-size:14px">${icon}</span><span>${label}</span>`;
-        btn.addEventListener('click', () => {
-          currentStyle = id;
-          syncStyleBtns();
-          this.getEditor()?.updateAnchor(key, { lightStyle: id });
-          if (dirSection) dirSection.style.display = (id === 'spot' || id === 'beam') ? 'block' : 'none';
-          this.scheduleAutoSave();
-        });
-        styleBtns.push(btn);
-        styleRow.appendChild(btn);
-      });
-      syncStyleBtns();
-      container.appendChild(styleRow);
-
-      // ── Section: Orientation ─────────────────────────────────────
-      dirSection = document.createElement('div');
-      dirSection.style.display = (currentStyle === 'spot' || currentStyle === 'beam') ? 'block' : 'none';
-
-      const dirHeader = document.createElement('div');
-      dirHeader.style.cssText = 'font-size:9px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.07em;margin:14px 0 7px;padding-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.06);';
-      dirHeader.textContent = t('anchorSectionOrientation');
-      dirSection.appendChild(dirHeader);
-
-      // Read-only Az/El display
-      const dirDisplay = document.createElement('div');
-      dirDisplay.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px;';
-
-      const dirReadout = document.createElement('span');
-      dirReadout.style.cssText = 'font-size:11px;color:#e2e8f0;font-weight:600;font-variant-numeric:tabular-nums;flex:1;';
-      const dirToAzElStr = (dir?: [number, number, number]) => {
-        const [dx, dy, dz] = dir ?? [0, -1, 0];
-        const elRad = Math.asin(Math.max(-1, Math.min(1, -dy)));
-        const elDeg = elRad * 180 / Math.PI;
-        const az = Math.atan2(dx, dz);
-        const azDeg = Math.round(((az * 180 / Math.PI) + 360) % 360);
-        const sign = elDeg >= 0 ? '↓' : '↑';
-        return `Az ${azDeg}°  ${sign}${Math.abs(Math.round(elDeg))}°`;
-      };
-      dirReadout.textContent = dirToAzElStr(anchor.lightDirection);
-      dirDisplay.appendChild(dirReadout);
-
-      const gizmoHint = document.createElement('span');
-      gizmoHint.style.cssText = 'font-size:9px;color:rgba(255,255,255,0.28);line-height:1.4;text-align:right;';
-      gizmoHint.innerHTML = t('orientationGizmoHint');
-      dirDisplay.appendChild(gizmoHint);
-
-      dirSection.appendChild(dirDisplay);
-      container.appendChild(dirSection);
+      const summary = document.createElement('div');
+      summary.style.cssText = 'font-size:10px;color:#94a3b8;margin-bottom:8px;line-height:1.5;';
+      const cast = anchor.castLight !== false;
+      const hosts = listLightHosts(anchor);
+      const hostLabel = hosts.length === 0
+        ? t('lightHostNone')
+        : hosts.length === 1
+          ? (hosts[0].mesh || t('lightHostSet'))
+          : tn('lightHostCount', hosts.length);
+      summary.textContent = [
+        cast ? t('lightModeCast') : t('lightModeEmissiveOnly'),
+        hostLabel,
+      ].join(' · ');
+      container.appendChild(summary);
+      const editBtn = document.createElement('button');
+      editBtn.textContent = t('lightEditOpen');
+      editBtn.style.cssText = [
+        'width:100%', 'margin-bottom:8px', 'padding:8px 10px', 'border-radius:8px',
+        'background:rgba(251,191,36,0.15)', 'border:1px solid rgba(251,191,36,0.4)',
+        'color:#fbbf24', 'font-size:11px', 'font-weight:600', 'cursor:pointer', 'font-family:inherit',
+      ].join(';');
+      editBtn.addEventListener('click', () => this.openLightModal(key));
+      container.appendChild(editBtn);
     }
 
     // ── Section: Visibilité conditionnelle ────────────────────────────
@@ -3408,6 +3361,665 @@ export class EditPanel {
       row.appendChild(delBtn);
       body.appendChild(row);
     });
+  }
+
+  // ── Lumières (flotante) ───────────────────────────────────────────────────
+
+  private _closeLightModal: (() => void) | null = null;
+  private _lightModalKey: string | null = null;
+  private _lightModalPos: WindowPos | null = null;
+
+  /** Ouvre le flotante de réglage d'une ancre lumière (création ou édition). */
+  openLightModal(key: string, opts?: { isNew?: boolean }) {
+    const editor = this.getEditor();
+    const anchor = editor?.anchors.get(key);
+    if (!anchor || anchor.entity.split('.')[0] !== 'light') return;
+    if (this._lightModalKey === key && document.getElementById('owlnest-light-modal')) return;
+    this._openLightModal(key, anchor, !!opts?.isNew);
+  }
+
+  private _openLightModal(key: string, anchor: EditableAnchor, isNew: boolean) {
+    this._closeLightModal?.();
+    document.getElementById('owlnest-light-modal')?.remove();
+
+    const snap = (a: EditableAnchor): EditableAnchor => ({
+      ...a,
+      position: a.position.clone(),
+      lightDirection: a.lightDirection ? [...a.lightDirection] as [number, number, number] : undefined,
+      ...copyLightHostFields(a),
+    });
+    const original = snap(anchor);
+    const draft = snap(anchor);
+
+    const inputStyle = 'width:100%;box-sizing:border-box;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#e2e8f0;padding:5px 8px;font-size:11px;outline:none;font-family:inherit;';
+    const lblStyle = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;display:block;';
+
+    let saveTimer: ReturnType<typeof setTimeout> | null = null;
+    let closed = false;
+    let hostBefore = hasLightHost(draft);
+
+    const writeLive = (src: EditableAnchor) => {
+      const live = this.getEditor()?.anchors.get(key);
+      if (!live) return;
+      live.entity = src.entity;
+      live.label = src.label;
+      live.hidden = src.hidden;
+      live.lightStyle = src.lightStyle;
+      live.lightIntensity = src.lightIntensity;
+      live.lightDirection = src.lightDirection;
+      Object.assign(live, copyLightHostFields(src));
+    };
+
+    const apply = () => {
+      if (closed) return;
+      writeLive(draft);
+      this.syncLightsToScene();
+      const hostNow = hasLightHost(draft);
+      if (hostNow !== hostBefore) {
+        hostBefore = hostNow;
+        this.onLightHostsChanged?.();
+      }
+      this.requestRender();
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => this.scheduleAutoSave(), 600);
+      paintSections();
+    };
+
+    const dialog = document.createElement('dialog');
+    dialog.id = 'owlnest-light-modal';
+    dialog.style.cssText = [
+      'position:fixed', 'inset:auto', 'margin:0', 'z-index:9999',
+      'top:50%', 'left:50%', 'transform:translate(-50%,-50%)',
+      'width:min(420px,94vw)', 'max-height:86vh',
+      'background:rgba(6,10,22,0.97)', 'backdrop-filter:blur(20px)',
+      'border:1px solid rgba(255,255,255,0.1)', 'border-radius:14px',
+      'box-shadow:0 20px 60px rgba(0,0,0,0.8)', 'padding:0',
+      'color:#e2e8f0', 'font-family:var(--primary-font-family,sans-serif)',
+      'display:flex', 'flex-direction:column', 'overflow:hidden',
+    ].join(';');
+    dialog.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Escape') { e.preventDefault(); void cancel(); }
+    });
+
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.08);flex-shrink:0;gap:8px;';
+    makeDraggable(dialog, hdr, {
+      get: () => this._lightModalPos,
+      set: (pos) => { this._lightModalPos = pos; },
+    });
+    const title = document.createElement('div');
+    title.style.cssText = 'font-size:12px;font-weight:700;flex:1;';
+    title.textContent = draft.label || draft.entity || t('lightModalTitle');
+    hdr.appendChild(title);
+    dialog.appendChild(hdr);
+
+    const body = document.createElement('div');
+    body.style.cssText = 'padding:14px 16px;overflow-y:auto;flex:1;min-height:0;';
+    dialog.appendChild(body);
+
+    const field = (label: string, control: HTMLElement, into: HTMLElement = body) => {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'margin-bottom:12px;';
+      const l = document.createElement('label');
+      l.style.cssText = lblStyle;
+      l.textContent = label;
+      wrap.append(l, control);
+      into.appendChild(wrap);
+      return wrap;
+    };
+
+    // ── Entité / nom / visibilité ───────────────────────────────────────
+    const entityRow = document.createElement('div');
+    entityRow.style.cssText = 'display:flex;gap:6px;margin-bottom:12px;';
+    const entityInput = document.createElement('input');
+    entityInput.type = 'text';
+    entityInput.value = draft.entity;
+    entityInput.style.cssText = inputStyle + ';flex:1;min-width:0;';
+    entityInput.addEventListener('change', () => {
+      draft.entity = entityInput.value.trim() || draft.entity;
+      apply();
+    });
+    const browse = document.createElement('button');
+    browse.textContent = t('anchorBrowse');
+    browse.style.cssText = 'flex:0 0 auto;background:rgba(125,209,252,0.12);border:1px solid rgba(125,209,252,0.3);border-radius:7px;color:#7dd3fc;font-size:11px;padding:6px 10px;cursor:pointer;font-family:inherit;';
+    browse.addEventListener('click', () => {
+      const hass = this.getHass();
+      if (!hass) return;
+      const placed = new Set<string>();
+      this.getEditor()?.anchors.forEach((a) => { if (a.entity) placed.add(a.entity); });
+      openEntityPicker({
+        container: this.overlayContainer,
+        hass,
+        placed,
+        onPick: (entity, name) => {
+          draft.entity = entity;
+          if (!draft.label || draft.label === original.label) draft.label = name;
+          entityInput.value = entity;
+          nameInput.value = draft.label;
+          title.textContent = draft.label || entity;
+          apply();
+        },
+      });
+    });
+    entityRow.append(entityInput, browse);
+    field(t('anchorFieldEntity'), entityRow);
+
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.style.cssText = inputStyle;
+    nameInput.value = draft.label;
+    nameInput.addEventListener('input', () => {
+      draft.label = nameInput.value.trim() || draft.entity.split('.')[1] || draft.entity;
+      title.textContent = draft.label;
+      apply();
+    });
+    field(t('anchorFieldName'), nameInput);
+
+    const hideWrap = document.createElement('label');
+    hideWrap.style.cssText = 'display:flex;align-items:center;gap:7px;font-size:11px;color:#cbd5e1;cursor:pointer;margin-bottom:12px;';
+    const hideCb = document.createElement('input');
+    hideCb.type = 'checkbox';
+    hideCb.checked = !!draft.hidden;
+    hideCb.addEventListener('change', () => { draft.hidden = hideCb.checked || undefined; apply(); });
+    hideWrap.append(hideCb, document.createTextNode(t('lightHidden')));
+    body.appendChild(hideWrap);
+
+    // ── Lumière 3D ───────────────────────────────────────────────────────
+    const castBox = document.createElement('div');
+    castBox.style.cssText = 'margin-bottom:12px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:9px;background:rgba(255,255,255,0.02);';
+    const castWrap = document.createElement('label');
+    castWrap.style.cssText = 'display:flex;align-items:center;gap:7px;font-size:11px;color:#e2e8f0;cursor:pointer;font-weight:600;';
+    const castCb = document.createElement('input');
+    castCb.type = 'checkbox';
+    castCb.checked = draft.castLight !== false;
+    castWrap.append(castCb, document.createTextNode(t('lightCastToggle')));
+    castBox.appendChild(castWrap);
+    const castBody = document.createElement('div');
+    castBody.style.cssText = 'margin-top:10px;';
+    castBox.appendChild(castBody);
+    body.appendChild(castBox);
+
+    const intensityWrap = document.createElement('div');
+    const intHdr = document.createElement('div');
+    intHdr.style.cssText = 'display:flex;justify-content:space-between;margin-bottom:3px;';
+    const intLbl = document.createElement('span');
+    intLbl.style.cssText = lblStyle + ';margin:0;';
+    intLbl.textContent = t('anchorLightIntensity');
+    const intVal = document.createElement('span');
+    intVal.style.cssText = 'font-size:10px;color:#e2e8f0;font-weight:600;';
+    intVal.textContent = `×${(draft.lightIntensity ?? 1).toFixed(1)}`;
+    intHdr.append(intLbl, intVal);
+    const intSl = document.createElement('input');
+    intSl.type = 'range'; intSl.min = '0.1'; intSl.max = '3'; intSl.step = '0.1';
+    intSl.value = String(draft.lightIntensity ?? 1);
+    intSl.style.cssText = 'width:100%;accent-color:#fbbf24;';
+    intSl.addEventListener('input', () => {
+      draft.lightIntensity = parseFloat(intSl.value);
+      intVal.textContent = `×${draft.lightIntensity.toFixed(1)}`;
+      apply();
+    });
+    intensityWrap.append(intHdr, intSl);
+    castBody.appendChild(intensityWrap);
+
+    const styleRow = document.createElement('div');
+    styleRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:4px;margin:10px 0;';
+    const styleConfigs: { id: LightStyle; label: string; icon: string }[] = [
+      { id: 'point', label: t('lightStyleAmbient'), icon: '○' },
+      { id: 'spot', label: t('lightStyleSpot'), icon: '◎' },
+      { id: 'beam', label: t('lightStyleBeam'), icon: '⊙' },
+      { id: 'mesh', label: t('lightStyleMesh'), icon: '▭' },
+    ];
+    const styleHint = document.createElement('div');
+    styleHint.style.cssText = 'font-size:9px;color:#64748b;line-height:1.4;margin:0 0 6px;';
+    styleHint.textContent = t('lightStylesMultiHint');
+    castBody.appendChild(styleHint);
+    const styleBtns: HTMLButtonElement[] = [];
+    const syncStyleBtns = () => {
+      const active = new Set(listLightStyles(draft));
+      const canMesh = hasLightHost(draft);
+      styleBtns.forEach((b, i) => {
+        const id = styleConfigs[i].id;
+        const on = active.has(id);
+        const disabled = id === 'mesh' && !canMesh;
+        b.disabled = disabled;
+        b.style.opacity = disabled ? '0.35' : '1';
+        b.style.cursor = disabled ? 'not-allowed' : 'pointer';
+        b.style.background = on ? 'rgba(251,191,36,0.2)' : 'rgba(255,255,255,0.05)';
+        b.style.color = on ? '#fbbf24' : 'rgba(255,255,255,0.4)';
+        b.style.borderColor = on ? 'rgba(251,191,36,0.5)' : 'rgba(255,255,255,0.08)';
+        b.title = id === 'mesh' && !canMesh ? t('lightStyleMeshNeedHost') : '';
+      });
+      dirHint.style.display = hasDirectionalStyle(draft) ? 'block' : 'none';
+      meshHint.style.display = hasMeshStyle(draft) ? 'block' : 'none';
+    };
+    styleConfigs.forEach(({ id, label, icon }) => {
+      const btn = document.createElement('button');
+      btn.style.cssText = 'border:1px solid rgba(255,255,255,0.08);border-radius:7px;padding:5px 2px;cursor:pointer;font-size:10px;font-family:inherit;line-height:1.3;display:flex;flex-direction:column;align-items:center;gap:2px;background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.4);';
+      btn.innerHTML = `<span style="font-size:14px">${icon}</span><span>${label}</span>`;
+      btn.addEventListener('click', () => {
+        if (id === 'mesh' && !hasLightHost(draft)) return;
+        const set = new Set(listLightStyles(draft));
+        if (set.has(id)) set.delete(id);
+        else set.add(id);
+        if (set.size === 0) set.add('point');
+        setLightStyles(draft, [...set]);
+        syncStyleBtns();
+        apply();
+      });
+      styleBtns.push(btn);
+      styleRow.appendChild(btn);
+    });
+    castBody.appendChild(styleRow);
+
+    const dirHint = document.createElement('div');
+    dirHint.style.cssText = 'font-size:9px;color:#64748b;line-height:1.5;margin-bottom:8px;';
+    dirHint.innerHTML = t('orientationGizmoHint');
+    castBody.appendChild(dirHint);
+    const meshHint = document.createElement('div');
+    meshHint.style.cssText = 'font-size:9px;color:#64748b;line-height:1.5;margin-bottom:8px;display:none;';
+    meshHint.textContent = t('lightStyleMeshHint');
+    castBody.appendChild(meshHint);
+    syncStyleBtns();
+
+    // Color 3D (fallback)
+    const colorBox = document.createElement('div');
+    colorBox.style.cssText = 'margin-top:8px;';
+    const colorRow = document.createElement('div');
+    colorRow.style.cssText = 'display:flex;gap:8px;align-items:center;';
+    const colorInput = document.createElement('input');
+    colorInput.type = 'color';
+    colorInput.value = draft.lightColor ?? '#ffffff';
+    colorInput.style.cssText = 'width:38px;height:28px;padding:0;border:1px solid rgba(255,255,255,0.1);border-radius:6px;background:transparent;cursor:pointer;';
+    const clearColor = document.createElement('button');
+    clearColor.textContent = t('lightColorNone');
+    clearColor.style.cssText = 'flex:1;border-radius:6px;font-size:10px;padding:6px;cursor:pointer;font-family:inherit;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);color:#94a3b8;';
+    colorInput.addEventListener('input', () => { draft.lightColor = colorInput.value; apply(); });
+    clearColor.addEventListener('click', () => {
+      draft.lightColor = undefined;
+      colorInput.value = '#ffffff';
+      apply();
+    });
+    colorRow.append(colorInput, clearColor);
+    field(t('lightColor'), colorRow, colorBox);
+
+    const tempWrap = document.createElement('div');
+    const tempHdr = document.createElement('div');
+    tempHdr.style.cssText = 'display:flex;justify-content:space-between;margin-bottom:3px;';
+    const tempLbl = document.createElement('span');
+    tempLbl.style.cssText = lblStyle + ';margin:0;';
+    tempLbl.textContent = t('lightColorTemp');
+    const tempVal = document.createElement('span');
+    tempVal.style.cssText = 'font-size:10px;color:#e2e8f0;font-weight:600;';
+    const tempSl = document.createElement('input');
+    tempSl.type = 'range'; tempSl.min = '153'; tempSl.max = '500'; tempSl.step = '1';
+    const paintTemp = () => {
+      const m = draft.lightColorTemp;
+      tempSl.value = String(m ?? 370);
+      tempVal.textContent = m !== undefined ? `${m} mired` : t('lightColorTempOff');
+      tempSl.style.opacity = m !== undefined ? '1' : '0.45';
+    };
+    paintTemp();
+    tempHdr.append(tempLbl, tempVal);
+    tempSl.style.cssText = 'width:100%;accent-color:#fbbf24;';
+    tempSl.addEventListener('input', () => {
+      draft.lightColorTemp = parseInt(tempSl.value, 10);
+      paintTemp();
+      apply();
+    });
+    const tempClear = document.createElement('button');
+    tempClear.textContent = t('lightColorTempClear');
+    tempClear.style.cssText = 'margin-top:4px;width:100%;border-radius:6px;font-size:10px;padding:5px;cursor:pointer;font-family:inherit;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);color:#94a3b8;';
+    tempClear.addEventListener('click', () => {
+      draft.lightColorTemp = undefined;
+      paintTemp();
+      apply();
+    });
+    tempWrap.append(tempHdr, tempSl, tempClear);
+    colorBox.appendChild(tempWrap);
+
+    const colorHint = document.createElement('div');
+    colorHint.style.cssText = 'font-size:9px;color:#64748b;line-height:1.5;margin-top:6px;';
+    colorBox.appendChild(colorHint);
+    // Couleur partagée Point/Spot + émisivité : hors du bloc « cast » pour
+    // rester visible en mode émisivité seule.
+    colorBox.style.marginBottom = '12px';
+    body.appendChild(colorBox);
+
+    const refreshColorHint = () => {
+      const st = this.getHass()?.states[draft.entity];
+      const fromHa = haProvidesLightColor(st?.attributes as Record<string, unknown> | undefined);
+      colorHint.textContent = fromHa ? t('lightColorHaHint') : t('lightColorManualHint');
+      colorInput.style.opacity = fromHa ? '0.45' : '1';
+      tempSl.style.opacity = fromHa ? '0.45' : (draft.lightColorTemp !== undefined ? '1' : '0.45');
+    };
+    refreshColorHint();
+
+    castCb.addEventListener('change', () => {
+      draft.castLight = castCb.checked ? undefined : false;
+      paintSections();
+      apply();
+    });
+
+    // ── Émisivité (juste sous la lumière 3D) ─────────────────────────────
+    const emBox = document.createElement('div');
+    emBox.style.cssText = 'margin-bottom:12px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:9px;background:rgba(255,255,255,0.02);';
+    const emTitle = document.createElement('div');
+    emTitle.style.cssText = 'font-size:9px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;';
+    emTitle.textContent = t('lightEmissiveSection');
+    emBox.appendChild(emTitle);
+
+    const emHdr = document.createElement('div');
+    emHdr.style.cssText = 'display:flex;justify-content:space-between;margin-bottom:3px;';
+    const emLbl = document.createElement('span');
+    emLbl.style.cssText = lblStyle + ';margin:0;';
+    emLbl.textContent = t('lightEmissiveLevel');
+    const emVal = document.createElement('span');
+    emVal.style.cssText = 'font-size:10px;color:#e2e8f0;font-weight:600;';
+    const emSl = document.createElement('input');
+    emSl.type = 'range'; emSl.min = '0'; emSl.max = '100'; emSl.step = '1';
+    const paintEm = () => {
+      const lv = draft.emissiveLevel ?? DEFAULT_EMISSIVE_LEVEL;
+      emSl.value = String(Math.round(lv * 100));
+      emVal.textContent = `${Math.round(lv * 100)} %`;
+    };
+    paintEm();
+    emHdr.append(emLbl, emVal);
+    emSl.style.cssText = 'width:100%;accent-color:#fbbf24;';
+    emSl.addEventListener('input', () => {
+      draft.emissiveLevel = emSl.valueAsNumber / 100;
+      paintEm();
+      apply();
+    });
+    emBox.append(emHdr, emSl);
+
+    const linkWrap = document.createElement('label');
+    linkWrap.style.cssText = 'display:flex;align-items:center;gap:7px;font-size:11px;color:#cbd5e1;cursor:pointer;margin-top:8px;';
+    const linkCb = document.createElement('input');
+    linkCb.type = 'checkbox';
+    linkCb.checked = draft.linkEmissiveBrightness !== false;
+    linkCb.addEventListener('change', () => {
+      draft.linkEmissiveBrightness = linkCb.checked ? undefined : false;
+      apply();
+    });
+    linkWrap.append(linkCb, document.createTextNode(t('lightLinkEmissive')));
+    emBox.appendChild(linkWrap);
+    const emNote = document.createElement('div');
+    emNote.style.cssText = 'font-size:9px;color:#64748b;line-height:1.5;margin-top:6px;';
+    emNote.textContent = t('lightEmissiveHint');
+    emBox.appendChild(emNote);
+    body.appendChild(emBox);
+
+    // ── Objets GLB (multi-sélection Ctrl) ────────────────────────────────
+    const hostPart: OwlnestPart = {
+      id: `lighthost_${key}`,
+      entity: '',
+      mesh: '',
+      triangle: 0,
+      motion: 'swing',
+      hinge: 'start',
+      angle: 90,
+      duration: 1.2,
+    };
+    /** Dernier rang touché — pour le scroll / le seed de l'arbre. */
+    let focusHostRank: number | null = null;
+
+    const outlineOf = () => this.getModelOutline?.() ?? null;
+
+    const rankOfHost = (h: LightHostRef): number | null => {
+      const outline = outlineOf();
+      if (!outline) return null;
+      const n = (h.meshIndex !== undefined
+        ? outline.byRank.find((x) => x.meshRank === h.meshIndex && (!h.mesh || x.name === h.mesh))
+        : undefined)
+        ?? (h.mesh ? outline.byRank.find((x) => x.meshRank >= 0 && x.name === h.mesh) : undefined);
+      return n ? n.rank : null;
+    };
+
+    const refFromRank = (rank: number): LightHostRef | null => {
+      const outline = outlineOf();
+      if (!outline) return null;
+      const n = outline.byRank[rank];
+      if (!n) return null;
+      let target = n;
+      if (n.meshRank < 0) {
+        const stack = [...n.children];
+        while (stack.length) {
+          const c = stack.shift()!;
+          if (c.meshRank >= 0) { target = c; break; }
+          stack.push(...c.children);
+        }
+      }
+      if (target.meshRank < 0 && !target.name) return null;
+      return {
+        mesh: target.name || '',
+        meshIndex: target.meshRank >= 0 ? target.meshRank : undefined,
+      };
+    };
+
+    /** Aligne hostPart sur le dernier hôte (seed / reveal de l'arbre). */
+    const syncPrimaryFromHosts = () => {
+      const list = listLightHosts(draft);
+      const last = list[list.length - 1];
+      if (!last) {
+        hostPart.mesh = '';
+        hostPart.meshIndex = undefined;
+        hostPart.triangle = 0;
+        hostPart.node = undefined;
+        hostPart.nodeIndex = undefined;
+        focusHostRank = null;
+        return;
+      }
+      hostPart.mesh = last.mesh;
+      hostPart.meshIndex = last.meshIndex;
+      hostPart.triangle = last.triangle ?? 0;
+      const r = rankOfHost(last);
+      focusHostRank = r;
+      if (r !== null) {
+        const n = outlineOf()!.byRank[r];
+        hostPart.node = n.name;
+        hostPart.nodeIndex = n.rank;
+      } else {
+        hostPart.node = undefined;
+        hostPart.nodeIndex = undefined;
+      }
+    };
+
+    const afterHostsChange = () => {
+      if (hasLightHost(draft)) {
+        if (draft.emissiveLevel === undefined) draft.emissiveLevel = DEFAULT_EMISSIVE_LEVEL;
+        if (draft.linkEmissiveBrightness === undefined) draft.linkEmissiveBrightness = true;
+      } else {
+        draft.emissiveLevel = undefined;
+        draft.linkEmissiveBrightness = undefined;
+        draft.attachLightToObject = undefined;
+        // Mesh exige un hôte : on le retire de la sélection.
+        if (hasMeshStyle(draft)) {
+          setLightStyles(draft, listLightStyles(draft).filter((s) => s !== 'mesh'));
+        }
+      }
+      apply();
+      paintSections();
+    };
+
+    /** Plain = remplace ; Ctrl/Meta = bascule. */
+    const applyHostPick = (ref: LightHostRef, toggle: boolean) => {
+      let list = listLightHosts(draft);
+      if (toggle) {
+        const i = list.findIndex((h) => sameLightHost(h, ref));
+        list = i >= 0 ? list.filter((_, j) => j !== i) : [...list, ref];
+      } else {
+        list = [ref];
+      }
+      setLightHosts(draft, list);
+      syncPrimaryFromHosts();
+      afterHostsChange();
+    };
+
+    syncPrimaryFromHosts();
+
+    const objectSection = this._partObjectSection(hostPart, inputStyle, () => {
+      // Sélection simple (bouton ↑) : remplace par le nœud courant.
+      if (hostPart.nodeIndex !== undefined) {
+        const ref = refFromRank(hostPart.nodeIndex);
+        if (ref) applyHostPick(ref, false);
+      }
+    }, {
+      multiSelect: {
+        selectedRanks: () => listLightHosts(draft)
+          .map(rankOfHost)
+          .filter((r): r is number => r !== null),
+        selectedTargets: () => listLightHosts(draft)
+          .map(rankOfHost)
+          .filter((r): r is number => r !== null)
+          .map((node) => ({ node })),
+        selectRank: (rank, toggle) => {
+          const ref = refFromRank(rank);
+          if (!ref) return;
+          focusHostRank = rank;
+          applyHostPick(ref, toggle);
+        },
+        summaryText: () => {
+          const list = listLightHosts(draft);
+          if (!list.length) return t('lightHostNone');
+          if (list.length === 1) return list[0].mesh || t('lightHostSet');
+          return tn('lightHostCount', list.length);
+        },
+        focusRank: () => focusHostRank,
+      },
+    });
+    if (objectSection) {
+      body.appendChild(objectSection.el);
+      if (hasLightHost(draft)) (objectSection.el as HTMLDetailsElement).open = true;
+    }
+
+    const pickHostBtn = document.createElement('button');
+    pickHostBtn.textContent = t('lightHostPick');
+    pickHostBtn.style.cssText = 'width:100%;margin-bottom:8px;background:rgba(251,191,36,0.12);border:1px solid rgba(251,191,36,0.35);color:#fbbf24;border-radius:6px;padding:6px;font-size:11px;cursor:pointer;font-family:inherit;';
+    pickHostBtn.addEventListener('click', () => {
+      if (!this.onStartPartPicking) return;
+      this.showStatusBar(t('lightHostPickHint'));
+      this.onStartPartPicking((hit) => {
+        if (!hit.toggle) this.hideStatusBar();
+        const ref: LightHostRef = {
+          mesh: hit.mesh,
+          meshIndex: hit.meshIndex >= 0 ? hit.meshIndex : undefined,
+        };
+        this._pieceTris = hit.triangles;
+        applyHostPick(ref, !!hit.toggle);
+        if (objectSection) {
+          (objectSection.el as HTMLDetailsElement).open = true;
+          objectSection.refresh();
+        }
+      }, 'lightHost');
+    });
+    body.insertBefore(pickHostBtn, objectSection?.el ?? null);
+
+    const clearHost = document.createElement('button');
+    clearHost.textContent = t('lightHostClear');
+    clearHost.style.cssText = 'width:100%;margin-bottom:12px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);color:#94a3b8;border-radius:6px;padding:5px;font-size:10px;cursor:pointer;font-family:inherit;';
+    clearHost.addEventListener('click', () => {
+      setLightHosts(draft, []);
+      syncPrimaryFromHosts();
+      afterHostsChange();
+      objectSection?.refresh();
+    });
+    body.appendChild(clearHost);
+
+    // ── Ancrer la lumière à l'objet ───────────────────────────────────────
+    const attachWrap = document.createElement('label');
+    attachWrap.style.cssText = 'display:flex;align-items:center;gap:7px;font-size:11px;color:#cbd5e1;cursor:pointer;margin-bottom:12px;';
+    const attachCb = document.createElement('input');
+    attachCb.type = 'checkbox';
+    attachCb.checked = !!draft.attachLightToObject;
+    attachCb.addEventListener('change', () => {
+      draft.attachLightToObject = attachCb.checked || undefined;
+      apply();
+    });
+    attachWrap.append(attachCb, document.createTextNode(t('lightAttach')));
+    body.appendChild(attachWrap);
+
+    const paintSections = () => {
+      const cast = draft.castLight !== false;
+      const host = hasLightHost(draft);
+      castBody.style.display = cast ? 'block' : 'none';
+      emBox.style.display = host ? 'block' : 'none';
+      // Ancrage utile dès qu'il reste une Point/Spot/Beam (mesh suit déjà les hôtes).
+      const styles = listLightStyles(draft);
+      const hasPositional = styles.some((s) => s !== 'mesh');
+      attachWrap.style.display = (cast && host && hasPositional) ? 'flex' : 'none';
+      clearHost.style.display = host ? 'block' : 'none';
+      syncStyleBtns();
+      refreshColorHint();
+      paintEm();
+    };
+    paintSections();
+
+    // ── Pied ─────────────────────────────────────────────────────────────
+    const foot = document.createElement('div');
+    foot.style.cssText = 'display:flex;gap:8px;padding:12px 16px;border-top:1px solid rgba(255,255,255,0.08);flex-shrink:0;';
+    const mkBtn = (label: string, primary: boolean) => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      b.style.cssText = [
+        'flex:1', 'padding:7px 10px', 'border-radius:7px', 'font-size:11px',
+        'font-weight:600', 'cursor:pointer', 'font-family:inherit',
+        primary ? 'background:#0ea5e9' : 'background:rgba(255,255,255,0.06)',
+        primary ? 'color:#04121f' : 'color:#cbd5e1',
+        primary ? 'border:none' : 'border:1px solid rgba(255,255,255,0.12)',
+      ].join(';');
+      return b;
+    };
+    const close = () => {
+      if (saveTimer) clearTimeout(saveTimer);
+      objectSection?.dispose();
+      if (this._closeLightModal === flushAndClose) this._closeLightModal = null;
+      this._lightModalKey = null;
+      closed = true;
+      dialog.close();
+      dialog.remove();
+    };
+    const cancel = () => {
+      close();
+      const editor = this.getEditor();
+      if (!editor) return;
+      if (isNew) {
+        editor.selectAnchor(key);
+        editor.deleteSelected();
+      } else {
+        writeLive(original);
+        this.syncLightsToScene();
+        this.onLightHostsChanged?.();
+        this.scheduleAutoSave();
+      }
+      this.updateAnchorList();
+    };
+    const flushAndClose = () => {
+      apply();
+      this.scheduleAutoSave();
+      this.onLightHostsChanged?.();
+      close();
+    };
+    this._closeLightModal = flushAndClose;
+    this._lightModalKey = key;
+
+    const cancelBtn = mkBtn(t('btnCancel'), false);
+    cancelBtn.addEventListener('click', () => cancel());
+    const ok = mkBtn(t('ruleModalSave'), true);
+    ok.addEventListener('click', () => flushAndClose());
+    foot.append(cancelBtn, ok);
+    dialog.appendChild(foot);
+
+    document.body.appendChild(dialog);
+    dialog.show();
+    // Après show() : la hauteur de l'arbre est mesurable — recentrer sur l'hôte.
+    if (hasLightHost(draft) && objectSection) {
+      (objectSection.el as HTMLDetailsElement).open = true;
+      objectSection.refresh();
+    } else {
+      objectSection?.reveal();
+    }
+    apply();
   }
 
   // ── Ouvrants ──────────────────────────────────────────────────────────────
@@ -4519,6 +5131,16 @@ export class EditPanel {
     draft: OwlnestPart,
     inputStyle: string,
     onChange: () => void,
+    opts?: {
+      /** Multi-sélection (hôtes lumière) : Ctrl bascule, clic remplace. */
+      multiSelect?: {
+        selectedRanks: () => number[];
+        selectedTargets: () => PartHighlightTarget[];
+        selectRank: (rank: number, toggle: boolean) => void;
+        summaryText: () => string;
+        focusRank: () => number | null;
+      };
+    },
   ): {
     el: HTMLElement; dispose: () => void; reveal: () => void; mute: (on: boolean) => void; refresh: () => void;
   } | null {
@@ -4528,8 +5150,11 @@ export class EditPanel {
     const ROW_H = 21;
     const VIEW_H = 220;
     const OVERSCAN = 8;
+    const multi = opts?.multiSelect;
 
-    const { seed } = locatePart(outline, draft);
+    // `seed` suit le brouillon : un pick lumière (ou un clear) change la maille
+    // sans reconstruire la section — `rebuild` le recalcule.
+    let seed = locatePart(outline, draft).seed;
     const selectedRank = (): number | null => locatePart(outline, draft).selected;
 
     const expanded = new Set<number>(revealRanks(outline, { selected: selectedRank(), seed }));
@@ -4552,9 +5177,11 @@ export class EditPanel {
     };
     let hover: PartHighlightTarget | null = null;
     let muted = false;
-    const highlight = () => this.onHighlightPart?.(
-      muted ? { hover: null, selected: null } : { hover, selected: selectedTarget() },
-    );
+    const highlight = () => {
+      if (muted) { this.onHighlightPart?.({ hover: null, selected: null }); return; }
+      const selected = multi ? multi.selectedTargets() : selectedTarget();
+      this.onHighlightPart?.({ hover, selected });
+    };
 
     // ── Structure ───────────────────────────────────────────────────────
     const box = document.createElement('details');
@@ -4604,7 +5231,7 @@ export class EditPanel {
 
     const hint = document.createElement('div');
     hint.style.cssText = 'font-size:9px;color:#64748b;line-height:1.5;margin-top:5px;';
-    hint.textContent = t('partObjectHint');
+    hint.textContent = multi ? t('lightHostTreeHint') : t('partObjectHint');
     inner.appendChild(hint);
 
     // ── Sélection ───────────────────────────────────────────────────────
@@ -4621,11 +5248,19 @@ export class EditPanel {
     };
     parentBtn.addEventListener('click', (e) => {
       e.preventDefault();
-      const r = selectedRank();
-      const target = r === null ? seed : outline.byRank[r].parent;
+      const r = multi
+        ? (multi.focusRank() ?? selectedRank())
+        : selectedRank();
+      const target = r === null ? seed : outline.byRank[r]?.parent;
       if (!target) return;
       reveal(target.rank);
-      select(target.rank);
+      if (multi) {
+        multi.selectRank(target.rank, false);
+        rebuild();
+        highlight();
+      } else {
+        select(target.rank);
+      }
       pendingReveal = true;
       tryReveal();
     });
@@ -4667,6 +5302,7 @@ export class EditPanel {
     let rows: OutlineRow[] = [];
     let f = filterOutline(outline, '');
     let current: number | null = null;
+    let selectedSet = new Set<number>();
 
     /** Dessine les seules lignes visibles, placées à leur hauteur dans la liste. */
     const paint = () => {
@@ -4677,13 +5313,16 @@ export class EditPanel {
       for (let i = first; i < last; i++) {
         const { rank, node, depth, hasKids, open } = rows[i];
         const toggle = hasKids ? (open ? 'open' : 'closed') : null;
+        const sel = node
+          ? (multi ? selectedSet.has(rank) : current === rank)
+          : (!multi && current === null);
         // La pièce cliquée, feuille virtuelle sous sa maille.
         const el = node
           ? row(rank, depth, node.name, node.meshRank >= 0 ? '△' : '▣', node.tris, toggle,
             !!f.visible && !f.matches.has(rank),
-            node.material ? `${node.name} · ${node.material}` : node.name, current === rank)
+            node.material ? `${node.name} · ${node.material}` : node.name, sel)
           : row(PIECE, depth, t('partObjectPiece'), '◆', this._pieceTris ?? 0,
-            null, false, t('partObjectPieceHint'), current === null);
+            null, false, t('partObjectPieceHint'), sel);
         el.style.top = `${i * ROW_H}px`;
         frag.appendChild(el);
       }
@@ -4698,16 +5337,38 @@ export class EditPanel {
 
     /** Recalcule la liste — dépliage, filtre ou sélection ont changé. */
     const rebuild = () => {
+      const loc = locatePart(outline, draft);
+      seed = loc.seed;
+      // Déplie jusqu'à la cible actuelle (pick / nœud / pièce).
+      for (const r of revealRanks(outline, loc)) {
+        expanded.add(r);
+        collapsed.delete(r);
+      }
+      if (multi) {
+        for (const r of multi.selectedRanks()) {
+          for (const a of ancestorsOf(outline, r)) { expanded.add(a); collapsed.delete(a); }
+          expanded.add(r);
+          collapsed.delete(r);
+        }
+      }
       f = filterOutline(outline, query);
       for (const r of collapsed) f.expand.delete(r);
       const effective = new Set([...expanded].filter((r) => !collapsed.has(r)));
       rows = outlineRows(outline, effective, f, seed);
-      current = selectedRank();
+      current = loc.selected;
+      selectedSet = multi ? new Set(multi.selectedRanks()) : new Set();
       spacer.style.height = `${rows.length * ROW_H}px`;
 
-      const n = current !== null ? outline.byRank[current] : null;
-      summary.textContent = n ? `${n.name} · ${trisLabel(n.tris)}` : `${t('partObjectPiece')}${seed ? ` · ${seed.name}` : ''}`;
-      parentBtn.disabled = n ? !n.parent : !seed;
+      if (multi) {
+        summary.textContent = multi.summaryText();
+        const fr = multi.focusRank() ?? current;
+        const n = fr !== null ? outline.byRank[fr] : null;
+        parentBtn.disabled = n ? !n.parent : !seed;
+      } else {
+        const n = current !== null ? outline.byRank[current] : null;
+        summary.textContent = n ? `${n.name} · ${trisLabel(n.tris)}` : `${t('partObjectPiece')}${seed ? ` · ${seed.name}` : ''}`;
+        parentBtn.disabled = n ? !n.parent : !seed;
+      }
       parentBtn.style.opacity = parentBtn.disabled ? '0.35' : '1';
       paint();
     };
@@ -4723,10 +5384,18 @@ export class EditPanel {
     const tryReveal = () => {
       if (!pendingReveal || !box.open || !tree.isConnected || tree.clientHeight === 0) return;
       pendingReveal = false;
-      const idx = rows.findIndex((r) => r.rank === (current ?? PIECE));
+      const focus = multi
+        ? (multi.focusRank() ?? current ?? PIECE)
+        : (current ?? PIECE);
+      const idx = rows.findIndex((r) => r.rank === focus);
       if (idx < 0) return;
       tree.scrollTop = centredScrollTop(idx, ROW_H, tree.clientHeight, rows.length);
       paint();
+    };
+    const scrollToSelection = () => {
+      pendingReveal = true;
+      tryReveal();
+      requestAnimationFrame(tryReveal);
     };
     box.addEventListener('toggle', () => { if (box.open) requestAnimationFrame(tryReveal); });
 
@@ -4752,7 +5421,19 @@ export class EditPanel {
         return;
       }
       const r = rankAt(e);
-      if (r !== null) select(r);
+      if (r === null) return;
+      if (multi) {
+        const toggle = e.ctrlKey || e.metaKey;
+        const rank = r === PIECE && seed ? seed.rank : r;
+        if (rank === PIECE) return;
+        multi.selectRank(rank, toggle);
+        rebuild();
+        highlight();
+        pendingReveal = true;
+        tryReveal();
+        return;
+      }
+      select(r);
     });
     tree.addEventListener('mouseover', (e) => {
       const r = rankAt(e);
@@ -4799,14 +5480,19 @@ export class EditPanel {
       },
       // Appelé une fois le formulaire affiché ; l'image suivante rattrape un
       // affichage encore en cours de mise en page.
-      reveal: () => { tryReveal(); requestAnimationFrame(tryReveal); },
+      reveal: () => scrollToSelection(),
       // Le surlignage masquerait la teinte qu'on est en train de régler.
       mute: (on: boolean) => {
         if (on === muted) return;
         muted = on;
         highlight();
       },
-      refresh: () => highlight(),
+      /** Relit le brouillon (nouvelle maille après un pick) et recentre la liste. */
+      refresh: () => {
+        rebuild();
+        highlight();
+        scrollToSelection();
+      },
     };
   }
 

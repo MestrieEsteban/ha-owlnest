@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { openEntityPicker } from './entities/picker';
-import type { EditableAnchor, LightStyle } from './types';
+import type { EditableAnchor } from './types';
+import { hasDirectionalStyle } from './light-fields';
 import { t } from './i18n';
 
 export type EditorTool = 'select' | 'add' | 'delete' | 'rotate' | 'add_panel';
@@ -151,9 +152,9 @@ export class AnchorEditor {
       this._selectedKey = null;
       this.onSelectionChange?.(null);
     }
-    // Keep rot gizmo visible if selected anchor is spot/beam
+    // Keep rot gizmo visible if selected anchor has spot/beam
     const selAnchor = this._selectedKey ? this._anchors.get(this._selectedKey) : null;
-    const isDirectional = selAnchor?.lightStyle === 'spot' || selAnchor?.lightStyle === 'beam';
+    const isDirectional = !!selAnchor && hasDirectionalStyle(selAnchor);
     if (tool !== 'rotate' && !isDirectional) {
       this._clearRotGizmo();
     }
@@ -204,15 +205,29 @@ export class AnchorEditor {
 
   selectAnchor(key: string) { this._selectAnchor(key); }
 
+  /** Déplace une ancre (marqueur + gizmos) sans entrée d'historique. */
+  moveAnchorTo(key: string, pos: THREE.Vector3) {
+    const anchor = this._anchors.get(key);
+    if (!anchor) return;
+    anchor.position.copy(pos);
+    this._markers.get(key)?.position.copy(pos);
+    if (key === this._selectedKey) {
+      this._gizmoGroup?.position.copy(pos);
+      this._rotGizmoGroup?.position.copy(pos);
+    }
+  }
+
+  /** Appelé juste après la création d'une ancre (placement + entité). */
+  onAnchorCreated: ((key: string, anchor: EditableAnchor) => void) | null = null;
+
   updateAnchor(key: string, props: Partial<EditableAnchor>) {
     const anchor = this._anchors.get(key);
     if (!anchor) return;
     this._pushUndo();
     Object.assign(anchor, props);
-    // Sync rotation gizmo when lightStyle changes on selected anchor
-    if ('lightStyle' in props && key === this._selectedKey) {
-      const isDirectional = anchor.lightStyle === 'spot' || anchor.lightStyle === 'beam';
-      if (isDirectional) {
+    // Sync rotation gizmo when cast styles change on selected anchor
+    if (('lightStyle' in props || 'lightStyles' in props) && key === this._selectedKey) {
+      if (hasDirectionalStyle(anchor)) {
         this._clearRotGizmo();
         this._buildRotGizmo(anchor.position, anchor.lightDirection);
       } else {
@@ -340,8 +355,7 @@ export class AnchorEditor {
         );
       });
       // Show rotation gizmo for directional lights regardless of active tool
-      const isDirectional = anchor.lightStyle === 'spot' || anchor.lightStyle === 'beam';
-      if (this._tool === 'rotate' || isDirectional) {
+      if (this._tool === 'rotate' || hasDirectionalStyle(anchor)) {
         this._buildRotGizmo(anchor.position, anchor.lightDirection);
       }
     }
@@ -425,8 +439,7 @@ export class AnchorEditor {
   private _buildRotGizmo(pos: THREE.Vector3, dir?: [number, number, number]) {
     this._clearRotGizmo();
     const anchor = this._selectedKey ? this._anchors.get(this._selectedKey) : null;
-    const style = anchor?.lightStyle ?? 'point';
-    if (style !== 'spot' && style !== 'beam') return;
+    if (!anchor || !hasDirectionalStyle(anchor)) return;
 
     const group = new THREE.Group();
     group.position.copy(pos);
@@ -571,8 +584,11 @@ export class AnchorEditor {
       this._anchors.set(key, anchor);
       this._addMarker(key, anchor.position);
       this.setTool('select');
-      this._selectAnchor(key);
       this._pendingPos = null;
+      // Avant la sélection : le flotante lumière doit s'ouvrir en « nouveau »
+      // (Annuler = supprimer), pas seulement en édition.
+      this.onAnchorCreated?.(key, anchor);
+      this._selectAnchor(key);
       this.onChanged?.();
       this.onToolChange?.('select');
     };
@@ -674,8 +690,7 @@ export class AnchorEditor {
     const sep = () => { const s = document.createElement('div'); s.style.cssText = 'height:1px;background:rgba(255,255,255,0.07);margin:3px 0;'; return s; };
 
     menu.appendChild(item(t('hintGrab'), 'G', () => { this.setTool('select'); this._selectAnchor(key); this._startGrab(); }));
-    const style = anchor.lightStyle ?? 'point';
-    if (style === 'spot' || style === 'beam') {
+    if (hasDirectionalStyle(anchor)) {
       menu.appendChild(item(t('hintRotate'), 'R', () => { this.setTool('rotate'); this._selectAnchor(key); }));
     }
     menu.appendChild(sep());
