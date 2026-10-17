@@ -2539,7 +2539,8 @@ export class Ha3dFloorplan extends HTMLElement {
 
       if (this._sunLight) resizeShadow(this._sunLight, q.sunShadowMap);
       this.anchors.forEach(({ light }) => {
-        if (!light) return;
+        // RectAreaLight n'a pas d'ombres WebGL classiques.
+        if (!light || light instanceof THREE.RectAreaLight) return;
         light.castShadow = q.anchorShadows;
         resizeShadow(light, q.anchorShadowMap);
       });
