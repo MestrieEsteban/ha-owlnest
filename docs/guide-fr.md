@@ -202,6 +202,8 @@ Les vues caméra vous permettent de sauvegarder des points de vue et de naviguer
 3. Cliquez **Capturer la vue** et donnez un nom
 4. La vue apparaît dans la barre de navigation en bas de la scène
 
+Dans l'onglet Camera vous pouvez **renommer** une vue (✎), la **réordonner** (↑ / ↓), la masquer de la barre ou la supprimer. La barre du bas met en évidence la dernière vue atteinte ; s'il y en a beaucoup, glissez horizontalement pour faire défiler.
+
 <p align="center">
   <img src="../assets/vue.gif" alt="Navigation entre vues caméra" width="600" />
 </p>

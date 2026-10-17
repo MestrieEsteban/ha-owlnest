@@ -268,6 +268,8 @@ const STRINGS = {
     viewFlyTo:       'Go to view',
     viewOverwrite:   'Overwrite with current camera',
     viewRename:      'Rename',
+    viewMoveUp:      'Move up',
+    viewMoveDown:    'Move down',
     viewDelete:      'Delete',
     noViews:         'No saved views',
 
@@ -963,6 +965,8 @@ const STRINGS = {
     viewFlyTo:       'Aller à cette vue',
     viewOverwrite:   'Écraser avec la vue actuelle',
     viewRename:      'Renommer',
+    viewMoveUp:      'Monter',
+    viewMoveDown:    'Descendre',
     viewDelete:      'Supprimer',
     noViews:         'Aucune vue sauvegardée',
 

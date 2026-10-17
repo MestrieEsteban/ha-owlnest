@@ -202,6 +202,8 @@ Camera views let you save viewpoints and navigate between them with smooth anima
 3. Click **Capture view** and give it a name
 4. The view appears in the navigation bar at the bottom of the scene
 
+In the Camera tab you can **rename** a view (✎), **reorder** it (↑ / ↓), hide it from the bar, or delete it. The bottom bar highlights the view you last flew to; if there are many views, swipe the bar horizontally to scroll.
+
 <p align="center">
   <img src="../assets/vue.gif" alt="Camera views navigation" width="600" />
 </p>
