@@ -405,6 +405,14 @@ export interface OwlnestPart {
 export type EffectKind = 'material' | 'visibility';
 
 /**
+ * Rendu d'un effet `material`.
+ *
+ * - `fill` — teinte la surface (défaut, comme `PartTint`).
+ * - `outline` — arêtes colorées (`EdgesGeometry`), sans peindre le volume.
+ */
+export type EffectMaterialStyle = 'fill' | 'outline';
+
+/**
  * Une cible d'effet : même forme que la cible principale d'`OwlnestEffect`.
  *
  * Un radiateur multi-maille ou plusieurs objets disjoints partagent un effet
@@ -466,14 +474,25 @@ export interface OwlnestEffect {
    */
   color?: string;
   /**
+   * Style `material` : surface pleine ou arêtes seules. Absent : `fill`.
+   */
+  style?: EffectMaterialStyle;
+  /**
    * Intensité de la teinte, 0–1. Absente : 0,55 (même dosage que les ouvrants).
+   * Ignorée en `outline` (seules couleur et lueur comptent).
    */
   strength?: number;
   /**
    * Intensité de la lueur émissive, 0–1. Absente : le dosage d'origine de
-   * `part-tint` (0,35).
+   * `part-tint` (0,35). En `outline`, module l'opacité des arêtes.
    */
   glow?: number;
+  /**
+   * Quand l'effet est actif : dessine l'objet par-dessus le reste du modèle
+   * (`depthTest: false`), comme le surlignage de l'éditeur — lisible à travers
+   * les murs. Absent ou faux : profondeur normale.
+   */
+  seeThrough?: boolean;
 }
 
 export interface OwlnestScene {

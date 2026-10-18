@@ -205,8 +205,10 @@ Effects tint or show/hide model objects from a Home Assistant entity, without mo
 
 | Type | Description |
 |---|---|
-| **Material** | Tints the object(s) with a colour and optional glow when the condition matches (e.g. radiators red while `climate` reports `hvac_action: heating`) |
+| **Material** | Highlights the object(s) when the condition matches (e.g. radiators while `climate` reports `hvac_action: heating`). **Look**: **Fill** tints the whole surface (colour + glow); **Outline** draws coloured edges only |
 | **Visibility** | Shows the object(s) when the condition matches, hides them otherwise (e.g. a person mesh when a presence sensor is on). Optional **Reverse** flips that |
+
+**See through walls** draws the object (or its outline) on top while the effect is active (no depth test), so it stays readable behind walls — same idea as the editor highlight overlays.
 
 **Attribute** (optional) reads an entity attribute instead of the state — for climate, set `hvac_action` and select `heating` under **Active when**. Leave **Active when** empty to use Owlnest's default (on/off for the entity type, or any non-idle attribute value).
 

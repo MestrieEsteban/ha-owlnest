@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import {
   effectMatches, effectActive, EffectController, effectTargetKey, effectTargets,
+  effectWithoutTarget, effectWithTarget,
 } from './effects-runtime.mjs';
 import { DEFAULT_TINT_STRENGTH } from './part-tint.mjs';
 
@@ -159,6 +160,34 @@ test('material : strength par défaut = dosage des ouvrants', () => {
   assert.equal(a, b);
 });
 
+test('material outline : arêtes sans teinter la surface', () => {
+  const { root, rad, shared } = scene();
+  const c = new EffectController();
+  c.build(root, [{ ...MATERIAL, style: 'outline' }]);
+  c.applyStates({
+    'climate.salon': { state: 'heat', attributes: { hvac_action: 'heating' } },
+  });
+  assert.equal(rad.material, shared, 'surface inchangée');
+  const lines = rad.children.filter((o) => o.name === '__owlnest_effect_outline');
+  assert.equal(lines.length, 1);
+  assert.ok(lines[0].isLineSegments);
+  c.applyStates({
+    'climate.salon': { state: 'off', attributes: { hvac_action: 'idle' } },
+  });
+  assert.equal(rad.children.filter((o) => o.name === '__owlnest_effect_outline').length, 0);
+  c.dispose();
+});
+
+test('material outline → fill : retire les arêtes et teinte', () => {
+  const { root, rad, shared } = scene();
+  const c = new EffectController();
+  c.build(root, [{ ...MATERIAL, style: 'outline' }]);
+  c.applyStates({ 'climate.salon': { state: 'heat', attributes: {} } });
+  assert.equal(c.configure({ ...MATERIAL, style: undefined }), true);
+  assert.equal(rad.children.filter((o) => o.name === '__owlnest_effect_outline').length, 0);
+  assert.notEqual(rad.material, shared);
+});
+
 test('visibility : visible si condition, caché sinon', () => {
   const { root, person } = scene();
   assert.equal(person.visible, true);
@@ -221,6 +250,44 @@ test('effectTargets : principale + liste', () => {
   assert.equal(effectTargetKey(cfg), 'node:radiateur#0+node:mur#2');
 });
 
+test('effectWithoutTarget : retire un extra ; promotion si principale', () => {
+  const cfg = {
+    ...MATERIAL,
+    targets: [
+      { mesh: 'mur', meshIndex: 2, triangle: 0, node: 'mur', nodeIndex: 2, label: 'mur' },
+      { mesh: 'personne', meshIndex: 1, triangle: 0, node: 'personne', nodeIndex: 1 },
+    ],
+  };
+  const dropExtra = effectWithoutTarget(cfg, 1);
+  assert.equal(dropExtra.mesh, 'radiateur');
+  assert.equal(dropExtra.targets?.length, 1);
+  assert.equal(dropExtra.targets?.[0].node, 'personne');
+
+  const promote = effectWithoutTarget(cfg, 0);
+  assert.equal(promote.mesh, 'mur');
+  assert.equal(promote.node, 'mur');
+  assert.equal(promote.nodeIndex, 2);
+  assert.equal(promote.targets?.length, 1);
+  assert.equal(promote.targets?.[0].node, 'personne');
+
+  assert.equal(effectWithoutTarget(MATERIAL, 0), MATERIAL, 'seule cible : inchangé');
+});
+
+test('effectWithTarget : ignore les doublons', () => {
+  const once = effectWithTarget(MATERIAL, {
+    mesh: 'mur', meshIndex: 2, triangle: 0, node: 'mur', nodeIndex: 2,
+  });
+  assert.equal(once.targets?.length, 1);
+  const twice = effectWithTarget(once, {
+    mesh: 'mur', meshIndex: 2, triangle: 0, node: 'mur', nodeIndex: 2,
+  });
+  assert.equal(twice.targets?.length, 1);
+  const self = effectWithTarget(MATERIAL, {
+    mesh: 'radiateur', meshIndex: 0, triangle: 0, node: 'radiateur', nodeIndex: 0,
+  });
+  assert.equal(self.targets, undefined);
+});
+
 test('material : plusieurs cibles teintées ensemble', () => {
   const { root, rad, wall, shared } = scene();
   const c = new EffectController();
@@ -267,4 +334,47 @@ test('visibility : multi-cibles + configure change la liste', () => {
   c.setPreview('v1', false);
   assert.equal(person.visible, false);
   assert.equal(wall.visible, false);
+});
+
+test('seeThrough : overlays depthTest false quand actif, retirés sinon', () => {
+  const { root, rad } = scene();
+  const c = new EffectController();
+  c.build(root, [{ ...MATERIAL, seeThrough: true }]);
+  c.applyStates({
+    'climate.salon': { state: 'off', attributes: { hvac_action: 'idle' } },
+  });
+  assert.equal(rad.children.filter((o) => o.userData.owlnestHelper).length, 0);
+
+  c.applyStates({
+    'climate.salon': { state: 'heat', attributes: { hvac_action: 'heating' } },
+  });
+  const overlays = rad.children.filter((o) => o.userData.owlnestHelper);
+  assert.ok(overlays.length >= 1);
+  const mat = overlays[0].material;
+  assert.equal(mat.depthTest, false);
+  assert.equal(mat.depthWrite, false);
+
+  c.applyStates({
+    'climate.salon': { state: 'off', attributes: { hvac_action: 'idle' } },
+  });
+  assert.equal(rad.children.filter((o) => o.userData.owlnestHelper).length, 0);
+
+  c.configure({ ...MATERIAL, seeThrough: true });
+  c.setPreview('e1', true);
+  assert.ok(rad.children.some((o) => o.userData.owlnestHelper));
+  c.setPreview('e1', null);
+  c.dispose();
+  assert.equal(rad.children.filter((o) => o.userData.owlnestHelper).length, 0);
+});
+
+test('seeThrough : visibility pose aussi des overlays quand montré', () => {
+  const { root, person } = scene();
+  const c = new EffectController();
+  c.build(root, [{ ...VISIBILITY, seeThrough: true }]);
+  c.applyStates({ 'binary_sensor.presence': { state: 'on', attributes: {} } });
+  assert.equal(person.visible, true);
+  assert.ok(person.children.some((o) => o.userData.owlnestHelper));
+  c.applyStates({ 'binary_sensor.presence': { state: 'off', attributes: {} } });
+  assert.equal(person.visible, false);
+  assert.equal(person.children.filter((o) => o.userData.owlnestHelper).length, 0);
 });

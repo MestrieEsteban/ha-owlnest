@@ -17,7 +17,9 @@ import { detectionLabel, resolveLevel } from '../quality';
 import type { TapAction } from '../entities/descriptors';
 import type { QualityLevel } from '../quality';
 import type { AnchorKind, OwlnestPart, OwlnestEffect, EffectKind, EffectTarget, ExtendAxis } from '../types';
-import { effectActive, effectRefKey, effectTargets } from '../effects-runtime';
+import {
+  effectActive, effectTargets, effectWithoutTarget, effectWithTarget,
+} from '../effects-runtime';
 import {
   filterOutline, ancestorsOf, locatePart, revealRanks, outlineRows, centredScrollTop, PIECE_ROW,
   type ModelOutline, type OutlineRow,
@@ -4575,9 +4577,17 @@ export class EditPanel {
 
     const { seed } = locatePart(outline, draft);
     const selectedRank = (): number | null => locatePart(outline, draft).selected;
+    const extraRanks = (): number[] => opts?.extraFollowers?.() ?? [];
 
     const expanded = new Set<number>(revealRanks(outline, { selected: selectedRank(), seed }));
     const reveal = (rank: number) => { for (const a of ancestorsOf(outline, rank)) expanded.add(a); };
+    const revealExtras = () => {
+      for (const r of extraRanks()) {
+        for (const a of ancestorsOf(outline, r)) expanded.add(a);
+        expanded.add(r);
+      }
+    };
+    revealExtras();
     /** Replis demandés pendant un filtrage, qui sinon déplie d'office. */
     let collapsed = new Set<number>();
     let query = '';
@@ -4592,7 +4602,7 @@ export class EditPanel {
       const fromExtend = draft.motion === 'extend'
         ? (draft.followers ?? []).map((f) => f.nodeIndex).filter((n): n is number => n !== undefined)
         : [];
-      const extra = opts?.extraFollowers?.() ?? [];
+      const extra = extraRanks();
       const followers = [...fromExtend, ...extra];
       return {
         part: draft.id, node: r ?? undefined, mesh: seed?.meshRank, triangle: draft.triangle,
@@ -4716,6 +4726,7 @@ export class EditPanel {
     let rows: OutlineRow[] = [];
     let f = filterOutline(outline, '');
     let current: number | null = null;
+    let marked = new Set<number>();
 
     /** Dessine les seules lignes visibles, placées à leur hauteur dans la liste. */
     const paint = () => {
@@ -4726,13 +4737,17 @@ export class EditPanel {
       for (let i = first; i < last; i++) {
         const { rank, node, depth, hasKids, open } = rows[i];
         const toggle = hasKids ? (open ? 'open' : 'closed') : null;
+        // Principale + cibles supplémentaires (effets multi-objets) : même marque.
+        const sel = node
+          ? (current === rank || marked.has(rank))
+          : current === null;
         // La pièce cliquée, feuille virtuelle sous sa maille.
         const el = node
           ? row(rank, depth, node.name, node.meshRank >= 0 ? '△' : '▣', node.tris, toggle,
             !!f.visible && !f.matches.has(rank),
-            node.material ? `${node.name} · ${node.material}` : node.name, current === rank)
+            node.material ? `${node.name} · ${node.material}` : node.name, sel)
           : row(PIECE, depth, t('partObjectPiece'), '◆', this._pieceTris ?? 0,
-            null, false, t('partObjectPieceHint'), current === null);
+            null, false, t('partObjectPieceHint'), sel);
         el.style.top = `${i * ROW_H}px`;
         frag.appendChild(el);
       }
@@ -4752,10 +4767,14 @@ export class EditPanel {
       const effective = new Set([...expanded].filter((r) => !collapsed.has(r)));
       rows = outlineRows(outline, effective, f, seed);
       current = selectedRank();
+      marked = new Set(extraRanks());
       spacer.style.height = `${rows.length * ROW_H}px`;
 
       const n = current !== null ? outline.byRank[current] : null;
-      summary.textContent = n ? `${n.name} · ${trisLabel(n.tris)}` : `${t('partObjectPiece')}${seed ? ` · ${seed.name}` : ''}`;
+      const extraN = marked.size;
+      summary.textContent = n
+        ? `${n.name} · ${trisLabel(n.tris)}${extraN ? ` · +${extraN}` : ''}`
+        : `${t('partObjectPiece')}${seed ? ` · ${seed.name}` : ''}${extraN ? ` · +${extraN}` : ''}`;
       parentBtn.disabled = n ? !n.parent : !seed;
       parentBtn.style.opacity = parentBtn.disabled ? '0.35' : '1';
       paint();
@@ -4855,7 +4874,8 @@ export class EditPanel {
         muted = on;
         highlight();
       },
-      refresh: () => highlight(),
+      // Cibles supplémentaires ajoutées : déplier + remarquer l'arbre.
+      refresh: () => { revealExtras(); rebuild(); highlight(); },
     };
   }
 
@@ -4886,13 +4906,20 @@ export class EditPanel {
         (e) => !!e.node && e.nodeIndex === hit.meshIndex && e.mesh === hit.mesh,
       );
       if (existing) { this._openEffectModal(existing, hit); return; }
+      // Même résolution nœud que les cibles ajoutées ensuite (radiateur multi-matériau).
+      const outline = this.getModelOutline?.();
+      const seed = outline
+        ? locatePart(outline, { mesh: hit.mesh, meshIndex: hit.meshIndex }).seed
+        : null;
       this._openEffectModal({
         id: `effect_${Date.now().toString(36)}`,
         kind: 'material',
         entity: '',
         mesh: hit.mesh,
-        meshIndex: hit.meshIndex,
+        meshIndex: hit.meshIndex >= 0 ? hit.meshIndex : undefined,
         triangle: hit.triangle,
+        node: seed?.name,
+        nodeIndex: seed?.rank,
         color: '#ef4444',
       }, hit);
     });
@@ -4972,19 +4999,25 @@ export class EditPanel {
     let saveTimer: ReturnType<typeof setTimeout> | null = null;
     let closed = false;
 
-    /** Rangs des cibles secondaires pour le surlignage (même slot que les suiveurs). */
+    /** Rang d'une cible pour l'arbre / le surlignage suiveur. */
+    const rankOf = (ref: EffectTarget): number | null => {
+      if (ref.nodeIndex !== undefined) return ref.nodeIndex;
+      const outline = this.getModelOutline?.();
+      if (!outline) return null;
+      return locatePart(outline, ref).seed?.rank ?? null;
+    };
+
+    /** Toutes les cibles sauf la principale (déjà dans `selected`). */
     const extraFollowerRanks = (): number[] => {
       const ranks: number[] = [];
       for (const ref of draft.targets ?? []) {
-        if (ref.nodeIndex !== undefined) ranks.push(ref.nodeIndex);
-        else if (ref.meshIndex !== undefined) {
-          const outline = this.getModelOutline?.();
-          const seed = outline ? locatePart(outline, ref).seed : null;
-          if (seed) ranks.push(seed.rank);
-        }
+        const r = rankOf(ref);
+        if (r !== null) ranks.push(r);
       }
       return ranks;
     };
+
+    let fillTargets: () => void = () => {};
 
     const apply = () => {
       if (closed) return;
@@ -4993,6 +5026,7 @@ export class EditPanel {
       }
       // Aperçu forcé « actif » : on voit couleur / visibilité sans attendre HA.
       this.onPreviewEffect?.(draft.id, true);
+      fillTargets();
       objectSection?.refresh();
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(() => { void this._commitEffect(draft, false); }, 600);
@@ -5072,7 +5106,7 @@ export class EditPanel {
     );
     if (objectSection) body.appendChild(objectSection.el);
 
-    // ── Cibles supplémentaires (clic modèle, comme les pièces d'un ouvrant) ──
+    // ── Liste unifiée des cibles (principale + extras) ───────────────────
     const targetsTitle = document.createElement('div');
     targetsTitle.textContent = t('effectTargets');
     targetsTitle.title = t('effectTargetsHint');
@@ -5081,9 +5115,12 @@ export class EditPanel {
     const targetsList = document.createElement('div');
     targetsList.style.cssText = 'display:flex;flex-direction:column;gap:3px;margin-bottom:5px;';
 
-    const fillTargets = () => {
+    const targetLabel = (ref: EffectTarget) =>
+      ref.label || ref.node || `${ref.mesh} · ${ref.triangle}`;
+
+    fillTargets = () => {
       targetsList.textContent = '';
-      const list = draft.targets ?? [];
+      const list = effectTargets(draft);
       if (!list.length) {
         const vide = document.createElement('div');
         vide.textContent = t('effectTargetsEmpty');
@@ -5095,18 +5132,32 @@ export class EditPanel {
         const row = document.createElement('div');
         row.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:10px;color:#94a3b8;background:rgba(255,255,255,0.04);border-radius:4px;padding:3px 6px;';
         const name = document.createElement('span');
-        name.textContent = ref.label || ref.node || `${ref.mesh} · ${ref.triangle}`;
+        name.textContent = i === 0
+          ? `${targetLabel(ref)} · ${t('effectTargetsPrimary')}`
+          : targetLabel(ref);
         name.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
         const drop = document.createElement('button');
         drop.textContent = '\u2715';
         drop.title = t('effectTargetsDrop');
         drop.style.cssText = 'background:none;border:none;color:#94a3b8;cursor:pointer;font-size:11px;padding:0 2px;';
-        drop.addEventListener('click', () => {
-          draft.targets = (draft.targets ?? []).filter((_, j) => j !== i);
-          if (!draft.targets.length) draft.targets = undefined;
-          fillTargets();
-          apply();
-        });
+        // Toujours au moins une cible : pas de croix sur la seule restante.
+        if (list.length <= 1) {
+          drop.disabled = true;
+          drop.style.opacity = '0.35';
+          drop.style.cursor = 'default';
+        } else {
+          drop.addEventListener('click', () => {
+            const next = effectWithoutTarget(draft, i);
+            draft.mesh = next.mesh;
+            draft.meshIndex = next.meshIndex;
+            draft.triangle = next.triangle;
+            draft.node = next.node;
+            draft.nodeIndex = next.nodeIndex;
+            draft.targets = next.targets;
+            fillTargets();
+            apply();
+          });
+        }
         row.append(name, drop);
         targetsList.appendChild(row);
       });
@@ -5138,14 +5189,8 @@ export class EditPanel {
       this.onStartPartPicking((h) => {
         this.hideStatusBar?.();
         const next = hitToTarget(h);
-        const primary = {
-          mesh: draft.mesh, meshIndex: draft.meshIndex, triangle: draft.triangle,
-          node: draft.node, nodeIndex: draft.nodeIndex,
-        };
-        if (effectRefKey(next) === effectRefKey(primary)) return;
-        const pieces = draft.targets ?? [];
-        if (pieces.some((p) => effectRefKey(p) === effectRefKey(next))) return;
-        draft.targets = [...pieces, next];
+        const updated = effectWithTarget(draft, next);
+        draft.targets = updated.targets;
         fillTargets();
         apply();
       });
@@ -5200,6 +5245,31 @@ export class EditPanel {
       // material
       draft.invert = undefined;
       if (!draft.color) draft.color = '#ef4444';
+      const styleSel = document.createElement('select');
+      styleSel.style.cssText = inputStyle + SELECT_STYLE;
+      for (const [value, label] of [
+        ['fill', t('effectStyleFill')],
+        ['outline', t('effectStyleOutline')],
+      ] as const) {
+        const o = document.createElement('option');
+        o.value = value; o.textContent = label;
+        styleSel.appendChild(styleOption(o));
+      }
+      styleSel.value = draft.style === 'outline' ? 'outline' : 'fill';
+      styleSel.addEventListener('change', () => {
+        draft.style = styleSel.value === 'outline' ? 'outline' : undefined;
+        if (draft.style === 'outline') draft.strength = undefined;
+        rebuildLook();
+        apply();
+      });
+      field(t('effectStyle'), styleSel, lookBox);
+      const styleHint = document.createElement('div');
+      styleHint.style.cssText = 'font-size:9px;color:#64748b;line-height:1.5;margin-top:-8px;margin-bottom:12px;';
+      styleHint.textContent = draft.style === 'outline'
+        ? t('effectStyleOutlineHint')
+        : t('effectStyleFillHint');
+      lookBox.appendChild(styleHint);
+
       const colorWrap = document.createElement('div');
       colorWrap.style.cssText = 'display:flex;align-items:center;gap:8px;';
       const colorInput = document.createElement('input');
@@ -5210,23 +5280,25 @@ export class EditPanel {
       colorWrap.appendChild(colorInput);
       field(t('effectColor'), colorWrap, lookBox);
 
-      const strength = document.createElement('input');
-      strength.type = 'range';
-      strength.min = '5'; strength.max = '100'; strength.step = '5';
-      strength.value = String(Math.round((draft.strength ?? 0.55) * 100));
-      const sOut = document.createElement('span');
-      sOut.style.cssText = 'font-size:10px;color:#94a3b8;margin-left:8px;min-width:38px;text-align:right;';
-      sOut.textContent = `${strength.value} %`;
-      strength.addEventListener('input', () => {
-        const v = strength.valueAsNumber;
-        sOut.textContent = `${v} %`;
-        draft.strength = v === 55 ? undefined : v / 100;
-        apply();
-      });
-      const sRow = document.createElement('div');
-      sRow.style.cssText = 'display:flex;align-items:center;';
-      sRow.append(strength, sOut);
-      field(t('effectStrength'), sRow, lookBox);
+      if (draft.style !== 'outline') {
+        const strength = document.createElement('input');
+        strength.type = 'range';
+        strength.min = '5'; strength.max = '100'; strength.step = '5';
+        strength.value = String(Math.round((draft.strength ?? 0.55) * 100));
+        const sOut = document.createElement('span');
+        sOut.style.cssText = 'font-size:10px;color:#94a3b8;margin-left:8px;min-width:38px;text-align:right;';
+        sOut.textContent = `${strength.value} %`;
+        strength.addEventListener('input', () => {
+          const v = strength.valueAsNumber;
+          sOut.textContent = `${v} %`;
+          draft.strength = v === 55 ? undefined : v / 100;
+          apply();
+        });
+        const sRow = document.createElement('div');
+        sRow.style.cssText = 'display:flex;align-items:center;';
+        sRow.append(strength, sOut);
+        field(t('effectStrength'), sRow, lookBox);
+      }
 
       const glow = document.createElement('input');
       glow.type = 'range';
@@ -5252,6 +5324,7 @@ export class EditPanel {
         draft.color = undefined;
         draft.strength = undefined;
         draft.glow = undefined;
+        draft.style = undefined;
       } else if (!draft.color) {
         draft.color = '#ef4444';
       }
@@ -5259,6 +5332,22 @@ export class EditPanel {
       apply();
     });
     rebuildLook();
+
+    // Visible à travers les murs — commun aux deux types.
+    const seeWrap = document.createElement('label');
+    seeWrap.style.cssText = 'display:flex;align-items:flex-start;gap:8px;font-size:11px;color:#cbd5e1;cursor:pointer;margin-bottom:4px;';
+    const seeCb = document.createElement('input');
+    seeCb.type = 'checkbox';
+    seeCb.checked = draft.seeThrough === true;
+    seeCb.style.cssText = 'margin-top:2px;';
+    seeCb.addEventListener('change', () => {
+      draft.seeThrough = seeCb.checked ? true : undefined;
+      apply();
+    });
+    const seeText = document.createElement('span');
+    seeText.innerHTML = `${t('effectSeeThrough')}<div style="font-size:9px;color:#64748b;line-height:1.45;margin-top:2px;">${t('effectSeeThroughHint')}</div>`;
+    seeWrap.append(seeCb, seeText);
+    body.appendChild(seeWrap);
 
     // ── Entité ───────────────────────────────────────────────────────
     const { wrap: entityWrap } = this._entityField(draft.entity, inputStyle, (id) => {

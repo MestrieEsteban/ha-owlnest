@@ -205,8 +205,10 @@ Les effets teintent ou montrent / cachent des objets du modèle d'après une ent
 
 | Type | Description |
 |---|---|
-| **Matériau** | Teinte le ou les objets avec une couleur et une lueur facultative quand la condition est vraie (ex. radiateurs en rouge tant que le `climate` rapporte `hvac_action: heating`) |
+| **Matériau** | Met en évidence le ou les objets quand la condition est vraie (ex. radiateurs tant que le `climate` rapporte `hvac_action: heating`). **Rendu** : **Remplissage** teinte toute la surface (couleur + lueur) ; **Contour** ne dessine que les arêtes colorées |
 | **Visibilité** | Montre le ou les objets quand la condition est vraie, les cache sinon (ex. une silhouette quand un capteur de présence est on). **Inverser** reverse ce sens |
+
+**Visible à travers les murs** dessine l'objet (ou son contour) par-dessus le modèle tant que l'effet est actif (sans test de profondeur), pour le lire derrière un mur — comme le surlignage de l'éditeur.
 
 **Attribut** (facultatif) lit un attribut d'entité à la place de l'état — pour un thermostat, indiquez `hvac_action` et sélectionnez `heating` sous **Actif quand**. Laissez **Actif quand** vide pour le repli d'Owlnest (on/off selon le type d'entité, ou toute valeur d'attribut hors arrêt).
 

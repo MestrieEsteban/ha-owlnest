@@ -1,7 +1,8 @@
 /**
  * effects-runtime.ts — effets visuels pilotés par des entités (sans mouvement).
  *
- * - `material` : teinte + lueur sur copies de matériaux (jamais l'original).
+ * - `material` : teinte + lueur sur copies de matériaux (jamais l'original),
+ *   ou arêtes colorées (`style: 'outline'`).
  * - `visibility` : montre / cache la cible ; la visibilité d'origine est
  *   mémorisée au montage et rendue au démontage.
  *
@@ -96,6 +97,56 @@ export function effectTargetKey(cfg: OwlnestEffect): string {
   return effectTargets(cfg).map(effectRefKey).join('+');
 }
 
+/**
+ * Retire la cible d'indice `index` dans `effectTargets(cfg)`.
+ *
+ * Si c'est la principale, la suivante est promue aux champs plats (compat
+ * scènes enregistrées). Aucune cible restante : inchangé (l'appelant garde
+ * au moins une entrée).
+ */
+export function effectWithoutTarget(cfg: OwlnestEffect, index: number): OwlnestEffect {
+  const all = effectTargets(cfg);
+  if (index < 0 || index >= all.length || all.length <= 1) return cfg;
+  const remaining = all.filter((_, i) => i !== index);
+  const [primary, ...rest] = remaining;
+  return {
+    ...cfg,
+    mesh: primary.mesh,
+    meshIndex: primary.meshIndex,
+    triangle: primary.triangle,
+    node: primary.node,
+    nodeIndex: primary.nodeIndex,
+    targets: rest.length
+      ? rest.map((t) => ({
+          mesh: t.mesh,
+          meshIndex: t.meshIndex,
+          triangle: t.triangle,
+          node: t.node,
+          nodeIndex: t.nodeIndex,
+          label: t.label,
+        }))
+      : undefined,
+  };
+}
+
+/** Ajoute une cible si elle n'est pas déjà dans la liste (principale ou extras). */
+export function effectWithTarget(cfg: OwlnestEffect, target: EffectTarget): OwlnestEffect {
+  const key = effectRefKey(target);
+  if (effectTargets(cfg).some((t) => effectRefKey(t) === key)) return cfg;
+  const { label, ...ref } = target;
+  const entry: EffectTarget = { ...ref, ...(label ? { label } : {}) };
+  return { ...cfg, targets: [...(cfg.targets ?? []), entry] };
+}
+
+/** Couleur des overlays see-through pour `visibility` (pas de teinte choisie). */
+const SEE_THROUGH_VIS_COLOR = 0xe2e8f0;
+const SEE_THROUGH_OPACITY = 0.45;
+const SEE_THROUGH_ORDER = 1003;
+/** Arêtes : angle mini (°) pour retenir une arête — évite le fil de fer dense. */
+const OUTLINE_THRESHOLD = 20;
+const OUTLINE_ORDER = 1004;
+const noRaycast = () => {};
+
 interface LiveTarget {
   ref: EffectTarget;
   object: THREE.Object3D;
@@ -105,6 +156,18 @@ interface LiveTarget {
   marked: THREE.Object3D[];
   /** Visibilité du modèle avant que l'effet ne la pilote. */
   originalVisible: boolean;
+  /**
+   * Overlays `depthTest: false` (comme PartHighlight) — géométrie partagée,
+   * matériau dédié, retirés quand l'effet est inactif ou sans seeThrough.
+   */
+  seeThrough: THREE.Mesh[];
+  seeThroughMat: THREE.MeshBasicMaterial | null;
+  /** Contours `EdgesGeometry` pour `style: 'outline'`. */
+  outline: THREE.LineSegments[];
+  outlineGeoms: THREE.BufferGeometry[];
+  outlineMat: THREE.LineBasicMaterial | null;
+  /** Signature du dernier contour posé (couleur / lueur / seeThrough). */
+  outlineSig: string;
 }
 
 interface LiveEffect {
@@ -143,6 +206,98 @@ function unmark(marked: THREE.Object3D[]) {
     delete o.userData.owlnestLive;
     delete o.userData.owlnestEffectId;
   }
+}
+
+function clearSeeThrough(t: LiveTarget) {
+  for (const o of t.seeThrough) o.parent?.remove(o);
+  t.seeThrough = [];
+  t.seeThroughMat?.dispose();
+  t.seeThroughMat = null;
+}
+
+function clearOutline(t: LiveTarget) {
+  for (const o of t.outline) o.parent?.remove(o);
+  for (const g of t.outlineGeoms) g.dispose();
+  t.outline = [];
+  t.outlineGeoms = [];
+  t.outlineMat?.dispose();
+  t.outlineMat = null;
+  t.outlineSig = '';
+}
+
+/**
+ * Pose des LineSegments sur chaque maille : arêtes dures, couleur de l'effet.
+ * `seeThrough` coupe le test de profondeur (lisible derrière un mur).
+ */
+function applyOutline(
+  t: LiveTarget,
+  colorHex: string,
+  glow: number,
+  seeThrough: boolean,
+): boolean {
+  const g = Math.min(1, Math.max(0, glow));
+  const opacity = 0.45 + 0.55 * g;
+  const sig = `${colorHex}|${opacity.toFixed(3)}|${seeThrough ? 1 : 0}`;
+  if (t.outline.length && t.outlineSig === sig) return false;
+  clearOutline(t);
+  const mat = new THREE.LineBasicMaterial({
+    color: new THREE.Color(colorHex),
+    transparent: opacity < 1,
+    opacity,
+    depthTest: !seeThrough,
+    depthWrite: false,
+  });
+  t.outlineMat = mat;
+  t.outlineSig = sig;
+  t.object.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh || m.userData.owlnestHelper) return;
+    const edges = new THREE.EdgesGeometry(m.geometry, OUTLINE_THRESHOLD);
+    const lines = new THREE.LineSegments(edges, mat);
+    lines.name = '__owlnest_effect_outline';
+    lines.userData.owlnestHelper = true;
+    lines.renderOrder = OUTLINE_ORDER;
+    lines.raycast = noRaycast;
+    lines.castShadow = false;
+    lines.receiveShadow = false;
+    m.add(lines);
+    t.outline.push(lines);
+    t.outlineGeoms.push(edges);
+  });
+  return true;
+}
+
+/**
+ * Pose des enfants helper sans test de profondeur — l'objet reste lisible
+ * derrière un mur, sans toucher aux matériaux partagés du modèle.
+ */
+function applySeeThrough(t: LiveTarget, color: number): boolean {
+  const hex = color & 0xffffff;
+  if (t.seeThrough.length && t.seeThroughMat?.color.getHex() === hex) return false;
+  clearSeeThrough(t);
+  const mat = new THREE.MeshBasicMaterial({
+    color: hex,
+    transparent: true,
+    opacity: SEE_THROUGH_OPACITY,
+    depthTest: false,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  t.seeThroughMat = mat;
+  t.object.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh || m.userData.owlnestHelper) return;
+    const overlay = new THREE.Mesh(m.geometry, mat);
+    overlay.name = '__owlnest_effect_see';
+    overlay.userData.owlnestHelper = true;
+    overlay.renderOrder = SEE_THROUGH_ORDER;
+    overlay.raycast = noRaycast;
+    overlay.castShadow = false;
+    overlay.receiveShadow = false;
+    m.add(overlay);
+    t.seeThrough.push(overlay);
+  });
+  return true;
 }
 
 export class EffectController {
@@ -199,6 +354,12 @@ export class EffectController {
       key: effectRefKey(ref),
       marked: markLive(object, cfg.id),
       originalVisible: object.visible,
+      seeThrough: [],
+      seeThroughMat: null,
+      outline: [],
+      outlineGeoms: [],
+      outlineMat: null,
+      outlineSig: '',
     };
   }
 
@@ -230,9 +391,28 @@ export class EffectController {
   }
 
   private _unmountTarget(t: LiveTarget) {
+    clearSeeThrough(t);
+    clearOutline(t);
     t.tint?.restore();
     t.object.visible = t.originalVisible;
     unmark(t.marked);
+  }
+
+  /** Overlays see-through selon l'état actif et le réglage. */
+  private _syncSeeThrough(item: LiveEffect): boolean {
+    let dirty = false;
+    const on = item.active && item.cfg.seeThrough === true;
+    for (const t of item.targets) {
+      if (!on) {
+        if (t.seeThrough.length) { clearSeeThrough(t); dirty = true; }
+        continue;
+      }
+      const color = item.cfg.kind === 'material' && tintColor(item.cfg.color)
+        ? new THREE.Color(item.cfg.color).getHex()
+        : item.cfg.kind === 'material' ? 0xef4444 : SEE_THROUGH_VIS_COLOR;
+      if (applySeeThrough(t, color)) dirty = true;
+    }
+    return dirty;
   }
 
   private _unmount(item: LiveEffect) {
@@ -334,8 +514,21 @@ export class EffectController {
     const color = tintColor(item.cfg.color);
     const strength = item.cfg.strength ?? DEFAULT_TINT_STRENGTH;
     const glow = item.cfg.glow ?? DEFAULT_GLOW;
+    const outline = item.cfg.style === 'outline';
     let dirty = false;
     for (const t of item.targets) {
+      if (outline) {
+        if (t.tint?.active) { t.tint.restore(); dirty = true; }
+        if (t.seeThrough.length) { clearSeeThrough(t); dirty = true; }
+        if (item.active && color) {
+          if (applyOutline(t, color, glow, item.cfg.seeThrough === true)) dirty = true;
+        } else if (t.outline.length) {
+          clearOutline(t);
+          dirty = true;
+        }
+        continue;
+      }
+      if (t.outline.length) { clearOutline(t); dirty = true; }
       const tint = t.tint;
       if (!tint) continue;
       if (item.active && color) {
@@ -345,6 +538,7 @@ export class EffectController {
         dirty = true;
       }
     }
+    if (!outline && this._syncSeeThrough(item)) dirty = true;
     return dirty;
   }
 
@@ -352,10 +546,12 @@ export class EffectController {
     // Actif → visible ; inactif → caché. `invert` est déjà dans `active`.
     let dirty = false;
     for (const t of item.targets) {
-      if (t.object.visible === item.active) continue;
-      t.object.visible = item.active;
-      dirty = true;
+      if (t.object.visible !== item.active) {
+        t.object.visible = item.active;
+        dirty = true;
+      }
     }
+    if (this._syncSeeThrough(item)) dirty = true;
     return dirty;
   }
 

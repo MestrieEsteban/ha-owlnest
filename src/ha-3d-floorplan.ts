@@ -40,7 +40,7 @@ import type { SceneCard, SceneCardType } from './cards/types';
 import { PartController, meshOrder, partTargetKey } from './parts-runtime';
 import { EffectController, effectTargetKey } from './effects-runtime';
 import { clipInfos } from './parts-clips';
-import { stampOrder, nodeOrder } from './model-outline';
+import { stampOrder, nodeOrder, locatePart } from './model-outline';
 import { PartHighlight, type HighlightSource, type HighlightSlot } from './part-highlight';
 import { modelScale } from './scale';
 import { partIndexOf, partFrame, guessPart, verticalAxis } from './parts';
@@ -185,6 +185,11 @@ export class Ha3dFloorplan extends HTMLElement {
   private _effects = new EffectController();
   /** Renseigné pendant que l'éditeur attend un clic sur une pièce du modèle. */
   private _partPickHandler: ((hit: import('./card/edit-panel').PickedPart) => void) | null = null;
+  /**
+   * Survol pendant le mode pick (canvas) — prioritaire sur le hover de l'arbre
+   * tant qu'un clic est attendu.
+   */
+  private _pickHover: import('./card/edit-panel').PartHighlightTarget | null = null;
   /** Surlignage de l'arborescence des objets, dans l'éditeur d'ouvrants. */
   private _highlight = new PartHighlight();
   /**
@@ -715,6 +720,12 @@ export class Ha3dFloorplan extends HTMLElement {
       }
     });
 
+    this.canvas!.addEventListener('pointerleave', () => {
+      if (!this._pickHover) return;
+      this._pickHover = null;
+      this._applyHighlight();
+    });
+
     this.canvas!.addEventListener('pointermove', (e) => {
       if (!this.camera || !this.canvas) return;
       const rect = this.canvas!.getBoundingClientRect();
@@ -730,6 +741,11 @@ export class Ha3dFloorplan extends HTMLElement {
         const hoverHits = hoverRay.intersectObjects(this._panelGizmo.getMeshes(), false);
         const hovAxis = hoverHits.length ? this._panelGizmo.getAxis(hoverHits[0].object as THREE.Mesh) : null;
         this._panelGizmo.setHover(hovAxis);
+      }
+
+      // Survol live pendant le pick d'une pièce / cible d'effet.
+      if (this._partPickHandler && this._modelRoot) {
+        this._updatePickHover(ndc);
       }
 
       // Card hover highlight (normal mode)
@@ -828,8 +844,7 @@ export class Ha3dFloorplan extends HTMLElement {
           if (!this._handlePartPick(ndc)) {
             // Clic dans le vide : on annule plutôt que de laisser l'éditeur
             // attendre indéfiniment.
-            this._partPickHandler = null;
-            if (this.canvas) this.canvas.style.cursor = '';
+            this._clearPartPicking();
             this._editPanel?.hideStatusBar();
           }
           return;
@@ -2037,8 +2052,13 @@ export class Ha3dFloorplan extends HTMLElement {
     this._highlight.clear();
     const root = this._modelRoot;
     if (root) {
-      for (const slot of ['hover', 'selected'] as const satisfies readonly HighlightSlot[]) {
-        const target = this._highlightReq[slot];
+      // Pendant un pick, le survol canvas prime ; sinon celui de l'arbre.
+      const hover = this._pickHover ?? this._highlightReq.hover;
+      const selected = this._highlightReq.selected;
+      for (const [slot, target] of [
+        ['hover', hover],
+        ['selected', selected],
+      ] as const) {
         const src = target ? this._resolveHighlight(root, target) : null;
         if (src) this._highlight.show(slot, [src]);
       }
@@ -2088,7 +2108,48 @@ export class Ha3dFloorplan extends HTMLElement {
    */
   private _startPartPicking(onPicked: (hit: import('./card/edit-panel').PickedPart) => void) {
     this._partPickHandler = onPicked;
+    this._pickHover = null;
     if (this.canvas) this.canvas.style.cursor = 'crosshair';
+  }
+
+  private _clearPartPicking() {
+    this._partPickHandler = null;
+    this._pickHover = null;
+    if (this.canvas) this.canvas.style.cursor = '';
+    this._applyHighlight();
+  }
+
+  /**
+   * Surligne l'objet sous le curseur pendant un pick (premier objet ou extra).
+   * Préfère le nœud Blender de la maille, comme le pick des effets.
+   */
+  private _updatePickHover(ndc: THREE.Vector2) {
+    if (!this.camera || !this._modelRoot) return;
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, this.camera);
+    const hits = ray.intersectObject(this._modelRoot, true);
+    const hit = hits.find((h) => {
+      const m = h.object as THREE.Mesh;
+      return h.faceIndex !== undefined && m.isMesh && !m.userData.owlnestHelper;
+    });
+    let next: import('./card/edit-panel').PartHighlightTarget | null = null;
+    if (hit) {
+      const mesh = hit.object as THREE.Mesh;
+      const ownerId = mesh.userData.owlnestPartId as string | undefined;
+      if (ownerId) {
+        next = { part: ownerId };
+      } else {
+        const meshIndex = meshOrder(this._modelRoot).indexOf(mesh);
+        const outline = stampOrder(this._modelRoot);
+        const seed = locatePart(outline, { mesh: mesh.name, meshIndex }).seed;
+        next = seed
+          ? { node: seed.rank }
+          : { mesh: meshIndex, triangle: hit.faceIndex! };
+      }
+    }
+    if (JSON.stringify(next) === JSON.stringify(this._pickHover)) return;
+    this._pickHover = next;
+    this._applyHighlight();
   }
 
   private _handlePartPick(ndc: THREE.Vector2): boolean {
@@ -2101,8 +2162,7 @@ export class Ha3dFloorplan extends HTMLElement {
     const hit = hits.find((h) => h.faceIndex !== undefined && (h.object as THREE.Mesh).isMesh);
     if (!hit) return false;
 
-    this._partPickHandler = null;
-    if (this.canvas) this.canvas.style.cursor = '';
+    this._clearPartPicking();
 
     const mesh = hit.object as THREE.Mesh;
     // Le modèle peut être en mètres comme en centimètres : on cale l'échelle
