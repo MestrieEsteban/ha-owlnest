@@ -212,6 +212,7 @@ Un plan importé depuis la carte passe devant `model_url`.
 | Naviguer à la souris ou au tactile | [Navigation dans la scène](docs/guide-fr.md#navigation-dans-la-scène) |
 | Configurer les appareils, les étiquettes et leur visibilité | [Ancres](docs/guide-fr.md#ancres) |
 | Animer les portes, les volets ou les animations du GLB | [Ouvrants](docs/guide-fr.md#ouvrants) |
+| Teinter ou montrer / cacher des objets selon les entités | [Effets](docs/guide-fr.md#effets) |
 | Enregistrer des points de vue et passer de l'un à l'autre | [Vues caméra](docs/guide-fr.md#vues-caméra) |
 | Faire réagir la vue aux états des entités | [Moteur de règles](docs/guide-fr.md#moteur-de-règles) |
 | Relier le soleil et la météo | [Environnement](docs/guide-fr.md#environnement) |

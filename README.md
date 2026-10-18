@@ -212,6 +212,7 @@ A plan imported from the card takes precedence over `model_url`.
 | Navigate with mouse or touch | [Scene navigation](docs/guide.md#scene-navigation) |
 | Configure devices, labels and visibility | [Anchors](docs/guide.md#anchors) |
 | Animate doors, shutters or GLB animations | [Openings](docs/guide.md#openings) |
+| Tint or show/hide objects from entities | [Effects](docs/guide.md#effects) |
 | Save viewpoints and move between them | [Camera views](docs/guide.md#camera-views) |
 | Make the view react to entity states | [Rules engine](docs/guide.md#rules-engine) |
 | Connect the sun and weather | [Environment](docs/guide.md#environment) |

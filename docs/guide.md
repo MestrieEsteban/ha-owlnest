@@ -6,6 +6,7 @@
 - [Scene navigation](#scene-navigation)
 - [Anchors](#anchors)
 - [Openings](#openings)
+- [Effects](#effects)
 - [Camera views](#camera-views)
 - [Rules engine](#rules-engine)
 - [Environment](#environment)
@@ -188,6 +189,26 @@ If two openings are given clips that move the same node, the last one applied ea
 Export from Blender with **Animation → NLA Tracks**. Actions that start at frame 1 (not 0) are handled. three.js sanitises names (`tela.001` → `tela001`).
 
 > **Example**: a reclining sofa exported as `Reclinar_Der`, `Reclinar_Izq`, `Cabezal_Der`, `Cabezal_Izq`. Bind the right-hand cover to `Reclinar_Der` and `Cabezal_Der`; both mechanisms follow that cover's position. A second opening with the left-hand cover and the two `*_Izq` clips leaves the right side alone.
+
+---
+
+## Effects
+
+Effects tint or show/hide model objects from a Home Assistant entity, without moving them. They live in a separate scene list from openings.
+
+### Adding an effect
+
+1. Edit mode → **Effects** tab → **+ Effect**
+2. Click the first object on the model (crosshair cursor, same as openings). Use the **Object** tree to pick a whole Blender object or group
+3. Optionally **+ Click an object on the model** to add more targets (e.g. every radiator) — same canvas picking
+4. Choose the type, link an entity. While the panel is open, the effect is shown **live** on the model; **Cancel** restores the previous state
+
+| Type | Description |
+|---|---|
+| **Material** | Tints the object(s) with a colour and optional glow when the condition matches (e.g. radiators red while `climate` reports `hvac_action: heating`) |
+| **Visibility** | Shows the object(s) when the condition matches, hides them otherwise (e.g. a person mesh when a presence sensor is on). Optional **Reverse** flips that |
+
+**Attribute** (optional) reads an entity attribute instead of the state — for climate, set `hvac_action` and select `heating` under **Active when**. Leave **Active when** empty to use Owlnest's default (on/off for the entity type, or any non-idle attribute value).
 
 ---
 

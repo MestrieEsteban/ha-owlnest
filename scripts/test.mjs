@@ -29,6 +29,7 @@ const ENTRIES = [
   'src/part-highlight.ts',
   'src/part-tint.ts',
   'src/part-carry.ts',
+  'src/effects-runtime.ts',
   'src/coplanar.ts',
   'src/lights.ts',
   'src/batching.ts',

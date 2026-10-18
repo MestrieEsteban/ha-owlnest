@@ -50,3 +50,14 @@ test('une maille seule de son espèce, sous un objet fusionnable, ne disparaît 
   assert.equal(new StaticBatch(root).merge(), 2);
   assert.ok(shown(child));
 });
+
+test('une maille marquée owlnestLive n’est pas fusionnée', () => {
+  const root = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+  const live = box(mat, 'radiator'), a = box(mat, 'a'), b = box(mat, 'b');
+  live.userData.owlnestLive = true;
+  root.add(live, a, b);
+  assert.equal(new StaticBatch(root).merge(), 2);
+  assert.equal(live.visible, true, 'la maille live reste visible et hors batch');
+  assert.equal(a.visible, false);
+});

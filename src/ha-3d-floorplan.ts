@@ -38,6 +38,7 @@ import { SceneCardRenderer } from './cards/renderer';
 import { PanelGizmo } from './panels/gizmo';
 import type { SceneCard, SceneCardType } from './cards/types';
 import { PartController, meshOrder, partTargetKey } from './parts-runtime';
+import { EffectController, effectTargetKey } from './effects-runtime';
 import { clipInfos } from './parts-clips';
 import { stampOrder, nodeOrder } from './model-outline';
 import { PartHighlight, type HighlightSource, type HighlightSlot } from './part-highlight';
@@ -180,6 +181,8 @@ export class Ha3dFloorplan extends HTMLElement {
 
   /** Ouvrants du modèle animés par l'état des entités (portes, volets…). */
   private _parts = new PartController();
+  /** Teintes pilotées par entité (radiateurs, etc.), sans mouvement. */
+  private _effects = new EffectController();
   /** Renseigné pendant que l'éditeur attend un clic sur une pièce du modèle. */
   private _partPickHandler: ((hit: import('./card/edit-panel').PickedPart) => void) | null = null;
   /** Surlignage de l'arborescence des objets, dans l'éditeur d'ouvrants. */
@@ -362,9 +365,14 @@ export class Ha3dFloorplan extends HTMLElement {
 
     // Les ouvrants suivent l'état même en édition : voir une porte s'ouvrir est
     // le seul moyen de vérifier qu'on a choisi le bon côté de gonds.
+    let liveDirty = false;
     if (this.modelLoaded && this._parts.built && this._parts.applyStates(hass.states)) {
-      this._requestRender();
+      liveDirty = true;
     }
+    if (this.modelLoaded && this._effects.built && this._effects.applyStates(hass.states)) {
+      liveDirty = true;
+    }
+    if (liveDirty) this._requestRender();
 
     if (this.modelLoaded && !this._editMode) {
       syncLights(this.anchors, hass, this._effectiveConfig, this._modelSpan);
@@ -1559,6 +1567,30 @@ export class Ha3dFloorplan extends HTMLElement {
       (id) => this._parts.carried.get(id)?.length ?? 0,
       (id) => this._parts.extendInfo(id),
       () => clipInfos(this._modelRoot?.animations ?? []),
+      () => this._scene?.effects ?? [],
+      async (effects) => this._saveEffectsDirect(effects),
+      (cfg) => {
+        const applied = this._effects.configure(cfg);
+        if (applied) {
+          // Hors aperçu éditeur : synchroniser avec HA. En aperçu, configure
+          // a déjà posé l'apparence forcée (comme l'intensité d'une lumière).
+          if (this._hass && !this._effects.isPreviewing(cfg.id)) {
+            this._effects.applyStates(this._hass.states);
+          }
+          this._applyHighlight();
+          this._requestRender();
+        }
+        return applied;
+      },
+      (id, forced) => {
+        if (forced === null && this._hass) {
+          this._effects.setPreview(id, null);
+          this._effects.applyStates(this._hass.states);
+        } else {
+          this._effects.setPreview(id, forced);
+        }
+        this._requestRender();
+      },
     );
 
     this._editPanel.onTestRule = (rule) => this.runRuleNow(rule);
@@ -1960,6 +1992,40 @@ export class Ha3dFloorplan extends HTMLElement {
     if (structural) this.refreshParts();
   }
 
+  /** Enregistre les effets et remonte ceux dont la cible a changé. */
+  private async _saveEffectsDirect(effects: import('./types').OwlnestEffect[]) {
+    const sceneId = this._getActiveSceneId();
+    const hass = this._hass;
+    const current = this._scene;
+    const before = current?.effects ?? [];
+    const base = current ?? {
+      version: 1, scene_id: sceneId ?? '',
+      model_url: this._config?.model_url ?? '',
+      anchors: [], camera_views: [], cards: [], rules: [],
+    };
+    const updated = { ...base, effects };
+    this._scene = updated;
+
+    if (sceneId && hass) {
+      try {
+        await saveScene(hass, sceneId, updated);
+      } catch (err) {
+        console.error('[Owlnest] Effects save failed:', err);
+      }
+    }
+    const ids = new Set(effects.map((e) => e.id));
+    const known = new Set(before.map((e) => e.id));
+    for (const id of known) {
+      if (!ids.has(id)) this._effects.remove(id);
+    }
+    const prev = new Map(before.map((e) => [e.id, effectTargetKey(e)]));
+    const unmounted = effects.some(
+      (e) => prev.get(e.id) !== effectTargetKey(e) && !this._effects.hasTarget(e),
+    );
+    const structural = ids.size !== known.size || [...ids].some((id) => !known.has(id)) || unmounted;
+    if (structural) this._rebuildEffects();
+  }
+
   /**
    * Surligne ce que l'éditeur désigne, d'après la dernière demande.
    *
@@ -1993,6 +2059,10 @@ export class Ha3dFloorplan extends HTMLElement {
     if (t.part) {
       const obj = this._parts.objectOf(t.part);
       if (obj) return { object: obj };
+      // Effet multi-cibles : la première suffit ici ; les autres passent par
+      // `followers` (même emplacement de surlignage que les suiveurs).
+      const effectObjs = this._effects.objectsOf(t.part);
+      if (effectObjs[0]) return { object: effectObjs[0] };
     }
     if (t.node !== undefined) {
       const obj = nodeOrder(root)[t.node];
@@ -2793,10 +2863,11 @@ export class Ha3dFloorplan extends HTMLElement {
 
   private _buildParts() {
     // Un ouvrant peut changer de pièce : on repart des objets d'origine, et on
-    // refusionne une fois les ouvrants montés.
+    // refusionne une fois les ouvrants (et effets) montés.
     this._batch?.unmerge();
     try {
       this._mountParts();
+      this._mountEffects();
     } finally {
       this._mergeStatic();
     }
@@ -2811,7 +2882,7 @@ export class Ha3dFloorplan extends HTMLElement {
     // Les calques de surlignage ne doivent pas entrer dans une boîte d'ouvrant.
     this._highlight.clear();
     this._parts.dispose(this._modelRoot);
-    if (configs.length === 0) { this._applyHighlight(); return; }
+    if (configs.length === 0) return;
 
     // Déduite du modèle entier, pas de chaque pièce : voir verticalAxis().
     this._parts.setVertical(verticalAxis(this._modelBox));
@@ -2827,7 +2898,32 @@ export class Ha3dFloorplan extends HTMLElement {
     // leur état réel, sinon toutes les portes ouvertes s'animeraient au
     // chargement de la page.
     this._parts.update(1e6);
+  }
+
+  private _mountEffects() {
+    const configs = this._scene?.effects ?? [];
+    if (!this._modelRoot) return;
+    this._effects.dispose();
+    if (configs.length === 0) { this._applyHighlight(); return; }
+    const { missing } = this._effects.build(this._modelRoot, configs);
+    if (missing.length) {
+      console.warn(
+        `[Owlnest] ${missing.length} effect(s) not found in the model:`,
+        missing.map((m) => m.label || m.entity).join(', '),
+      );
+    }
+    if (this._hass) this._effects.applyStates(this._hass.states);
     this._applyHighlight();
+  }
+
+  private _rebuildEffects() {
+    if (!this._modelRoot) return;
+    this._batch?.unmerge();
+    try {
+      this._mountEffects();
+    } finally {
+      this._mergeStatic();
+    }
   }
 
   /**
@@ -2852,6 +2948,7 @@ export class Ha3dFloorplan extends HTMLElement {
     this._batch = null;
     this._highlight.clear();
     this._parts.dispose(this._modelRoot ?? undefined);
+    this._effects.dispose();
     if (this._ghost) { this.scene?.remove(this._ghost); this._ghost = null; }
     // Dispose card renderer
     this._cardRenderer?.dispose();

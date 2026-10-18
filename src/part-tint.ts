@@ -14,7 +14,7 @@ import * as THREE from 'three';
  */
 export const DEFAULT_TINT_STRENGTH = 0.55;
 /** Lueur ajoutée : garde la teinte lisible sur une face à l'ombre. */
-const GLOW = 0.35;
+export const DEFAULT_GLOW = 0.35;
 
 const HEX = /^#[0-9a-f]{6}$/i;
 
@@ -69,7 +69,14 @@ function cloneMaterial(src: THREE.Material): THREE.Material {
   return copy;
 }
 
-function paint(copy: THREE.Material, src: THREE.Material, color: THREE.Color, weight: number, strength: number) {
+function paint(
+  copy: THREE.Material,
+  src: THREE.Material,
+  color: THREE.Color,
+  weight: number,
+  strength: number,
+  glowAmount: number,
+) {
   const d = copy as Colored;
   const s = src as Colored;
   if (d.color?.isColor && s.color) d.color.copy(s.color).lerp(color, strength * weight);
@@ -78,7 +85,7 @@ function paint(copy: THREE.Material, src: THREE.Material, color: THREE.Color, we
     // La lueur suit l'intensité, rapportée au dosage d'origine : une teinte
     // discrète ne doit pas briller comme une teinte pleine.
     const glow = weight * Math.min(1, strength / DEFAULT_TINT_STRENGTH);
-    d.emissive.copy(s.emissive).multiplyScalar(base).lerp(color.clone().multiplyScalar(GLOW), glow);
+    d.emissive.copy(s.emissive).multiplyScalar(base).lerp(color.clone().multiplyScalar(glowAmount), glow);
     d.emissiveIntensity = 1;
   }
 }
@@ -110,19 +117,21 @@ export class PartTint {
     open: string | undefined,
     fraction: number,
     strength: number = DEFAULT_TINT_STRENGTH,
+    glow: number = DEFAULT_GLOW,
   ): boolean {
     const tint = tintAt(closed, open, fraction);
     const k = Math.min(1, Math.max(0, Number.isFinite(strength) ? strength : DEFAULT_TINT_STRENGTH));
+    const g = Math.min(1, Math.max(0, Number.isFinite(glow) ? glow : DEFAULT_GLOW));
     if (!tint) {
       const had = this.active;
       this.restore();
       return had;
     }
-    const key = `${tint.color.getHexString()}:${tint.weight.toFixed(4)}:${k.toFixed(3)}`;
+    const key = `${tint.color.getHexString()}:${tint.weight.toFixed(4)}:${k.toFixed(3)}:${g.toFixed(3)}`;
     if (this.entries && key === this.last) return false;
     this.last = key;
     if (!this.entries) this._mount();
-    for (const [src, copy] of this.copies) paint(copy, src, tint.color, tint.weight, k);
+    for (const [src, copy] of this.copies) paint(copy, src, tint.color, tint.weight, k, g);
     return true;
   }
 
@@ -145,7 +154,8 @@ export class PartTint {
     };
     const walk = (o: THREE.Object3D) => {
       if (o.userData.owlnestHelper) return;
-      const owner = o.userData.owlnestPartId;
+      // Ouvrant ou effet déjà propriétaire : ne pas repeindre ses copies.
+      const owner = o.userData.owlnestPartId ?? o.userData.owlnestEffectId;
       if (o !== this.target && owner !== undefined && owner !== this.ownerId) return;
       const mesh = o as THREE.Mesh;
       if (mesh.isMesh && mesh.material) {
