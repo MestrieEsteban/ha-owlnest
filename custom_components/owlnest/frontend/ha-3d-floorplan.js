@@ -22281,7 +22281,8 @@ function Qu(s) {
     camera_views: [],
     cards: [],
     rules: [],
-    parts: []
+    parts: [],
+    effects: []
   };
 }
 async function v0(s, e) {
@@ -22429,7 +22430,10 @@ function S0(s, e, t, n, i) {
     camera_views: (t == null ? void 0 : t.camera_views) ?? [],
     cards: (t == null ? void 0 : t.cards) ?? [],
     rules: (t == null ? void 0 : t.rules) ?? [],
-    parts: (t == null ? void 0 : t.parts) ?? []
+    parts: (t == null ? void 0 : t.parts) ?? [],
+    // Comme parts : l'éditeur d'ancres ne touche pas aux effets, il faut les
+    // reporter sinon un déplacement d'ancre les efface de la scène.
+    effects: (t == null ? void 0 : t.effects) ?? []
   };
 }
 var rn = Uint8Array, ds = Uint16Array, T0 = Int32Array, ef = new rn([

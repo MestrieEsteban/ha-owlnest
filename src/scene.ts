@@ -54,6 +54,7 @@ export function emptyScene(sceneId: string): OwlnestScene {
     cards: [],
     rules: [],
     parts: [],
+    effects: [],
   };
 }
 
@@ -290,5 +291,8 @@ export function buildSceneFromEditor(
     cards: current?.cards ?? [],
     rules: current?.rules ?? [],
     parts: current?.parts ?? [],
+    // Comme parts : l'éditeur d'ancres ne touche pas aux effets, il faut les
+    // reporter sinon un déplacement d'ancre les efface de la scène.
+    effects: current?.effects ?? [],
   };
 }
