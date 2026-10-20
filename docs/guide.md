@@ -200,7 +200,7 @@ Effects tint or show/hide model objects from a Home Assistant entity, without mo
 
 1. Edit mode → **Effects** tab → **+ Effect**
 2. Click the first object on the model (crosshair cursor, same as openings). Use the **Object** tree to pick a whole Blender object or group
-3. Optionally **+ Click an object on the model** to add more targets (e.g. every radiator) — same canvas picking
+3. Optionally add more targets (e.g. every radiator): **+ Click an object on the model**, or **Ctrl+click** (**⌘+click** on Mac) rows in the **Object** tree
 4. Choose the type, link an entity. While the panel is open, the effect is shown **live** on the model; **Cancel** restores the previous state
 
 | Type | Description |
@@ -210,7 +210,9 @@ Effects tint or show/hide model objects from a Home Assistant entity, without mo
 
 **See through walls** draws the object (or its outline) on top while the effect is active (no depth test), so it stays readable behind walls — same idea as the editor highlight overlays.
 
-**Attribute** (optional) reads an entity attribute instead of the state — for climate, set `hvac_action` and select `heating` under **Active when**. Leave **Active when** empty to use Owlnest's default (on/off for the entity type, or any non-idle attribute value).
+**Duration** (optional) soft-fades the look when the condition turns on or off (tint, outline, see-through, and visibility opacity). Leave at 0 for an instant switch — the default for older scenes.
+
+**Attribute** (optional) reads an entity attribute instead of the state — for climate, set `hvac_action` and select `heating` under **Active when**. Leave **Active when** empty to use Owlnest's default (on/off for the entity type, or any non-idle attribute value). If a value is missing from the suggested list, type it under **Add a value** (comma-separated allowed); custom entries are saved in `when` like the chips.
 
 ---
 

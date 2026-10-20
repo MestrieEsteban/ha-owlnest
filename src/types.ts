@@ -493,6 +493,12 @@ export interface OwlnestEffect {
    * les murs. Absent ou faux : profondeur normale.
    */
   seeThrough?: boolean;
+  /**
+   * Durée du fondu à l'allumage / extinction, en secondes. Absente ou 0 :
+   * bascule instantanée (scènes enregistrées avant ce champ). Comme les
+   * ouvrants, on ne stocke que les valeurs non nulles.
+   */
+  duration?: number;
 }
 
 export interface OwlnestScene {

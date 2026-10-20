@@ -2465,6 +2465,8 @@ export class Ha3dFloorplan extends HTMLElement {
 
     // Ouvrants en mouvement : tant qu'une porte pivote, il faut redessiner.
     if (this._parts.built && this._parts.update(dt)) this._dirty = true;
+    // Effets en fondu (teinte / opacité) : même contrainte de redraw.
+    if (this._effects.built && this._effects.update(dt)) this._dirty = true;
 
     const moved = this.controls?.update() ?? false;
     if (moved) this._dirty = true;

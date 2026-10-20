@@ -11,6 +11,7 @@ import { deleteScene, summarizeScenes } from '../scene';
 import { PARTS_ENABLED } from '../parts';
 import type { SceneSummary } from '../scene';
 import { describeEntity, knownStates, stateLabel } from '../entities/descriptors';
+import { stateValueChipLabel } from '../state-value-label';
 import { openFraction, hasOpenSemantics, type ExtendInfo } from '../parts-runtime';
 import type { ClipInfo } from '../parts-clips';
 import { detectionLabel, resolveLevel } from '../quality';
@@ -18,7 +19,7 @@ import type { TapAction } from '../entities/descriptors';
 import type { QualityLevel } from '../quality';
 import type { AnchorKind, OwlnestPart, OwlnestEffect, EffectKind, EffectTarget, ExtendAxis } from '../types';
 import {
-  effectActive, effectTargets, effectWithoutTarget, effectWithTarget,
+  effectActive, effectRefKey, effectTargets, effectWithoutTarget, effectWithTarget,
 } from '../effects-runtime';
 import {
   filterOutline, ancestorsOf, locatePart, revealRanks, outlineRows, centredScrollTop, PIECE_ROW,
@@ -1878,6 +1879,89 @@ export class EditPanel {
 
     wrap.append(input, btn);
     return { wrap, input };
+  }
+
+  /**
+   * Puces d'états / valeurs + saisie libre.
+   *
+   * Owlnest ne découvre pas toujours tous les états d'une entité : la zone
+   * texte permet d'en ajouter à la main ; elles fusionnent dans `when` /
+   * `openWhen` comme les puces connues.
+   */
+  private _stateValuePicker(opts: {
+    options: string[];
+    selected: string[] | undefined;
+    labelOf?: (value: string) => string;
+    onChange: (next: string[] | undefined) => void;
+    hintAuto: string;
+    hintSet: string;
+    inputStyle: string;
+  }): HTMLElement {
+    const selected = opts.selected ?? [];
+    const seen = new Set<string>();
+    const options: string[] = [];
+    for (const v of [...opts.options, ...selected]) {
+      if (!v || seen.has(v)) continue;
+      seen.add(v);
+      options.push(v);
+    }
+
+    const root = document.createElement('div');
+
+    const chips = document.createElement('div');
+    chips.style.cssText = 'display:flex;flex-wrap:wrap;gap:5px;';
+    for (const value of options) {
+      const chip = document.createElement('button');
+      const on = selected.includes(value);
+      chip.style.cssText = [
+        'padding:3px 8px', 'border-radius:99px', 'font-size:10px',
+        'cursor:pointer', 'font-family:inherit',
+        on ? 'background:rgba(74,222,128,0.18)' : 'background:rgba(255,255,255,0.05)',
+        on ? 'color:#4ade80' : 'color:#94a3b8',
+        on ? 'border:1px solid rgba(74,222,128,0.45)' : 'border:1px solid rgba(255,255,255,0.1)',
+      ].join(';');
+      // Libellé ami seulement pour les options découvertes ; saisie libre = brut.
+      chip.textContent = stateValueChipLabel(value, opts.options, opts.labelOf);
+      chip.addEventListener('click', (e) => {
+        e.preventDefault();
+        const set = new Set(selected);
+        if (set.has(value)) set.delete(value); else set.add(value);
+        opts.onChange(set.size ? [...set] : undefined);
+      });
+      chips.appendChild(chip);
+    }
+    if (options.length) root.appendChild(chips);
+
+    const customRow = document.createElement('div');
+    customRow.style.cssText = 'display:flex;gap:5px;align-items:center;margin-top:6px;';
+    const custom = document.createElement('input');
+    custom.type = 'text';
+    custom.placeholder = t('effectWhenCustomPh');
+    custom.style.cssText = opts.inputStyle + ';flex:1;min-width:0;';
+    custom.title = t('effectWhenCustom');
+    const addBtn = document.createElement('button');
+    addBtn.textContent = t('effectWhenCustomAdd');
+    addBtn.style.cssText = 'flex:0 0 auto;background:rgba(125,209,252,0.12);border:1px solid rgba(125,209,252,0.3);border-radius:6px;color:#7dd3fc;font-size:10px;padding:5px 9px;cursor:pointer;font-family:inherit;white-space:nowrap;';
+    const commitCustom = () => {
+      const parts = custom.value.split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+      if (!parts.length) return;
+      const set = new Set(selected);
+      for (const p of parts) set.add(p);
+      custom.value = '';
+      opts.onChange([...set]);
+    };
+    addBtn.addEventListener('click', (e) => { e.preventDefault(); commitCustom(); });
+    custom.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); commitCustom(); }
+    });
+    customRow.append(custom, addBtn);
+    root.appendChild(customRow);
+
+    const hint = document.createElement('div');
+    hint.style.cssText = 'font-size:9px;color:#64748b;line-height:1.5;margin-top:4px;';
+    hint.textContent = selected.length ? opts.hintSet : opts.hintAuto;
+    root.appendChild(hint);
+    return root;
   }
 
   private _buildPropsSection(container: HTMLDivElement, key: string, anchor: EditableAnchor, goBack?: () => void) {
@@ -3878,43 +3962,20 @@ export class EditPanel {
       if (!draft.entity) return;
       const st = this.getHass()?.states[draft.entity];
       const options = knownStates(draft.entity, st?.state);
-      if (options.length < 2) return;
-
-      const chips = document.createElement('div');
-      chips.style.cssText = 'display:flex;flex-wrap:wrap;gap:5px;';
-      // Aucune sélection = lecture automatique par le descripteur. Le premier
-      // clic bascule en choix explicite.
-      for (const value of options) {
-        const chip = document.createElement('button');
-        const on = () => !!draft.openWhen?.includes(value);
-        const paint = () => {
-          chip.style.cssText = [
-            'padding:3px 8px', 'border-radius:99px', 'font-size:10px',
-            'cursor:pointer', 'font-family:inherit',
-            on() ? 'background:rgba(74,222,128,0.18)' : 'background:rgba(255,255,255,0.05)',
-            on() ? 'color:#4ade80' : 'color:#94a3b8',
-            on() ? 'border:1px solid rgba(74,222,128,0.45)' : 'border:1px solid rgba(255,255,255,0.1)',
-          ].join(';');
-        };
-        chip.textContent = stateLabel(draft.entity, value, st?.attributes ?? {});
-        paint();
-        chip.addEventListener('click', (e) => {
-          e.preventDefault();
-          const set = new Set(draft.openWhen ?? []);
-          if (set.has(value)) set.delete(value); else set.add(value);
-          draft.openWhen = set.size ? [...set] : undefined;
-          chips.querySelectorAll('button').forEach(() => undefined);
+      const picker = this._stateValuePicker({
+        options,
+        selected: draft.openWhen,
+        labelOf: (value) => stateLabel(draft.entity, value, st?.attributes ?? {}),
+        onChange: (next) => {
+          draft.openWhen = next;
           rebuildStates();
           apply();
-        });
-        chips.appendChild(chip);
-      }
-      const hint = document.createElement('div');
-      hint.style.cssText = 'font-size:9px;color:#64748b;line-height:1.5;margin-top:4px;';
-      hint.textContent = draft.openWhen?.length ? t('partOpenWhenSet') : t('partOpenWhenAuto');
-      const wrap = document.createElement('div');
-      wrap.append(chips, hint);
-      field(t('partOpenWhen'), wrap, statesBox);
+        },
+        hintAuto: t('partOpenWhenAuto'),
+        hintSet: t('partOpenWhenSet'),
+        inputStyle,
+      });
+      field(t('partOpenWhen'), picker, statesBox);
     };
 
     // ── Mouvement ─────────────────────────────────────────────────────────
@@ -4564,6 +4625,13 @@ export class EditPanel {
     opts?: {
       /** Rangs supplémentaires à surligner (autres cibles d'un effet, etc.). */
       extraFollowers?: () => number[];
+      /**
+       * Ctrl/⌘+clic sur une ligne : multi-sélection (ex. cibles d'effet).
+       * Absent : le clic modifié se comporte comme un clic simple.
+       */
+      onModClick?: (rank: number) => void;
+      /** Sous l'arbre ; défaut : aide des ouvrants. */
+      hint?: string;
     },
   ): {
     el: HTMLElement; dispose: () => void; reveal: () => void; mute: (on: boolean) => void; refresh: () => void;
@@ -4663,7 +4731,7 @@ export class EditPanel {
 
     const hint = document.createElement('div');
     hint.style.cssText = 'font-size:9px;color:#64748b;line-height:1.5;margin-top:5px;';
-    hint.textContent = t('partObjectHint');
+    hint.textContent = opts?.hint ?? t('partObjectHint');
     inner.appendChild(hint);
 
     // ── Sélection ───────────────────────────────────────────────────────
@@ -4820,7 +4888,14 @@ export class EditPanel {
         return;
       }
       const r = rankAt(e);
-      if (r !== null) select(r);
+      if (r === null) return;
+      // Comme l'éditeur d'ancres : Ctrl et ⌘ (meta) pour la multi-sélection.
+      if ((e.ctrlKey || e.metaKey) && opts?.onModClick) {
+        e.preventDefault();
+        opts.onModClick(r);
+        return;
+      }
+      select(r);
     });
     tree.addEventListener('mouseover', (e) => {
       const r = rankAt(e);
@@ -4921,6 +4996,8 @@ export class EditPanel {
         node: seed?.name,
         nodeIndex: seed?.rank,
         color: '#ef4444',
+        // Comme les ouvrants : fondu doux par défaut ; absent = 0 (instant).
+        duration: 1.2,
       }, hit);
     });
   }
@@ -5098,11 +5175,79 @@ export class EditPanel {
     // Déclaré avant la section objet : `apply` l'appelle via refresh.
     let objectSection: ReturnType<EditPanel['_partObjectSection']> = null;
 
+    const targetLabel = (ref: EffectTarget) =>
+      ref.label || ref.node || `${ref.mesh} · ${ref.triangle}`;
+
+    /** Applique un brouillon après ajout / retrait de cible. */
+    const adoptTargets = (next: OwlnestEffect) => {
+      draft.mesh = next.mesh;
+      draft.meshIndex = next.meshIndex;
+      draft.triangle = next.triangle;
+      draft.node = next.node;
+      draft.nodeIndex = next.nodeIndex;
+      draft.targets = next.targets;
+      fillTargets();
+      apply();
+    };
+
+    const hitToTarget = (h: PickedPart): EffectTarget => {
+      const outline = this.getModelOutline?.();
+      const loc = outline ? locatePart(outline, {
+        mesh: h.mesh, meshIndex: h.meshIndex,
+      }) : null;
+      // Nœud de la maille cliquée : un radiateur multi-matériau reste entier.
+      const seed = loc?.seed;
+      return {
+        mesh: h.mesh,
+        meshIndex: h.meshIndex >= 0 ? h.meshIndex : undefined,
+        triangle: h.triangle,
+        node: seed?.name,
+        nodeIndex: seed?.rank,
+        label: seed?.name || `${h.size.map((v) => v.toFixed(0)).join(' \u00d7 ')} cm`,
+      };
+    };
+
+    /** Cible depuis une ligne de l'arbre (nœud entier ; maille = amorce). */
+    const rankToTarget = (rank: number): EffectTarget | null => {
+      if (rank === PIECE_ROW) return null;
+      const outline = this.getModelOutline?.();
+      const n = outline?.byRank[rank];
+      if (!n) return null;
+      return {
+        mesh: n.name,
+        meshIndex: n.meshRank >= 0 ? n.meshRank : undefined,
+        triangle: 0,
+        node: n.name,
+        nodeIndex: n.rank,
+        label: n.name,
+      };
+    };
+
+    /** Ctrl/⌘+clic dans l'arbre : même ajout / retrait que le clic modèle. */
+    const toggleTreeTarget = (rank: number) => {
+      const next = rankToTarget(rank);
+      if (!next) return;
+      const list = effectTargets(draft);
+      const key = effectRefKey(next);
+      const idx = list.findIndex((ref) =>
+        effectRefKey(ref) === key || rankOf(ref) === rank);
+      if (idx >= 0) {
+        if (list.length <= 1) return;
+        adoptTargets(effectWithoutTarget(draft, idx));
+        return;
+      }
+      adoptTargets(effectWithTarget(draft, next));
+    };
+
     objectSection = this._partObjectSection(
       draft,
       inputStyle,
       () => apply(),
-      { extraFollowers: extraFollowerRanks },
+      {
+        extraFollowers: extraFollowerRanks,
+        onModClick: toggleTreeTarget,
+        hint: t('effectObjectHint'),
+      },
     );
     if (objectSection) body.appendChild(objectSection.el);
 
@@ -5114,9 +5259,6 @@ export class EditPanel {
 
     const targetsList = document.createElement('div');
     targetsList.style.cssText = 'display:flex;flex-direction:column;gap:3px;margin-bottom:5px;';
-
-    const targetLabel = (ref: EffectTarget) =>
-      ref.label || ref.node || `${ref.mesh} · ${ref.triangle}`;
 
     fillTargets = () => {
       targetsList.textContent = '';
@@ -5147,37 +5289,12 @@ export class EditPanel {
           drop.style.cursor = 'default';
         } else {
           drop.addEventListener('click', () => {
-            const next = effectWithoutTarget(draft, i);
-            draft.mesh = next.mesh;
-            draft.meshIndex = next.meshIndex;
-            draft.triangle = next.triangle;
-            draft.node = next.node;
-            draft.nodeIndex = next.nodeIndex;
-            draft.targets = next.targets;
-            fillTargets();
-            apply();
+            adoptTargets(effectWithoutTarget(draft, i));
           });
         }
         row.append(name, drop);
         targetsList.appendChild(row);
       });
-    };
-
-    const hitToTarget = (h: PickedPart): EffectTarget => {
-      const outline = this.getModelOutline?.();
-      const loc = outline ? locatePart(outline, {
-        mesh: h.mesh, meshIndex: h.meshIndex,
-      }) : null;
-      // Nœud de la maille cliquée : un radiateur multi-matériau reste entier.
-      const seed = loc?.seed;
-      return {
-        mesh: h.mesh,
-        meshIndex: h.meshIndex >= 0 ? h.meshIndex : undefined,
-        triangle: h.triangle,
-        node: seed?.name,
-        nodeIndex: seed?.rank,
-        label: seed?.name || `${h.size.map((v) => v.toFixed(0)).join(' \u00d7 ')} cm`,
-      };
     };
 
     const targetsAdd = document.createElement('button');
@@ -5188,11 +5305,7 @@ export class EditPanel {
       this.showStatusBar?.(t('effectTargetsPick'));
       this.onStartPartPicking((h) => {
         this.hideStatusBar?.();
-        const next = hitToTarget(h);
-        const updated = effectWithTarget(draft, next);
-        draft.targets = updated.targets;
-        fillTargets();
-        apply();
+        adoptTargets(effectWithTarget(draft, hitToTarget(h)));
       });
     });
 
@@ -5349,6 +5462,24 @@ export class EditPanel {
     seeWrap.append(seeCb, seeText);
     body.appendChild(seeWrap);
 
+    // Durée du fondu — commun aux deux types ; 0 / absent = instantané.
+    const dur = document.createElement('input');
+    dur.type = 'number'; dur.min = '0'; dur.max = '10'; dur.step = '0.1';
+    dur.value = String(draft.duration ?? 0);
+    dur.style.cssText = inputStyle;
+    dur.addEventListener('change', () => {
+      const v = Math.max(0, dur.valueAsNumber || 0);
+      // Ne stocker que les valeurs non nulles (défaut runtime = 0).
+      draft.duration = v > 0 ? Math.round(v * 10) / 10 : undefined;
+      dur.value = String(draft.duration ?? 0);
+      apply();
+    });
+    field(t('effectDuration'), dur);
+    const durHint = document.createElement('div');
+    durHint.style.cssText = 'font-size:9px;color:#64748b;line-height:1.5;margin-top:-8px;margin-bottom:12px;';
+    durHint.textContent = t('effectDurationHint');
+    body.appendChild(durHint);
+
     // ── Entité ───────────────────────────────────────────────────────
     const { wrap: entityWrap } = this._entityField(draft.entity, inputStyle, (id) => {
       draft.entity = id;
@@ -5413,46 +5544,25 @@ export class EditPanel {
         const cur = st?.attributes?.[draft.attribute];
         options = draft.attribute === 'hvac_action' ? [...HVAC_ACTIONS] : [];
         if (cur != null && !options.includes(String(cur))) options.push(String(cur));
-        for (const v of draft.when ?? []) if (!options.includes(v)) options.push(v);
       } else {
         options = knownStates(draft.entity, st?.state);
       }
-      if (options.length < 1) return;
-
-      const chips = document.createElement('div');
-      chips.style.cssText = 'display:flex;flex-wrap:wrap;gap:5px;';
-      for (const value of options) {
-        const chip = document.createElement('button');
-        const on = () => !!draft.when?.includes(value);
-        const paint = () => {
-          chip.style.cssText = [
-            'padding:3px 8px', 'border-radius:99px', 'font-size:10px',
-            'cursor:pointer', 'font-family:inherit',
-            on() ? 'background:rgba(74,222,128,0.18)' : 'background:rgba(255,255,255,0.05)',
-            on() ? 'color:#4ade80' : 'color:#94a3b8',
-            on() ? 'border:1px solid rgba(74,222,128,0.45)' : 'border:1px solid rgba(255,255,255,0.1)',
-          ].join(';');
-        };
-        chip.textContent = draft.attribute
-          ? value
-          : stateLabel(draft.entity, value, st?.attributes ?? {});
-        paint();
-        chip.addEventListener('click', (e) => {
-          e.preventDefault();
-          const set = new Set(draft.when ?? []);
-          if (set.has(value)) set.delete(value); else set.add(value);
-          draft.when = set.size ? [...set] : undefined;
+      const picker = this._stateValuePicker({
+        options,
+        selected: draft.when,
+        labelOf: draft.attribute
+          ? undefined
+          : (value) => stateLabel(draft.entity, value, st?.attributes ?? {}),
+        onChange: (next) => {
+          draft.when = next;
           rebuildWhen();
           apply();
-        });
-        chips.appendChild(chip);
-      }
-      const hint = document.createElement('div');
-      hint.style.cssText = 'font-size:9px;color:#64748b;line-height:1.5;margin-top:4px;';
-      hint.textContent = draft.when?.length ? t('effectWhenSet') : t('effectWhenAuto');
-      const wrap = document.createElement('div');
-      wrap.append(chips, hint);
-      field(t('effectWhen'), wrap, whenBox);
+        },
+        hintAuto: t('effectWhenAuto'),
+        hintSet: t('effectWhenSet'),
+        inputStyle,
+      });
+      field(t('effectWhen'), picker, whenBox);
     };
 
     const foot = document.createElement('div');

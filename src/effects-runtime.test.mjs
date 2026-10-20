@@ -378,3 +378,91 @@ test('seeThrough : visibility pose aussi des overlays quand montré', () => {
   assert.equal(person.visible, false);
   assert.equal(person.children.filter((o) => o.userData.owlnestHelper).length, 0);
 });
+
+test('duration absente : bascule instantanée (compat)', () => {
+  const { root, rad, shared } = scene();
+  const c = new EffectController();
+  c.build(root, [MATERIAL]);
+  c.applyStates({ 'climate.salon': { state: 'heat', attributes: {} } });
+  assert.notEqual(rad.material, shared);
+  c.applyStates({ 'climate.salon': { state: 'off', attributes: {} } });
+  assert.equal(rad.material, shared);
+  assert.equal(c.update(0.1), false);
+});
+
+test('duration : teinte interpolée via update(dt)', () => {
+  const { root, rad, shared } = scene();
+  const c = new EffectController();
+  c.build(root, [{ ...MATERIAL, duration: 1 }]);
+  c.applyStates({ 'climate.salon': { state: 'heat', attributes: {} } });
+  // À t=0 juste après activation : encore sans teinte (current ≈ 0).
+  assert.equal(rad.material, shared);
+  assert.equal(c.update(0.5), true);
+  assert.notEqual(rad.material, shared);
+  const mid = rad.material.color.r;
+  // La frame qui atteint le but renvoie encore true (comme PartController).
+  assert.equal(c.update(0.5), true);
+  assert.ok(rad.material.color.r >= mid - 1e-6);
+  assert.ok(rad.material.color.r > 0.5);
+  assert.equal(c.update(0.1), false, 'au repos : plus de mouvement');
+
+  c.applyStates({ 'climate.salon': { state: 'off', attributes: {} } });
+  assert.equal(c.update(0.5), true);
+  assert.notEqual(rad.material, shared, 'mi-parcours extinction : encore teinté');
+  assert.equal(c.update(0.6), true, 'frame d’arrivée');
+  assert.equal(rad.material, shared);
+  assert.equal(c.update(0.1), false);
+});
+
+test('duration : visibility fond via opacité des copies', () => {
+  const { root, person } = scene();
+  const original = person.material;
+  const c = new EffectController();
+  c.build(root, [{ ...VISIBILITY, duration: 1 }]);
+  c.applyStates({ 'binary_sensor.presence': { state: 'on', attributes: {} } });
+  assert.equal(person.visible, false, 'fraction 0 : encore caché');
+  assert.equal(c.update(0.5), true);
+  assert.equal(person.visible, true);
+  assert.notEqual(person.material, original);
+  assert.ok(person.material.opacity > 0 && person.material.opacity < 1);
+  assert.equal(c.update(0.6), true, 'frame d’arrivée');
+  assert.equal(person.visible, true);
+  assert.ok(Math.abs(person.material.opacity - 1) < 1e-3);
+  assert.equal(c.update(0.1), false);
+
+  c.applyStates({ 'binary_sensor.presence': { state: 'off', attributes: {} } });
+  assert.equal(c.update(0.5), true);
+  assert.equal(person.visible, true);
+  assert.ok(person.material.opacity < 1);
+  assert.equal(c.update(0.6), true);
+  assert.equal(person.visible, false);
+  assert.equal(person.material, original, 'au repos : matériaux d’origine');
+  assert.equal(c.update(0.1), false);
+});
+
+test('duration : outline et seeThrough suivent la fraction', () => {
+  const { root, rad } = scene();
+  const c = new EffectController();
+  c.build(root, [{ ...MATERIAL, style: 'outline', seeThrough: true, duration: 1, glow: 1 }]);
+  c.applyStates({ 'climate.salon': { state: 'heat', attributes: {} } });
+  assert.equal(rad.children.filter((o) => o.name === '__owlnest_effect_outline').length, 0);
+  c.update(0.5);
+  const lines = rad.children.filter((o) => o.name === '__owlnest_effect_outline');
+  assert.equal(lines.length, 1);
+  assert.ok(lines[0].material.opacity > 0 && lines[0].material.opacity < 1);
+  // seeThrough est désactivé en outline (depthTest sur les arêtes) — pas d’overlay fill.
+  c.update(0.6);
+  assert.equal(c.update(0.1), false);
+  assert.ok(Math.abs(lines[0].material.opacity - 1) < 1e-3 || lines[0].material.opacity >= 0.99);
+});
+
+test('setPreview : bascule instantanée malgré duration', () => {
+  const { root, rad, shared } = scene();
+  const c = new EffectController();
+  c.build(root, [{ ...MATERIAL, duration: 2 }]);
+  assert.equal(c.setPreview('e1', true), true);
+  assert.notEqual(rad.material, shared);
+  assert.equal(c.update(0.1), false, 'aperçu forcé : pas d’animation en cours');
+  c.setPreview('e1', false);
+  assert.equal(rad.material, shared);
+});

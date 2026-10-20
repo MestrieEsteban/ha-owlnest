@@ -4,7 +4,11 @@
  * - `material` : teinte + lueur sur copies de matériaux (jamais l'original),
  *   ou arêtes colorées (`style: 'outline'`).
  * - `visibility` : montre / cache la cible ; la visibilité d'origine est
- *   mémorisée au montage et rendue au démontage.
+ *   mémorisée au montage et rendue au démontage. Le fondu passe par l'opacité
+ *   de copies de matériaux (`object.visible` ne peut pas interpoler).
+ *
+ * `duration` (secondes) : fondu entre inactif et actif. Absent ou 0 = instant
+ * (scènes existantes). `update(dt)` avance la fraction comme PartController.
  *
  * Une configuration peut viser plusieurs objets (`targets`) : même condition,
  * même apparence. On marque `owlnestLive` pour que le batching laisse chaque
@@ -17,6 +21,9 @@ import { stampOrder, nodeOrder, resolveNode } from './model-outline';
 import { resolveMesh, meshOrder } from './parts-runtime';
 import { describeEntity } from './entities/descriptors';
 import { PartTint, tintColor, DEFAULT_TINT_STRENGTH, DEFAULT_GLOW } from './part-tint';
+
+/** Absent ou 0 : bascule instantanée (compat scènes sans le champ). */
+export const DEFAULT_EFFECT_DURATION = 0;
 
 /** Valeurs d'attribut qui ne doivent pas allumer l'effet sans `when` explicite. */
 const IDLE_ATTR = new Set(['', 'off', 'idle', 'none', 'false', '0', 'unavailable', 'unknown']);
@@ -147,10 +154,93 @@ const OUTLINE_THRESHOLD = 20;
 const OUTLINE_ORDER = 1004;
 const noRaycast = () => {};
 
+type OpMat = THREE.Material & { opacity: number; transparent: boolean };
+
+interface FadeEntry {
+  mesh: THREE.Mesh;
+  original: THREE.Material | THREE.Material[];
+}
+
+/**
+ * Fondu de visibilité via l'opacité de copies — `object.visible` est binaire.
+ * Jamais l'original (matériaux partagés du modèle).
+ */
+class VisFade {
+  private entries: FadeEntry[] | null = null;
+  private copies = new Map<THREE.Material, { copy: OpMat; base: number }>();
+  private last = -1;
+
+  constructor(private readonly target: THREE.Object3D, private readonly ownerId: string) {}
+
+  get active(): boolean { return this.entries !== null; }
+
+  apply(fraction: number): boolean {
+    const f = Math.min(1, Math.max(0, fraction));
+    if (f < 1e-4) {
+      const had = this.entries !== null;
+      this.restore();
+      return had;
+    }
+    if (this.entries && Math.abs(f - this.last) < 1e-4) return false;
+    this.last = f;
+    if (!this.entries) this._mount();
+    for (const { copy, base } of this.copies.values()) {
+      copy.opacity = base * f;
+      copy.transparent = true;
+      copy.needsUpdate = true;
+    }
+    return true;
+  }
+
+  restore() {
+    if (!this.entries) return;
+    for (const { mesh, original } of this.entries) mesh.material = original;
+    for (const { copy } of this.copies.values()) copy.dispose();
+    this.copies.clear();
+    this.entries = null;
+    this.last = -1;
+  }
+
+  private _mount() {
+    const entries: FadeEntry[] = [];
+    const copyOf = (m: THREE.Material): OpMat => {
+      let slot = this.copies.get(m);
+      if (!slot) {
+        const copy = m.clone() as OpMat;
+        if (Object.prototype.hasOwnProperty.call(m, 'onBeforeCompile')) {
+          copy.onBeforeCompile = m.onBeforeCompile;
+        }
+        if (Object.prototype.hasOwnProperty.call(m, 'customProgramCacheKey')) {
+          copy.customProgramCacheKey = m.customProgramCacheKey;
+        }
+        slot = { copy, base: Number.isFinite(copy.opacity) ? copy.opacity : 1 };
+        this.copies.set(m, slot);
+      }
+      return slot.copy;
+    };
+    const walk = (o: THREE.Object3D) => {
+      if (o.userData.owlnestHelper) return;
+      const owner = o.userData.owlnestPartId ?? o.userData.owlnestEffectId;
+      if (o !== this.target && owner !== undefined && owner !== this.ownerId) return;
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh && mesh.material) {
+        const original = mesh.material;
+        entries.push({ mesh, original });
+        mesh.material = Array.isArray(original) ? original.map(copyOf) : copyOf(original);
+      }
+      for (const child of o.children) walk(child);
+    };
+    walk(this.target);
+    this.entries = entries;
+  }
+}
+
 interface LiveTarget {
   ref: EffectTarget;
   object: THREE.Object3D;
   tint: PartTint | null;
+  /** Opacité clonée pour `visibility` pendant le fondu. */
+  fade: VisFade | null;
   key: string;
   /** Nœuds marqués `owlnestLive` / `owlnestEffectId` à nettoyer au démontage. */
   marked: THREE.Object3D[];
@@ -166,7 +256,7 @@ interface LiveTarget {
   outline: THREE.LineSegments[];
   outlineGeoms: THREE.BufferGeometry[];
   outlineMat: THREE.LineBasicMaterial | null;
-  /** Signature du dernier contour posé (couleur / lueur / seeThrough). */
+  /** Signature du contour hors fraction (couleur / lueur / seeThrough). */
   outlineSig: string;
 }
 
@@ -174,10 +264,13 @@ interface LiveEffect {
   cfg: OwlnestEffect;
   targets: LiveTarget[];
   key: string;
+  /** Cible booléenne (état HA ou aperçu forcé). */
   active: boolean;
+  /** Fraction affichée 0→1, interpolée vers `active`. */
+  current: number;
   /**
    * Aperçu forcé depuis l'éditeur (comme l'intensité d'une ancre lumière).
-   * `null` : suivre l'état HA.
+   * `null` : suivre l'état HA. Le forçage bascule en instantané.
    */
   forcedActive: boolean | null;
 }
@@ -228,76 +321,106 @@ function clearOutline(t: LiveTarget) {
 /**
  * Pose des LineSegments sur chaque maille : arêtes dures, couleur de l'effet.
  * `seeThrough` coupe le test de profondeur (lisible derrière un mur).
+ * `fraction` module l'opacité ; près de 0, les arêtes sont retirées.
  */
 function applyOutline(
   t: LiveTarget,
   colorHex: string,
   glow: number,
   seeThrough: boolean,
+  fraction: number,
 ): boolean {
+  const f = Math.min(1, Math.max(0, fraction));
+  if (f < 1e-4) {
+    if (!t.outline.length) return false;
+    clearOutline(t);
+    return true;
+  }
   const g = Math.min(1, Math.max(0, glow));
-  const opacity = 0.45 + 0.55 * g;
-  const sig = `${colorHex}|${opacity.toFixed(3)}|${seeThrough ? 1 : 0}`;
-  if (t.outline.length && t.outlineSig === sig) return false;
-  clearOutline(t);
-  const mat = new THREE.LineBasicMaterial({
-    color: new THREE.Color(colorHex),
-    transparent: opacity < 1,
-    opacity,
-    depthTest: !seeThrough,
-    depthWrite: false,
-  });
-  t.outlineMat = mat;
-  t.outlineSig = sig;
-  t.object.traverse((o) => {
-    const m = o as THREE.Mesh;
-    if (!m.isMesh || m.userData.owlnestHelper) return;
-    const edges = new THREE.EdgesGeometry(m.geometry, OUTLINE_THRESHOLD);
-    const lines = new THREE.LineSegments(edges, mat);
-    lines.name = '__owlnest_effect_outline';
-    lines.userData.owlnestHelper = true;
-    lines.renderOrder = OUTLINE_ORDER;
-    lines.raycast = noRaycast;
-    lines.castShadow = false;
-    lines.receiveShadow = false;
-    m.add(lines);
-    t.outline.push(lines);
-    t.outlineGeoms.push(edges);
-  });
-  return true;
+  const baseOpacity = 0.45 + 0.55 * g;
+  const opacity = baseOpacity * f;
+  const sig = `${colorHex}|${baseOpacity.toFixed(3)}|${seeThrough ? 1 : 0}`;
+  let dirty = false;
+  if (!t.outline.length || t.outlineSig !== sig) {
+    clearOutline(t);
+    const mat = new THREE.LineBasicMaterial({
+      color: new THREE.Color(colorHex),
+      transparent: opacity < 1,
+      opacity,
+      depthTest: !seeThrough,
+      depthWrite: false,
+    });
+    t.outlineMat = mat;
+    t.outlineSig = sig;
+    t.object.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || m.userData.owlnestHelper) return;
+      const edges = new THREE.EdgesGeometry(m.geometry, OUTLINE_THRESHOLD);
+      const lines = new THREE.LineSegments(edges, mat);
+      lines.name = '__owlnest_effect_outline';
+      lines.userData.owlnestHelper = true;
+      lines.renderOrder = OUTLINE_ORDER;
+      lines.raycast = noRaycast;
+      lines.castShadow = false;
+      lines.receiveShadow = false;
+      m.add(lines);
+      t.outline.push(lines);
+      t.outlineGeoms.push(edges);
+    });
+    dirty = true;
+  } else if (t.outlineMat && Math.abs(t.outlineMat.opacity - opacity) > 1e-4) {
+    t.outlineMat.opacity = opacity;
+    t.outlineMat.transparent = opacity < 1;
+    dirty = true;
+  }
+  return dirty;
 }
 
 /**
  * Pose des enfants helper sans test de profondeur — l'objet reste lisible
  * derrière un mur, sans toucher aux matériaux partagés du modèle.
+ * `fraction` module l'opacité ; près de 0, les overlays sont retirés.
  */
-function applySeeThrough(t: LiveTarget, color: number): boolean {
+function applySeeThrough(t: LiveTarget, color: number, fraction: number): boolean {
+  const f = Math.min(1, Math.max(0, fraction));
+  if (f < 1e-4) {
+    if (!t.seeThrough.length) return false;
+    clearSeeThrough(t);
+    return true;
+  }
   const hex = color & 0xffffff;
-  if (t.seeThrough.length && t.seeThroughMat?.color.getHex() === hex) return false;
-  clearSeeThrough(t);
-  const mat = new THREE.MeshBasicMaterial({
-    color: hex,
-    transparent: true,
-    opacity: SEE_THROUGH_OPACITY,
-    depthTest: false,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-  });
-  t.seeThroughMat = mat;
-  t.object.traverse((o) => {
-    const m = o as THREE.Mesh;
-    if (!m.isMesh || m.userData.owlnestHelper) return;
-    const overlay = new THREE.Mesh(m.geometry, mat);
-    overlay.name = '__owlnest_effect_see';
-    overlay.userData.owlnestHelper = true;
-    overlay.renderOrder = SEE_THROUGH_ORDER;
-    overlay.raycast = noRaycast;
-    overlay.castShadow = false;
-    overlay.receiveShadow = false;
-    m.add(overlay);
-    t.seeThrough.push(overlay);
-  });
-  return true;
+  const opacity = SEE_THROUGH_OPACITY * f;
+  let dirty = false;
+  if (!t.seeThrough.length || t.seeThroughMat?.color.getHex() !== hex) {
+    clearSeeThrough(t);
+    const mat = new THREE.MeshBasicMaterial({
+      color: hex,
+      transparent: true,
+      opacity,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    t.seeThroughMat = mat;
+    t.object.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || m.userData.owlnestHelper) return;
+      const overlay = new THREE.Mesh(m.geometry, mat);
+      overlay.name = '__owlnest_effect_see';
+      overlay.userData.owlnestHelper = true;
+      overlay.renderOrder = SEE_THROUGH_ORDER;
+      overlay.raycast = noRaycast;
+      overlay.castShadow = false;
+      overlay.receiveShadow = false;
+      m.add(overlay);
+      t.seeThrough.push(overlay);
+    });
+    dirty = true;
+  } else if (t.seeThroughMat && Math.abs(t.seeThroughMat.opacity - opacity) > 1e-4) {
+    t.seeThroughMat.opacity = opacity;
+    dirty = true;
+  }
+  return dirty;
 }
 
 export class EffectController {
@@ -351,6 +474,7 @@ export class EffectController {
       ref: { ...ref },
       object,
       tint: cfg.kind === 'material' ? new PartTint(object, cfg.id) : null,
+      fade: cfg.kind === 'visibility' ? new VisFade(object, cfg.id) : null,
       key: effectRefKey(ref),
       marked: markLive(object, cfg.id),
       originalVisible: object.visible,
@@ -386,6 +510,7 @@ export class EffectController {
       targets,
       key: effectTargetKey(cfg),
       active: false,
+      current: 0,
       forcedActive: null,
     };
   }
@@ -394,23 +519,24 @@ export class EffectController {
     clearSeeThrough(t);
     clearOutline(t);
     t.tint?.restore();
+    t.fade?.restore();
     t.object.visible = t.originalVisible;
     unmark(t.marked);
   }
 
-  /** Overlays see-through selon l'état actif et le réglage. */
+  /** Overlays see-through : même fraction que teinte / opacité. */
   private _syncSeeThrough(item: LiveEffect): boolean {
     let dirty = false;
-    const on = item.active && item.cfg.seeThrough === true;
+    const want = item.cfg.seeThrough === true && item.current > 1e-4;
     for (const t of item.targets) {
-      if (!on) {
+      if (!want) {
         if (t.seeThrough.length) { clearSeeThrough(t); dirty = true; }
         continue;
       }
       const color = item.cfg.kind === 'material' && tintColor(item.cfg.color)
         ? new THREE.Color(item.cfg.color).getHex()
         : item.cfg.kind === 'material' ? 0xef4444 : SEE_THROUGH_VIS_COLOR;
-      if (applySeeThrough(t, color)) dirty = true;
+      if (applySeeThrough(t, color, item.current)) dirty = true;
     }
     return dirty;
   }
@@ -436,13 +562,16 @@ export class EffectController {
 
   /**
    * Force l'apparence « actif / inactif » pendant l'édition.
-   * `null` rend la main à `applyStates`.
+   * `null` rend la main à `applyStates`. Aperçu : bascule instantanée.
    */
   setPreview(id: string, forced: boolean | null): boolean {
     const item = this.items.find((i) => i.cfg.id === id);
     if (!item) return false;
     item.forcedActive = forced;
-    if (forced !== null) item.active = forced;
+    if (forced !== null) {
+      item.active = forced;
+      item.current = forced ? 1 : 0;
+    }
     this._apply(item);
     return true;
   }
@@ -471,13 +600,16 @@ export class EffectController {
     const nextKey = effectTargetKey(cfg);
     const kindChanged = item.cfg.kind !== cfg.kind;
     const forced = item.forcedActive;
+    const keepActive = item.active;
+    const keepCurrent = item.current;
     if (item.key !== nextKey || kindChanged) {
       this._unmount(item);
       const remounted = this._mount(cfg, meshOrder(this._root), nodeOrder(this._root));
       if (!remounted) {
         const back = this._mount(item.cfg, meshOrder(this._root), nodeOrder(this._root));
         if (back) {
-          back.active = item.active;
+          back.active = keepActive;
+          back.current = keepCurrent;
           back.forcedActive = forced;
           Object.assign(item, back);
           this._apply(item);
@@ -486,7 +618,8 @@ export class EffectController {
         }
         return false;
       }
-      remounted.active = forced !== null ? forced : item.active;
+      remounted.active = forced !== null ? forced : keepActive;
+      remounted.current = forced !== null ? (forced ? 1 : 0) : keepCurrent;
       remounted.forcedActive = forced;
       Object.assign(item, remounted);
     } else {
@@ -515,13 +648,14 @@ export class EffectController {
     const strength = item.cfg.strength ?? DEFAULT_TINT_STRENGTH;
     const glow = item.cfg.glow ?? DEFAULT_GLOW;
     const outline = item.cfg.style === 'outline';
+    const f = item.current;
     let dirty = false;
     for (const t of item.targets) {
       if (outline) {
         if (t.tint?.active) { t.tint.restore(); dirty = true; }
         if (t.seeThrough.length) { clearSeeThrough(t); dirty = true; }
-        if (item.active && color) {
-          if (applyOutline(t, color, glow, item.cfg.seeThrough === true)) dirty = true;
+        if (color && f > 1e-4) {
+          if (applyOutline(t, color, glow, item.cfg.seeThrough === true, f)) dirty = true;
         } else if (t.outline.length) {
           clearOutline(t);
           dirty = true;
@@ -531,8 +665,9 @@ export class EffectController {
       if (t.outline.length) { clearOutline(t); dirty = true; }
       const tint = t.tint;
       if (!tint) continue;
-      if (item.active && color) {
-        if (tint.apply(color, undefined, 0, strength, glow)) dirty = true;
+      // Couleur « ouverte » seule : le poids suit la fraction (fondu in/out).
+      if (color && f > 1e-4) {
+        if (tint.apply(undefined, color, f, strength, glow)) dirty = true;
       } else if (tint.active) {
         tint.restore();
         dirty = true;
@@ -543,16 +678,25 @@ export class EffectController {
   }
 
   private _applyVisibility(item: LiveEffect): boolean {
-    // Actif → visible ; inactif → caché. `invert` est déjà dans `active`.
+    // object.visible est binaire : on le laisse true tant que la fraction
+    // n'est pas nulle, et on fond via l'opacité des copies.
+    const f = item.current;
+    const show = f > 1e-4;
     let dirty = false;
     for (const t of item.targets) {
-      if (t.object.visible !== item.active) {
-        t.object.visible = item.active;
+      if (t.object.visible !== show) {
+        t.object.visible = show;
         dirty = true;
       }
+      if (t.fade?.apply(f)) dirty = true;
     }
     if (this._syncSeeThrough(item)) dirty = true;
     return dirty;
+  }
+
+  private _duration(item: LiveEffect): number {
+    const d = item.cfg.duration;
+    return d !== undefined && d > 0 ? d : DEFAULT_EFFECT_DURATION;
   }
 
   /** Pose les effets d'après les états HA. Retourne `true` si quelque chose a changé. */
@@ -563,6 +707,7 @@ export class EffectController {
       if (item.forcedActive !== null) {
         if (item.active !== item.forcedActive) {
           item.active = item.forcedActive;
+          item.current = item.forcedActive ? 1 : 0;
           dirty = true;
         }
       } else {
@@ -573,9 +718,49 @@ export class EffectController {
           dirty = true;
         }
       }
+      // Sans durée (ou aperçu forcé déjà snappé) : coller current à la cible.
+      const dur = this._duration(item);
+      if (dur <= 0 || item.forcedActive !== null) {
+        const goal = item.active ? 1 : 0;
+        if (Math.abs(item.current - goal) > 1e-4) {
+          item.current = goal;
+          dirty = true;
+        }
+      }
       if (this._apply(item)) dirty = true;
     }
     return dirty;
+  }
+
+  /**
+   * Avance les fondus. Retourne `true` tant qu'un effet anime, pour que la
+   * boucle de rendu continue à dessiner.
+   */
+  update(dt: number): boolean {
+    let moving = false;
+    for (const item of this.items) {
+      if (item.forcedActive !== null) continue;
+      const dur = this._duration(item);
+      const goal = item.active ? 1 : 0;
+      const diff = goal - item.current;
+      if (Math.abs(diff) < 1e-4) {
+        if (item.current !== goal) {
+          item.current = goal;
+          this._apply(item);
+        }
+        continue;
+      }
+      if (dur <= 0) {
+        item.current = goal;
+        this._apply(item);
+        continue;
+      }
+      const step = dt / Math.max(0.05, dur);
+      item.current += Math.sign(diff) * Math.min(Math.abs(diff), step);
+      this._apply(item);
+      moving = true;
+    }
+    return moving;
   }
 
   dispose() {

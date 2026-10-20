@@ -200,7 +200,7 @@ Les effets teintent ou montrent / cachent des objets du modèle d'après une ent
 
 1. Mode édition → onglet **Effets** → **+ Effet**
 2. Cliquez le premier objet sur le modèle (curseur en croix, comme pour les ouvrants). L'arborescence **Objet** permet de choisir un objet ou groupe Blender entier
-3. Optionnel : **+ Cliquer un objet du modèle** pour ajouter d'autres cibles (ex. tous les radiateurs) — même sélection à la souris
+3. Optionnel : ajoutez d'autres cibles (ex. tous les radiateurs) avec **+ Cliquer un objet du modèle**, ou **Ctrl+clic** (**⌘+clic** sur Mac) dans l'arborescence **Objet**
 4. Choisissez le type, liez une entité. Tant que le panneau est ouvert, l'effet s'affiche **en direct** sur le modèle ; **Annuler** restaure l'état précédent
 
 | Type | Description |
@@ -210,7 +210,9 @@ Les effets teintent ou montrent / cachent des objets du modèle d'après une ent
 
 **Visible à travers les murs** dessine l'objet (ou son contour) par-dessus le modèle tant que l'effet est actif (sans test de profondeur), pour le lire derrière un mur — comme le surlignage de l'éditeur.
 
-**Attribut** (facultatif) lit un attribut d'entité à la place de l'état — pour un thermostat, indiquez `hvac_action` et sélectionnez `heating` sous **Actif quand**. Laissez **Actif quand** vide pour le repli d'Owlnest (on/off selon le type d'entité, ou toute valeur d'attribut hors arrêt).
+**Durée** (facultatif) fond l'apparence quand la condition s'allume ou s'éteint (teinte, contour, see-through et opacité de visibilité). Laissez à 0 pour un basculement instantané — le défaut des scènes plus anciennes.
+
+**Attribut** (facultatif) lit un attribut d'entité à la place de l'état — pour un thermostat, indiquez `hvac_action` et sélectionnez `heating` sous **Actif quand**. Laissez **Actif quand** vide pour le repli d'Owlnest (on/off selon le type d'entité, ou toute valeur d'attribut hors arrêt). Si une valeur manque dans la liste proposée, saisissez-la sous **Ajouter une valeur** (virgules acceptées) ; les entrées personnalisées sont enregistrées dans `when` comme les puces.
 
 ---
 
