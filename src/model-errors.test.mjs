@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { httpStatus, modelErrorKey, bustCache, shouldRetryUncached } from './model-errors.mjs';
+import { httpStatus, modelErrorKey, isDracoError, bustCache, shouldRetryUncached } from './model-errors.mjs';
 
 test('le code HTTP se lit dans le message de three.js', () => {
   // Forme exacte rejetée par GLTFLoader.
@@ -28,6 +28,16 @@ test('la cause se traduit en cle', () => {
   assert.equal(of(503), 'modelErrServer');
   // Un echec sans code HTTP retombe sur le message general.
   assert.equal(modelErrorKey(new Error('boom')), 'modelErrLoad');
+});
+
+test('un echec Draco a sa propre cle (avant le HTTP)', () => {
+  const err = new Error('THREE.GLTFLoader: No DRACOLoader instance provided.');
+  assert.equal(isDracoError(err), true);
+  assert.equal(modelErrorKey(err), 'modelErrDraco');
+  assert.equal(
+    modelErrorKey(new Error('Failed to load draco decoder from CDN')),
+    'modelErrDraco',
+  );
 });
 
 test('un code inattendu ne casse rien', () => {
