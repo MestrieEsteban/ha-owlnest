@@ -438,14 +438,22 @@ export class EffectController {
     const meshes = meshOrder(root);
     const nodes = nodeOrder(root);
     const missing: OwlnestEffect[] = [];
-    for (const cfg of configs) {
-      if (cfg.kind !== 'material' && cfg.kind !== 'visibility') {
-        missing.push(cfg);
+    // Liste absente ou corrompue : ignorer, ne pas faire échouer le chargement du modèle.
+    const list = Array.isArray(configs) ? configs : [];
+    for (const cfg of list) {
+      if (!cfg || (cfg.kind !== 'material' && cfg.kind !== 'visibility')) {
+        if (cfg) missing.push(cfg);
         continue;
       }
-      const item = this._mount(cfg, meshes, nodes);
-      if (item) this.items.push(item);
-      else missing.push(cfg);
+      try {
+        const item = this._mount(cfg, meshes, nodes);
+        if (item) this.items.push(item);
+        else missing.push(cfg);
+      } catch (err) {
+        // Une seule cible pourrie ne doit pas laisser la carte sans modèle.
+        console.warn(`[Owlnest] effect "${cfg.label || cfg.id}" failed to mount:`, err);
+        missing.push(cfg);
+      }
     }
     this._built = true;
     return { ok: this.items.length, missing };
@@ -639,8 +647,13 @@ export class EffectController {
   }
 
   private _apply(item: LiveEffect): boolean {
-    if (item.cfg.kind === 'visibility') return this._applyVisibility(item);
-    return this._applyMaterial(item);
+    try {
+      if (item.cfg.kind === 'visibility') return this._applyVisibility(item);
+      return this._applyMaterial(item);
+    } catch (err) {
+      console.warn(`[Owlnest] effect "${item.cfg.label || item.cfg.id}" apply failed:`, err);
+      return false;
+    }
   }
 
   private _applyMaterial(item: LiveEffect): boolean {

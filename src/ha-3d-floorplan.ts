@@ -1077,8 +1077,11 @@ export class Ha3dFloorplan extends HTMLElement {
         ...base.settings,
         orbit: orbit?.max_polar_angle !== undefined ? { max_polar_angle: orbit.max_polar_angle } : undefined,
       };
+      // Démo : tout jeter (ancres / ouvrants / effets d'une maison étrangère).
+      // Maison réelle : garder la config — cibles absentes sont signalées, pas
+      // fatales ; un effet pourri ne doit plus empêcher le nouveau GLB de charger.
       let scene: OwlnestScene = wasDemo
-        ? { ...base, settings, model_url: url, anchors: [], camera_views: [], parts: [] }
+        ? { ...base, settings, model_url: url, anchors: [], camera_views: [], parts: [], effects: [] }
         : { ...base, settings, model_url: url };
       await saveScene(this._hass, sceneId, scene);
       this._scene = scene;
@@ -1534,7 +1537,7 @@ export class Ha3dFloorplan extends HTMLElement {
         if (!this._scene) this._scene = {
           version: 1, scene_id: this._getActiveSceneId() ?? '',
           model_url: this._config?.model_url ?? '',
-          anchors: [], camera_views: [], cards: [], rules: [],
+          anchors: [], camera_views: [], cards: [], rules: [], parts: [], effects: [],
         };
         this._scene = { ...this._scene, settings: { ...this._scene.settings, ...s } };
         if (s.language) {
@@ -1932,7 +1935,7 @@ export class Ha3dFloorplan extends HTMLElement {
       const base = current ?? {
         version: 1, scene_id: sceneId,
         model_url: this._config?.model_url ?? '',
-        anchors: [], camera_views: [], cards: [], rules: [],
+        anchors: [], camera_views: [], cards: [], rules: [], parts: [], effects: [],
       };
       const updated = { ...base, cards };
       await saveScene(hass, sceneId, updated);
@@ -1956,7 +1959,7 @@ export class Ha3dFloorplan extends HTMLElement {
       const base = current ?? {
         version: 1, scene_id: sceneId,
         model_url: this._config?.model_url ?? '',
-        anchors: [], camera_views: [], cards: [], rules: [],
+        anchors: [], camera_views: [], cards: [], rules: [], parts: [], effects: [],
       };
       const updated = { ...base, rules };
       await saveScene(hass, sceneId, updated);
@@ -1982,7 +1985,7 @@ export class Ha3dFloorplan extends HTMLElement {
     const base = current ?? {
       version: 1, scene_id: sceneId ?? '',
       model_url: this._config?.model_url ?? '',
-      anchors: [], camera_views: [], cards: [], rules: [],
+      anchors: [], camera_views: [], cards: [], rules: [], parts: [], effects: [],
     };
     const updated = { ...base, parts };
     this._scene = updated;
@@ -2016,7 +2019,7 @@ export class Ha3dFloorplan extends HTMLElement {
     const base = current ?? {
       version: 1, scene_id: sceneId ?? '',
       model_url: this._config?.model_url ?? '',
-      anchors: [], camera_views: [], cards: [], rules: [],
+      anchors: [], camera_views: [], cards: [], rules: [], parts: [], effects: [],
     };
     const updated = { ...base, effects };
     this._scene = updated;
@@ -2930,13 +2933,17 @@ export class Ha3dFloorplan extends HTMLElement {
     try {
       this._mountParts();
       this._mountEffects();
+    } catch (err) {
+      // Ouvrants / effets ne doivent jamais laisser la carte sans modèle :
+      // _loadModel a déjà vidé la scène précédente.
+      console.error('[Owlnest] openings/effects setup failed; model kept without them:', err);
     } finally {
       this._mergeStatic();
     }
   }
 
   private _mountParts() {
-    const configs = this._scene?.parts ?? [];
+    const configs = Array.isArray(this._scene?.parts) ? this._scene!.parts! : [];
     if (!this._modelRoot) return;
     // Les rangs de l'arborescence se relèvent sur le modèle tel que chargé,
     // avant qu'un ouvrant ne déplace quoi que ce soit.
@@ -2963,7 +2970,7 @@ export class Ha3dFloorplan extends HTMLElement {
   }
 
   private _mountEffects() {
-    const configs = this._scene?.effects ?? [];
+    const configs = Array.isArray(this._scene?.effects) ? this._scene!.effects! : [];
     if (!this._modelRoot) return;
     this._effects.dispose();
     if (configs.length === 0) { this._applyHighlight(); return; }
@@ -2974,7 +2981,11 @@ export class Ha3dFloorplan extends HTMLElement {
         missing.map((m) => m.label || m.entity).join(', '),
       );
     }
-    if (this._hass) this._effects.applyStates(this._hass.states);
+    try {
+      if (this._hass) this._effects.applyStates(this._hass.states);
+    } catch (err) {
+      console.warn('[Owlnest] effects applyStates failed:', err);
+    }
     this._applyHighlight();
   }
 
@@ -2983,6 +2994,8 @@ export class Ha3dFloorplan extends HTMLElement {
     this._batch?.unmerge();
     try {
       this._mountEffects();
+    } catch (err) {
+      console.error('[Owlnest] effects rebuild failed:', err);
     } finally {
       this._mergeStatic();
     }
@@ -3097,129 +3110,141 @@ export class Ha3dFloorplan extends HTMLElement {
     loadingEl.remove();
     if (this._isDemo) this._showDemoBanner();
 
-    // Enable shadows on all meshes — but skip transparent/glass materials
-    // so that windows let light (and shadows) pass through.
-    model.traverse((obj) => {
-      if (obj instanceof THREE.Mesh) {
-        const mat = obj.material as THREE.Material;
-        const isGlass = mat.transparent && mat.opacity < 0.65;
-        obj.castShadow = !isGlass;
-        obj.receiveShadow = true;
+    try {
+      // Enable shadows on all meshes — but skip transparent/glass materials
+      // so that windows let light (and shadows) pass through.
+      model.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) {
+          const mat = obj.material as THREE.Material;
+          const isGlass = mat.transparent && mat.opacity < 0.65;
+          obj.castShadow = !isGlass;
+          obj.receiveShadow = true;
+        }
+      });
+
+      const box = new THREE.Box3().setFromObject(model);
+      const centre = box.getCenter(new THREE.Vector3());
+      model.position.sub(centre);
+      this._modelBox.copy(box).translate(centre.negate());
+      const span = this._modelBox.getSize(new THREE.Vector3());
+      this._modelSpan = Math.max(span.x, span.y, span.z, 1e-3);
+      this._fitSunShadow();
+      this._requestShadowUpdate();
+
+      // Un export Sweet Home 3D empile son terrain, le sol de chaque pièce et le
+      // dessous des tapis à la même altitude. Strictement coplanaires, ces plans
+      // scintillent quelle que soit la précision du tampon de profondeur : on les
+      // écarte d'une fraction imperceptible plutôt que d'en supprimer un, car le
+      // terrain déborde du sol et son retrait laisserait un trou.
+      const lifted = separateCoplanarSlabs(model, this._modelSpan, verticalAxis(this._modelBox));
+      if (lifted) {
+        console.debug(`[Owlnest] ${lifted} coplanar surface(s) separated`);
       }
-    });
+      // Avant tout placement de caméra : une borne trop serrée écrêterait la
+      // position par défaut, et l'élargir ensuite ne la replacerait pas.
+      this._fitOrbitLimits();
+      this._applyCutaway();
 
-    const box = new THREE.Box3().setFromObject(model);
-    const centre = box.getCenter(new THREE.Vector3());
-    model.position.sub(centre);
-    this._modelBox.copy(box).translate(centre.negate());
-    const span = this._modelBox.getSize(new THREE.Vector3());
-    this._modelSpan = Math.max(span.x, span.y, span.z, 1e-3);
-    this._fitSunShadow();
-    this._requestShadowUpdate();
+      const saved = this._loadView();
+      if (saved && this._viewFits(saved)) {
+        this.camera!.position.fromArray(saved.pos);
+        this.controls!.target.fromArray(saved.target);
+        this._toggleLock(saved.locked);
+      } else {
+        this._frameModel();
+        this.lockBtn!.textContent = '\uD83D\uDD13';
+      }
 
-    // Un export Sweet Home 3D empile son terrain, le sol de chaque pièce et le
-    // dessous des tapis à la même altitude. Strictement coplanaires, ces plans
-    // scintillent quelle que soit la précision du tampon de profondeur : on les
-    // écarte d'une fraction imperceptible plutôt que d'en supprimer un, car le
-    // terrain déborde du sol et son retrait laisserait un trou.
-    const lifted = separateCoplanarSlabs(model, this._modelSpan, verticalAxis(this._modelBox));
-    if (lifted) {
-      console.debug(`[Owlnest] ${lifted} coplanar surface(s) separated`);
-    }
-    // Avant tout placement de caméra : une borne trop serrée écrêterait la
-    // position par défaut, et l'élargir ensuite ne la replacerait pas.
-    this._fitOrbitLimits();
-    this._applyCutaway();
+      this._fitFog();
 
-    const saved = this._loadView();
-    if (saved && this._viewFits(saved)) {
-      this.camera!.position.fromArray(saved.pos);
-      this.controls!.target.fromArray(saved.target);
-      this._toggleLock(saved.locked);
-    } else {
-      this._frameModel();
-      this.lockBtn!.textContent = '\uD83D\uDD13';
-    }
+      this.controls!.update();
+      this.scene.add(model);
+      this._modelRoot = model;
+      if (ec.rendering?.transparent_background !== true && this._env) {
+        this._env.addGround(box, ec);
+      }
+      // Add occlusion plane if configured
+      if (ec.rendering?.light_occlusion === 'top' && this._env) {
+        this._env.addOcclusion(this._modelBox);
+      }
 
-    this._fitFog();
+      this._batch = new StaticBatch(model);
+      this._buildParts();
 
-    this.controls!.update();
-    this.scene.add(model);
-    this._modelRoot = model;
-    if (ec.rendering?.transparent_background !== true && this._env) {
-      this._env.addGround(box, ec);
-    }
-    // Add occlusion plane if configured
-    if (ec.rendering?.light_occlusion === 'top' && this._env) {
-      this._env.addOcclusion(this._modelBox);
-    }
+      this.anchors = detectAnchors(model, this.scene, ec, this._modelSpan);
+      this._createOverlays();
 
-    this._batch = new StaticBatch(model);
-    this._buildParts();
+      this._overlaysVisible = !(ec.tap_to_toggle ?? false);
 
-    this.anchors = detectAnchors(model, this.scene, ec, this._modelSpan);
-    this._createOverlays();
+      // Le renderer a été créé avant que la scène ne soit chargée, donc avec les
+      // seuls réglages du YAML. On applique ici ceux qui viennent de la scène
+      // (qualité, exposition, brouillard…), sinon ils n'auraient d'effet qu'après
+      // une modification manuelle dans l'éditeur.
+      this._applySettingsLive();
 
-    this._overlaysVisible = !(ec.tap_to_toggle ?? false);
+      this.modelLoaded = true;
+      if (this._hass) {
+        syncLights(this.anchors, this._hass, ec, this._modelSpan);
+        this._updateOverlayStates();
+        this._evaluatePassiveConditions();
+        this._env?.updateFromHass(this._hass);
+        // Amorce le moteur : sans cela, la premiere mise a jour d'etat apres le
+        // chargement serait consommee par l'instantane initial.
+        this._evaluateRules();
+      }
 
-    // Le renderer a été créé avant que la scène ne soit chargée, donc avec les
-    // seuls réglages du YAML. On applique ici ceux qui viennent de la scène
-    // (qualité, exposition, brouillard…), sinon ils n'auraient d'effet qu'après
-    // une modification manuelle dans l'éditeur.
-    this._applySettingsLive();
+      // Instantiate SimulationPanel (embedded in Weather tab — no HUD button/expand needed)
+      if (!this._sim) {
+        this._sim = new SimulationPanel(
+          null,
+          null,
+          this._env!,
+          () => this._requestRender(),
+          () => this._hass,
+          () => this.anchors,
+          () => this._effectiveConfig,
+          () => this._updateOverlayStates(),
+          () => this._modelSpan,
+        );
+      }
 
-    this.modelLoaded = true;
-    if (this._hass) {
-      syncLights(this.anchors, this._hass, ec, this._modelSpan);
-      this._updateOverlayStates();
-      this._evaluatePassiveConditions();
-      this._env?.updateFromHass(this._hass);
-      // Amorce le moteur : sans cela, la premiere mise a jour d'etat apres le
-      // chargement serait consommee par l'instantane initial.
-      this._evaluateRules();
-    }
-
-    // Instantiate SimulationPanel (embedded in Weather tab — no HUD button/expand needed)
-    if (!this._sim) {
-      this._sim = new SimulationPanel(
-        null,
-        null,
-        this._env!,
-        () => this._requestRender(),
-        () => this._hass,
-        () => this.anchors,
+      // Instantiate ViewManager
+      this._viewMgr = new ViewManager(
+        this.overlayContainer!,
+        this._hudLeft!,
+        this._hudSep!,
+        () => this.camera,
+        () => this.controls,
         () => this._effectiveConfig,
-        () => this._updateOverlayStates(),
-        () => this._modelSpan,
+        () => this._hass,
+        () => this._getActiveSceneId(),
+        () => this._scene,
+        (scene) => { this._scene = scene; },
+        (msg, err) => this._showToast(msg, err),
+        (pos, target) => { this._camAnimTo = { pos, target }; },
+        () => this._hudRight,
       );
+
+      this._rebuildNormalHUD();
+
+      // Sync cards from scene
+      const cards = this._scene?.cards ?? [];
+      if (cards.length > 0) {
+        this._cardRenderer?.syncCards(cards, this._hass);
+      }
+
+      this._requestRender();
+    } catch (err) {
+      // Le GLB est déjà là : une panne d'ancres / ouvrants / effets ne doit pas
+      // laisser `_modelRoot` null ni bloquer tout nouvel essai de chargement.
+      console.error('[Owlnest] model setup failed after GLB load:', err);
+      if (!this._modelRoot && this.scene) {
+        this.scene.add(model);
+        this._modelRoot = model;
+      }
+      this.modelLoaded = !!this._modelRoot;
+      this._requestRender();
     }
-
-    // Instantiate ViewManager
-    this._viewMgr = new ViewManager(
-      this.overlayContainer!,
-      this._hudLeft!,
-      this._hudSep!,
-      () => this.camera,
-      () => this.controls,
-      () => this._effectiveConfig,
-      () => this._hass,
-      () => this._getActiveSceneId(),
-      () => this._scene,
-      (scene) => { this._scene = scene; },
-      (msg, err) => this._showToast(msg, err),
-      (pos, target) => { this._camAnimTo = { pos, target }; },
-      () => this._hudRight,
-    );
-
-    this._rebuildNormalHUD();
-
-    // Sync cards from scene
-    const cards = this._scene?.cards ?? [];
-    if (cards.length > 0) {
-      this._cardRenderer?.syncCards(cards, this._hass);
-    }
-
-    this._requestRender();
   }
 
   // ── Overlay positioning + clustering ──────────────────────────────────

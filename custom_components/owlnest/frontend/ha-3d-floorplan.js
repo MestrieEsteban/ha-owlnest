@@ -25453,9 +25453,11 @@ function TE(s) {
 }
 function Zc(s, e) {
   const t = (n) => {
-    if (!n) return !1;
-    const i = n.geometry.getIndex(), a = (i ? i.count : n.geometry.getAttribute("position").count) / 3;
-    return e.triangle < a;
+    if (!(n != null && n.geometry)) return !1;
+    const i = n.geometry.getIndex(), a = n.geometry.getAttribute("position");
+    if (!i && !a) return !1;
+    const r = (i ? i.count : a.count) / 3;
+    return e.triangle < r;
   };
   if (e.meshIndex !== void 0) {
     const n = s[e.meshIndex];
@@ -25487,28 +25489,38 @@ class AE {
    */
   build(e, t) {
     this.dispose(e), this._root = e, this._center = null;
-    const n = [], i = En(e), a = In(e), r = [], o = [], c = /* @__PURE__ */ new Set();
-    for (const d of t) {
-      if (d.motion === "animation") {
-        o.push(d);
-        continue;
+    const n = [], i = En(e), a = In(e), r = [], o = [], c = /* @__PURE__ */ new Set(), l = Array.isArray(t) ? t : [];
+    for (const h of l)
+      if (h)
+        try {
+          if (h.motion === "animation") {
+            o.push(h);
+            continue;
+          }
+          const u = this._resolve(h, i, a, c);
+          u ? r.push({ cfg: h, mount: u }) : n.push(h);
+        } catch (u) {
+          console.warn(`[Owlnest] opening "${h.label || h.entity || h.id}" failed to resolve:`, u), n.push(h);
+        }
+    r.sort((h, u) => +!!h.cfg.node - +!!u.cfg.node);
+    for (const { cfg: h, mount: u } of r)
+      try {
+        const f = u();
+        f ? this.items.push(f) : n.push(h);
+      } catch (f) {
+        console.warn(`[Owlnest] opening "${h.label || h.entity || h.id}" failed to mount:`, f), n.push(h);
       }
-      const h = this._resolve(d, i, a, c);
-      h ? r.push({ cfg: d, mount: h }) : n.push(d);
-    }
-    r.sort((d, h) => +!!d.cfg.node - +!!h.cfg.node);
-    for (const { cfg: d, mount: h } of r) {
-      const u = h();
-      u ? this.items.push(u) : n.push(d);
-    }
     this._built = !0;
-    for (const d of this.items) d.cfg.motion === "extend" && this._configure(d, d.cfg);
-    let l = this.items.length;
-    for (const d of o) {
-      const h = this._mountClips(d);
-      this.anims.push(h), h.rig.missing.length ? n.push(d) : l++;
-    }
-    return { ok: l, missing: n };
+    for (const h of this.items) h.cfg.motion === "extend" && this._configure(h, h.cfg);
+    let d = this.items.length;
+    for (const h of o)
+      try {
+        const u = this._mountClips(h);
+        this.anims.push(u), u.rig.missing.length ? n.push(h) : d++;
+      } catch (u) {
+        console.warn(`[Owlnest] opening "${h.label || h.entity || h.id}" failed to mount clips:`, u), n.push(h);
+      }
+    return { ok: d, missing: n };
   }
   _mountClips(e) {
     const t = this._root, n = new yE(t ?? new xt(), (t == null ? void 0 : t.animations) ?? [], e.clips ?? []), i = t ? vE(n.nodes, t) : null;
@@ -26333,14 +26345,18 @@ class HE {
   }
   build(e, t) {
     this.dispose(), this._root = e, Pi(e);
-    const n = En(e), i = In(e), a = [];
-    for (const r of t) {
-      if (r.kind !== "material" && r.kind !== "visibility") {
-        a.push(r);
+    const n = En(e), i = In(e), a = [], r = Array.isArray(t) ? t : [];
+    for (const o of r) {
+      if (!o || o.kind !== "material" && o.kind !== "visibility") {
+        o && a.push(o);
         continue;
       }
-      const o = this._mount(r, n, i);
-      o ? this.items.push(o) : a.push(r);
+      try {
+        const c = this._mount(o, n, i);
+        c ? this.items.push(c) : a.push(o);
+      } catch (c) {
+        console.warn(`[Owlnest] effect "${o.label || o.id}" failed to mount:`, c), a.push(o);
+      }
     }
     return this._built = !0, { ok: this.items.length, missing: a };
   }
@@ -26459,7 +26475,11 @@ class HE {
     return t < 0 ? !1 : (this._unmount(this.items[t]), this.items.splice(t, 1), !0);
   }
   _apply(e) {
-    return e.cfg.kind === "visibility" ? this._applyVisibility(e) : this._applyMaterial(e);
+    try {
+      return e.cfg.kind === "visibility" ? this._applyVisibility(e) : this._applyMaterial(e);
+    } catch (t) {
+      return console.warn(`[Owlnest] effect "${e.cfg.label || e.cfg.id}" apply failed:`, t), !1;
+    }
   }
   _applyMaterial(e) {
     var c;
@@ -31728,7 +31748,7 @@ const gM = "rules-engine-v2", iu = "main", da = class da extends HTMLElement {
         ...h.settings,
         orbit: (u == null ? void 0 : u.max_polar_angle) !== void 0 ? { max_polar_angle: u.max_polar_angle } : void 0
       };
-      let m = l ? { ...h, settings: f, model_url: o, anchors: [], camera_views: [], parts: [] } : { ...h, settings: f, model_url: o };
+      let m = l ? { ...h, settings: f, model_url: o, anchors: [], camera_views: [], parts: [], effects: [] } : { ...h, settings: f, model_url: o };
       await Gn(this._hass, t, m), this._scene = m, localStorage.removeItem(this._storageKey), n.done(), await this._loadModel();
       const _ = d > 0 ? this._modelSpan / d : 1;
       (r = m.camera_views) != null && r.length && (_ < 0.8 || _ > 1.25) && (m = { ...m, camera_views: [] }, this._scene = m, await Gn(this._hass, t, m)), c != null && c.missingTextures.length ? this._showToast(`${b("importMissingTextures")} (${c.missingTextures.length})`, !0) : this._showToast(b("importDone")), this._offerDetectedOpenings();
@@ -32060,7 +32080,9 @@ const gM = "rules-engine-v2", iu = "main", da = class da extends HTMLElement {
           anchors: [],
           camera_views: [],
           cards: [],
-          rules: []
+          rules: [],
+          parts: [],
+          effects: []
         }), this._scene = { ...this._scene, settings: { ...this._scene.settings, ...o } }, o.language && (this._langFromScene = !0, pr(o.language)), c) {
           const f = o.scene_id;
           f && (this._setActiveSceneId(f), Ch(f), (h = (d = this.overlayContainer) == null ? void 0 : d.querySelector("#owlnest-backend-down")) == null || h.remove(), this._scene = null, this._sceneLoading = !1, this._hass && this._fetchAndLoadScene(f));
@@ -32246,7 +32268,9 @@ const gM = "rules-engine-v2", iu = "main", da = class da extends HTMLElement {
         anchors: [],
         camera_views: [],
         cards: [],
-        rules: []
+        rules: [],
+        parts: [],
+        effects: []
       }, cards: e };
       await Gn(n, t, h), this._scene = h;
     } catch (d) {
@@ -32269,7 +32293,9 @@ const gM = "rules-engine-v2", iu = "main", da = class da extends HTMLElement {
         anchors: [],
         camera_views: [],
         cards: [],
-        rules: []
+        rules: [],
+        parts: [],
+        effects: []
       }, rules: e };
       await Gn(n, t, o), this._scene = o;
     } catch (r) {
@@ -32293,7 +32319,9 @@ const gM = "rules-engine-v2", iu = "main", da = class da extends HTMLElement {
       anchors: [],
       camera_views: [],
       cards: [],
-      rules: []
+      rules: [],
+      parts: [],
+      effects: []
     }, parts: e };
     if (this._scene = o, t && n)
       try {
@@ -32314,7 +32342,9 @@ const gM = "rules-engine-v2", iu = "main", da = class da extends HTMLElement {
       anchors: [],
       camera_views: [],
       cards: [],
-      rules: []
+      rules: [],
+      parts: [],
+      effects: []
     }, effects: e };
     if (this._scene = o, t && n)
       try {
@@ -32745,13 +32775,15 @@ const gM = "rules-engine-v2", iu = "main", da = class da extends HTMLElement {
     (e = this._batch) == null || e.unmerge();
     try {
       this._mountParts(), this._mountEffects();
+    } catch (t) {
+      console.error("[Owlnest] openings/effects setup failed; model kept without them:", t);
     } finally {
       this._mergeStatic();
     }
   }
   _mountParts() {
     var n;
-    const e = ((n = this._scene) == null ? void 0 : n.parts) ?? [];
+    const e = Array.isArray((n = this._scene) == null ? void 0 : n.parts) ? this._scene.parts : [];
     if (!this._modelRoot || (Pi(this._modelRoot), this._highlight.clear(), this._parts.dispose(this._modelRoot), e.length === 0)) return;
     this._parts.setVertical(Go(this._modelBox));
     const { missing: t } = this._parts.build(this._modelRoot, e);
@@ -32762,7 +32794,7 @@ const gM = "rules-engine-v2", iu = "main", da = class da extends HTMLElement {
   }
   _mountEffects() {
     var n;
-    const e = ((n = this._scene) == null ? void 0 : n.effects) ?? [];
+    const e = Array.isArray((n = this._scene) == null ? void 0 : n.effects) ? this._scene.effects : [];
     if (!this._modelRoot) return;
     if (this._effects.dispose(), e.length === 0) {
       this._applyHighlight();
@@ -32772,7 +32804,13 @@ const gM = "rules-engine-v2", iu = "main", da = class da extends HTMLElement {
     t.length && console.warn(
       `[Owlnest] ${t.length} effect(s) not found in the model:`,
       t.map((i) => i.label || i.entity).join(", ")
-    ), this._hass && this._effects.applyStates(this._hass.states), this._applyHighlight();
+    );
+    try {
+      this._hass && this._effects.applyStates(this._hass.states);
+    } catch (i) {
+      console.warn("[Owlnest] effects applyStates failed:", i);
+    }
+    this._applyHighlight();
   }
   _rebuildEffects() {
     var e;
@@ -32780,6 +32818,8 @@ const gM = "rules-engine-v2", iu = "main", da = class da extends HTMLElement {
       (e = this._batch) == null || e.unmerge();
       try {
         this._mountEffects();
+      } catch (t) {
+        console.error("[Owlnest] effects rebuild failed:", t);
       } finally {
         this._mergeStatic();
       }
@@ -32812,8 +32852,8 @@ const gM = "rules-engine-v2", iu = "main", da = class da extends HTMLElement {
   }
   // ── Model loading ─────────────────────────────────────────────────────
   async _loadModel() {
-    var h, u, f, m, _, g, p, M;
-    if (this._clearSceneContent(), this._backendDown && !((u = (h = this._config) == null ? void 0 : h.model_url) != null && u.trim())) {
+    var a, r, o, c, l, d, h, u;
+    if (this._clearSceneContent(), this._backendDown && !((r = (a = this._config) == null ? void 0 : a.model_url) != null && r.trim())) {
       this._showBackendDown();
       return;
     }
@@ -32835,60 +32875,65 @@ const gM = "rules-engine-v2", iu = "main", da = class da extends HTMLElement {
       <div style="font-size:11px;color:rgba(255,255,255,0.35);font-family:var(--primary-font-family,sans-serif);letter-spacing:.04em;">${b("modelLoading")}</div>
     `;
     const n = document.createElement("style");
-    n.textContent = "@keyframes owlnest-spin{to{transform:rotate(360deg)}}", t.appendChild(n), (f = this.overlayContainer) == null || f.appendChild(t);
+    n.textContent = "@keyframes owlnest-spin{to{transform:rotate(360deg)}}", t.appendChild(n), (o = this.overlayContainer) == null || o.appendChild(t);
     let i;
     try {
       i = await o0(e.model_url);
-    } catch (w) {
-      console.error("[Owlnest] model load failed:", w);
-      const x = Il(w), R = `${b(s0(w))}${x !== null ? ` (${x})` : ""}`;
-      t.innerHTML = `<div style="font-size:11px;color:#f87171;font-family:var(--primary-font-family,sans-serif);text-align:center;padding:0 16px;">⚠ ${R}</div>`;
+    } catch (f) {
+      console.error("[Owlnest] model load failed:", f);
+      const m = Il(f), _ = `${b(s0(f))}${m !== null ? ` (${m})` : ""}`;
+      t.innerHTML = `<div style="font-size:11px;color:#f87171;font-family:var(--primary-font-family,sans-serif);text-align:center;padding:0 16px;">⚠ ${_}</div>`;
       return;
     }
-    t.remove(), this._isDemo && this._showDemoBanner(), i.traverse((w) => {
-      if (w instanceof Ze) {
-        const x = w.material, R = x.transparent && x.opacity < 0.65;
-        w.castShadow = !R, w.receiveShadow = !0;
-      }
-    });
-    const a = new wt().setFromObject(i), r = a.getCenter(new z());
-    i.position.sub(r), this._modelBox.copy(a).translate(r.negate());
-    const o = this._modelBox.getSize(new z());
-    this._modelSpan = Math.max(o.x, o.y, o.z, 1e-3), this._fitSunShadow(), this._requestShadowUpdate();
-    const c = $E(i, this._modelSpan, Go(this._modelBox));
-    c && console.debug(`[Owlnest] ${c} coplanar surface(s) separated`), this._fitOrbitLimits(), this._applyCutaway();
-    const l = this._loadView();
-    l && this._viewFits(l) ? (this.camera.position.fromArray(l.pos), this.controls.target.fromArray(l.target), this._toggleLock(l.locked)) : (this._frameModel(), this.lockBtn.textContent = "🔓"), this._fitFog(), this.controls.update(), this.scene.add(i), this._modelRoot = i, ((m = e.rendering) == null ? void 0 : m.transparent_background) !== !0 && this._env && this._env.addGround(a, e), ((_ = e.rendering) == null ? void 0 : _.light_occlusion) === "top" && this._env && this._env.addOcclusion(this._modelBox), this._batch = new tM(i), this._buildParts(), this.anchors = gh(i, this.scene, e, this._modelSpan), this._createOverlays(), this._overlaysVisible = !(e.tap_to_toggle ?? !1), this._applySettingsLive(), this.modelLoaded = !0, this._hass && (ta(this.anchors, this._hass, e, this._modelSpan), this._updateOverlayStates(), this._evaluatePassiveConditions(), (g = this._env) == null || g.updateFromHass(this._hass), this._evaluateRules()), this._sim || (this._sim = new Jw(
-      null,
-      null,
-      this._env,
-      () => this._requestRender(),
-      () => this._hass,
-      () => this.anchors,
-      () => this._effectiveConfig,
-      () => this._updateOverlayStates(),
-      () => this._modelSpan
-    )), this._viewMgr = new Zw(
-      this.overlayContainer,
-      this._hudLeft,
-      this._hudSep,
-      () => this.camera,
-      () => this.controls,
-      () => this._effectiveConfig,
-      () => this._hass,
-      () => this._getActiveSceneId(),
-      () => this._scene,
-      (w) => {
-        this._scene = w;
-      },
-      (w, x) => this._showToast(w, x),
-      (w, x) => {
-        this._camAnimTo = { pos: w, target: x };
-      },
-      () => this._hudRight
-    ), this._rebuildNormalHUD();
-    const d = ((p = this._scene) == null ? void 0 : p.cards) ?? [];
-    d.length > 0 && ((M = this._cardRenderer) == null || M.syncCards(d, this._hass)), this._requestRender();
+    t.remove(), this._isDemo && this._showDemoBanner();
+    try {
+      i.traverse((w) => {
+        if (w instanceof Ze) {
+          const x = w.material, R = x.transparent && x.opacity < 0.65;
+          w.castShadow = !R, w.receiveShadow = !0;
+        }
+      });
+      const f = new wt().setFromObject(i), m = f.getCenter(new z());
+      i.position.sub(m), this._modelBox.copy(f).translate(m.negate());
+      const _ = this._modelBox.getSize(new z());
+      this._modelSpan = Math.max(_.x, _.y, _.z, 1e-3), this._fitSunShadow(), this._requestShadowUpdate();
+      const g = $E(i, this._modelSpan, Go(this._modelBox));
+      g && console.debug(`[Owlnest] ${g} coplanar surface(s) separated`), this._fitOrbitLimits(), this._applyCutaway();
+      const p = this._loadView();
+      p && this._viewFits(p) ? (this.camera.position.fromArray(p.pos), this.controls.target.fromArray(p.target), this._toggleLock(p.locked)) : (this._frameModel(), this.lockBtn.textContent = "🔓"), this._fitFog(), this.controls.update(), this.scene.add(i), this._modelRoot = i, ((c = e.rendering) == null ? void 0 : c.transparent_background) !== !0 && this._env && this._env.addGround(f, e), ((l = e.rendering) == null ? void 0 : l.light_occlusion) === "top" && this._env && this._env.addOcclusion(this._modelBox), this._batch = new tM(i), this._buildParts(), this.anchors = gh(i, this.scene, e, this._modelSpan), this._createOverlays(), this._overlaysVisible = !(e.tap_to_toggle ?? !1), this._applySettingsLive(), this.modelLoaded = !0, this._hass && (ta(this.anchors, this._hass, e, this._modelSpan), this._updateOverlayStates(), this._evaluatePassiveConditions(), (d = this._env) == null || d.updateFromHass(this._hass), this._evaluateRules()), this._sim || (this._sim = new Jw(
+        null,
+        null,
+        this._env,
+        () => this._requestRender(),
+        () => this._hass,
+        () => this.anchors,
+        () => this._effectiveConfig,
+        () => this._updateOverlayStates(),
+        () => this._modelSpan
+      )), this._viewMgr = new Zw(
+        this.overlayContainer,
+        this._hudLeft,
+        this._hudSep,
+        () => this.camera,
+        () => this.controls,
+        () => this._effectiveConfig,
+        () => this._hass,
+        () => this._getActiveSceneId(),
+        () => this._scene,
+        (w) => {
+          this._scene = w;
+        },
+        (w, x) => this._showToast(w, x),
+        (w, x) => {
+          this._camAnimTo = { pos: w, target: x };
+        },
+        () => this._hudRight
+      ), this._rebuildNormalHUD();
+      const M = ((h = this._scene) == null ? void 0 : h.cards) ?? [];
+      M.length > 0 && ((u = this._cardRenderer) == null || u.syncCards(M, this._hass)), this._requestRender();
+    } catch (f) {
+      console.error("[Owlnest] model setup failed after GLB load:", f), !this._modelRoot && this.scene && (this.scene.add(i), this._modelRoot = i), this.modelLoaded = !!this._modelRoot, this._requestRender();
+    }
   }
   // ── Overlay positioning + clustering ──────────────────────────────────
   _updateOverlayPositions(e, t) {

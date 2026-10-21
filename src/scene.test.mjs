@@ -64,3 +64,24 @@ test('buildSceneFromEditor yields empty effects when current has none', () => {
   assert.deepEqual(next.effects, []);
   assert.deepEqual(next.parts, []);
 });
+
+test('duplicate scene data keeps model_url and effects under a new id', () => {
+  const src = {
+    ...emptyScene('salon'),
+    model_url: '/owlnest_models/casa.glb',
+    effects: [EFFECT],
+    parts: [PART],
+  };
+  const copy = { ...src, scene_id: 'salon_2' };
+  assert.equal(copy.scene_id, 'salon_2');
+  assert.equal(copy.model_url, '/owlnest_models/casa.glb');
+  assert.deepEqual(copy.effects, [EFFECT]);
+  assert.deepEqual(copy.parts, [PART]);
+});
+
+test('emptyScene starts with empty effects and parts', () => {
+  const s = emptyScene('x');
+  assert.deepEqual(s.effects, []);
+  assert.deepEqual(s.parts, []);
+  assert.equal(s.model_url, '');
+});

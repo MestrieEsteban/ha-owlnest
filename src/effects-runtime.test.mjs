@@ -379,6 +379,58 @@ test('seeThrough : visibility pose aussi des overlays quand montré', () => {
   assert.equal(person.children.filter((o) => o.userData.owlnestHelper).length, 0);
 });
 
+test('cibles absentes : build signale missing et ne lève pas', () => {
+  const { root } = scene();
+  const c = new EffectController();
+  const ghost = {
+    ...MATERIAL,
+    id: 'gone',
+    mesh: 'objet_inexistant',
+    meshIndex: 99,
+    node: 'objet_inexistant',
+    nodeIndex: 99,
+  };
+  const { ok, missing } = c.build(root, [ghost, MATERIAL]);
+  assert.equal(ok, 1);
+  assert.equal(missing.length, 1);
+  assert.equal(missing[0].id, 'gone');
+  assert.equal(c.count, 1);
+  // L'effet valide reste applicable.
+  assert.equal(c.applyStates({
+    'climate.salon': { state: 'heat', attributes: {} },
+  }), true);
+});
+
+test('liste effects corrompue : build ignore sans lever', () => {
+  const { root } = scene();
+  const c = new EffectController();
+  const { ok, missing } = c.build(root, /** @type {any} */ ('not-an-array'));
+  assert.equal(ok, 0);
+  assert.equal(missing.length, 0);
+  assert.equal(c.built, true);
+});
+
+test('maille sans position : resolveMesh ne lève pas (via build)', () => {
+  const { root, shared } = scene();
+  const empty = new THREE.Mesh(new THREE.BufferGeometry(), shared);
+  empty.name = 'radiateur_vide';
+  root.add(empty);
+  root.updateMatrixWorld(true);
+  const c = new EffectController();
+  // Sans `node` : on passe par resolveMesh (le nœud accepterait une maille vide).
+  const { ok, missing } = c.build(root, [{
+    ...MATERIAL,
+    id: 'empty',
+    mesh: 'radiateur_vide',
+    meshIndex: 3,
+    node: undefined,
+    nodeIndex: undefined,
+  }]);
+  assert.equal(ok, 0);
+  assert.equal(missing.length, 1);
+  assert.equal(c.built, true);
+});
+
 test('duration absente : bascule instantanée (compat)', () => {
   const { root, rad, shared } = scene();
   const c = new EffectController();
