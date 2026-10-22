@@ -9,6 +9,7 @@ import { makeDraggable, type WindowPos } from './draggable';
 import { openEntityPicker } from '../entities/picker';
 import { deleteScene, summarizeScenes } from '../scene';
 import { PARTS_ENABLED } from '../parts';
+import { DEFAULT_REFLECTION_INTENSITY, REFLECTION_METALNESS } from '../room-env';
 import type { SceneSummary } from '../scene';
 import { describeEntity, knownStates, stateLabel } from '../entities/descriptors';
 import { openFraction, hasOpenSemantics, type ExtendInfo } from '../parts-runtime';
@@ -1015,6 +1016,12 @@ export class EditPanel {
   private _buildConfigTab(container: HTMLElement) {
     const settings = this.getSceneSettings?.() ?? {};
     const rendering = settings.rendering ?? {};
+    // L'objet lu ici ne suit pas les curseurs. Sans relecture, le suivant
+    // réécrit le rendu sans le réglage que le précédent vient de poser.
+    const patchRendering = (partial: NonNullable<SceneSettings['rendering']>) => {
+      const current = this.getSceneSettings?.().rendering ?? {};
+      this.onSceneSettingsChange?.({ rendering: { ...current, ...partial } });
+    };
 
     const inputStyle = [
       'width:100%', 'box-sizing:border-box',
@@ -1470,7 +1477,7 @@ export class EditPanel {
         ],
         current,
         (v) => {
-          this.onSceneSettingsChange?.({ rendering: { ...rendering, quality: v as QualityLevel } });
+          patchRendering({ quality: v as QualityLevel });
           // Le libellé du matériel dépend du niveau retenu — on le rafraîchit.
           detail.textContent = describe(v as QualityLevel);
         },
@@ -1503,7 +1510,7 @@ export class EditPanel {
       ['showcase', t('cfgSunModeShowcase')],
       ['realistic', t('cfgSunModeRealistic')],
     ], rendering.sun_mode ?? 'showcase', (v) => {
-      this.onSceneSettingsChange?.({ rendering: { ...rendering, sun_mode: v as 'showcase' | 'realistic' } });
+      patchRendering({ sun_mode: v as 'showcase' | 'realistic' });
     });
 
     // House orientation — compass slider
@@ -1536,7 +1543,7 @@ export class EditPanel {
       sl.addEventListener('input', () => {
         const v = parseFloat(sl.value);
         val.textContent = toCardinal(v);
-        this.onSceneSettingsChange?.({ rendering: { ...rendering, house_orientation: v } });
+        patchRendering({ house_orientation: v });
       });
       wrap.appendChild(hdr); wrap.appendChild(sl);
       root.appendChild(wrap);
@@ -1546,7 +1553,7 @@ export class EditPanel {
       ['none', t('cfgOcclusionNone')],
       ['top', t('cfgOcclusionTop')],
     ], rendering.light_occlusion ?? 'none', (v) => {
-      this.onSceneSettingsChange?.({ rendering: { ...rendering, light_occlusion: v as 'none' | 'top' } });
+      patchRendering({ light_occlusion: v as 'none' | 'top' });
     });
 
     // ══════════════════════════════════════════════════════════════════════
@@ -1561,7 +1568,7 @@ export class EditPanel {
       ['infinite', t('cfgGroundInfinite')],
       ['none', t('cfgGroundNone')],
     ], rendering.ground_style ?? 'square', (v) => {
-      this.onSceneSettingsChange?.({ rendering: { ...rendering, ground_style: v as 'square' | 'disc' | 'infinite' | 'podium' | 'none' } });
+      patchRendering({ ground_style: v as 'square' | 'disc' | 'infinite' | 'podium' | 'none' });
     });
 
     // Ground color
@@ -1576,7 +1583,7 @@ export class EditPanel {
       colorInput.type = 'color';
       colorInput.value = rendering.ground_color ?? '#1a1a2e';
       colorInput.style.cssText = 'width:36px;height:24px;border:none;border-radius:6px;cursor:pointer;padding:0;background:none;';
-      colorInput.addEventListener('input', () => this.onSceneSettingsChange?.({ rendering: { ...rendering, ground_color: colorInput.value } }));
+      colorInput.addEventListener('input', () => patchRendering({ ground_color: colorInput.value }));
       colorWrap.appendChild(colorLbl); colorWrap.appendChild(colorInput);
       root.appendChild(colorWrap);
     }
@@ -1586,7 +1593,7 @@ export class EditPanel {
       const currentStyle = rendering.ground_style ?? 'square';
       if (currentStyle !== 'infinite' && currentStyle !== 'none') {
         sliderWithHelp(t('cfgGroundScale'), t('helpGroundScale'), 0.5, 3, 0.1, rendering.ground_scale ?? 1.0,
-          (v) => '\u00d7' + v.toFixed(1), (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, ground_scale: v } }));
+          (v) => '\u00d7' + v.toFixed(1), (v) => patchRendering({ ground_scale: v }));
       }
     }
 
@@ -1596,17 +1603,50 @@ export class EditPanel {
     sec(t('cfgRender'));
 
     sliderWithHelp(t('cfgSunIntensity'), t('helpSunIntensity'), 0, 3, 0.05, rendering.sun_intensity ?? 0.8,
-      (v) => v.toFixed(2), (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, sun_intensity: v } }));
+      (v) => v.toFixed(2), (v) => patchRendering({ sun_intensity: v }));
 
     sliderWithHelp(t('cfgAmbientIntensity'), t('helpAmbientIntensity'), 0, 2, 0.05, rendering.ambient_intensity ?? 0.7,
-      (v) => v.toFixed(2), (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, ambient_intensity: v } }));
+      (v) => v.toFixed(2), (v) => patchRendering({ ambient_intensity: v }));
 
     sliderWithHelp(t('cfgExposure'), t('helpExposure'), 0.5, 2, 0.05, rendering.exposure ?? 1.4,
-      (v) => v.toFixed(2), (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, exposure: v } }));
+      (v) => v.toFixed(2), (v) => patchRendering({ exposure: v }));
 
     toggleWithHelp(t('cfgShadows'), t('helpShadows'), rendering.shadows !== false, (v) => {
-      this.onSceneSettingsChange?.({ rendering: { ...rendering, shadows: v } });
+      patchRendering({ shadows: v });
     });
+
+    toggleWithHelp(t('cfgReflections'), t('helpReflections'), rendering.reflections === true, (v) => {
+      patchRendering({ reflections: v });
+    });
+
+    // L'intégration n'accepte qu'un GLB : le .hdr est un fichier déjà servi
+    // sous /local/, pas un envoi.
+    {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'margin-bottom:8px;';
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;margin-bottom:3px;';
+      const lbl = document.createElement('span');
+      lbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;';
+      lbl.textContent = t('cfgReflectionHdri');
+      row.appendChild(lbl);
+      row.appendChild(helpBadge(t('helpReflectionHdri')));
+      wrap.appendChild(row);
+      wrap.appendChild(textInput(
+        rendering.reflection_hdri ?? '',
+        '/local/estudio.hdr',
+        (v) => patchRendering({ reflection_hdri: v }),
+      ));
+      root.appendChild(wrap);
+    }
+
+    sliderWithHelp(t('cfgReflectionIntensity'), t('helpReflectionIntensity'), 0, 2, 0.05,
+      rendering.reflection_intensity ?? DEFAULT_REFLECTION_INTENSITY,
+      (v) => v.toFixed(2), (v) => patchRendering({ reflection_intensity: v }));
+
+    sliderWithHelp(t('cfgReflectionMetalness'), t('helpReflectionMetalness'), 0, 1, 0.05,
+      rendering.reflection_metalness ?? REFLECTION_METALNESS,
+      (v) => v.toFixed(2), (v) => patchRendering({ reflection_metalness: v }));
 
     // ══════════════════════════════════════════════════════════════════════
     // 4) ATMOSPHERE — fog, transparent
@@ -1614,16 +1654,16 @@ export class EditPanel {
     sec(t('cfgAtmosphere'));
 
     sliderWithHelp(t('cfgFogDensity'), t('helpFogDensity'), 0, 0.05, 0.001, rendering.fog_density ?? 0.018,
-      (v) => v.toFixed(3), (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, fog_density: v } }));
+      (v) => v.toFixed(3), (v) => patchRendering({ fog_density: v }));
 
     // 0 = inactif. C'est le réglage à recommander : il suit le point de vue,
     // là où la coupe horizontale est fixe.
     sliderWithHelp(t('cfgXray'), t('helpXray'), 0, 1, 0.05, rendering.xray ?? 0,
       (v) => (v <= 0 ? t('cutawayOff') : `${Math.round(v * 100)} %`),
-      (v) => this.onSceneSettingsChange?.({ rendering: { ...rendering, xray: v } }));
+      (v) => patchRendering({ xray: v }));
 
     toggleWithHelp(t('cfgTransparent'), t('helpTransparent'), rendering.transparent_background === true, (v) => {
-      this.onSceneSettingsChange?.({ rendering: { ...rendering, transparent_background: v } });
+      patchRendering({ transparent_background: v });
     });
 
     // ── Camera limits ─────────────────────────────────────────────────────

@@ -318,6 +318,10 @@ All rendering settings are configurable in the editor's **Config** tab.
 | Setting | Description | Default |
 |---|---|---|
 | `shadows` | Enable shadow casting | `false` |
+| `reflections` | Metals and mirrors reflect a procedural room instead of rendering black. Other materials are unchanged. | `false` |
+| `reflection_intensity` | How strongly those metals and mirrors reflect the procedural room. `0` hides the reflection without turning the feature off. | `1` |
+| `reflection_metalness` | Minimum metalness for a material to receive the reflection. Lower includes more surfaces. | `0.5` |
+| `reflection_hdri` | Optional URL of an equirectangular .hdr reflected by metals and mirrors. Empty keeps the procedural room, with no download. A 1k file in `/config/www`, used as `/local/….hdr`, is enough. | — |
 | `exposure` | Global brightness (tone mapping) | — |
 | `fog_density` | Ambient fog density | `0.018` |
 | `transparent_background` | Transparent background (see-through to dashboard) | `false` |

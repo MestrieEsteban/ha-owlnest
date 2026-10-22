@@ -318,6 +318,10 @@ Tous les paramètres de rendu se configurent dans l'onglet **Config** de l'édit
 | Paramètre | Description | Défaut |
 |---|---|---|
 | `shadows` | Active les ombres portées | `false` |
+| `reflections` | Les métaux et les miroirs reflètent une pièce procédurale au lieu de s'afficher en noir. Les autres matériaux ne changent pas. | `false` |
+| `reflection_intensity` | Force avec laquelle ces métaux et ces miroirs reflètent la pièce procédurale. `0` masque le reflet sans désactiver l'option. | `1` |
+| `reflection_metalness` | Métal minimum pour qu'un matériau reçoive le reflet. Plus bas inclut davantage de surfaces. | `0.5` |
+| `reflection_hdri` | URL facultative d'un .hdr équirectangulaire reflété par les métaux et les miroirs. Vide : la pièce procédurale, sans téléchargement. Un fichier 1k dans `/config/www`, en chemin `/local/….hdr`, suffit. | — |
 | `exposure` | Luminosité globale (tone mapping) | — |
 | `fog_density` | Densité du brouillard ambiant | `0.018` |
 | `transparent_background` | Fond transparent (laisse voir le dashboard) | `false` |

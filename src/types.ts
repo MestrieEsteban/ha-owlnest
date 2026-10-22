@@ -232,6 +232,34 @@ export interface RenderingConfig {
   ground_scale?: number;
   /** Quality/performance preset — see quality.ts. 'auto' probes the hardware. */
   quality?: import('./quality').QualityLevel;
+  /**
+   * Reflets des métaux et des miroirs.
+   *
+   * Absent ou faux : rien ne change. Vrai : ces matériaux reçoivent une pièce
+   * procédurale à refléter. Le reste du modèle garde son shader.
+   */
+  reflections?: boolean;
+  /**
+   * Échelle du reflet, une fois l'image posée.
+   *
+   * Absente : 1, la radiance déjà dosée de la pièce. 0 l'éteint sans
+   * reconstruire l'image ni décocher l'option.
+   */
+  reflection_intensity?: number;
+  /**
+   * Métal minimum pour recevoir le reflet.
+   *
+   * Absent : 0,5. Les scènes déjà enregistrées ne prennent donc que l'acier
+   * et les miroirs, pas les murs.
+   */
+  reflection_metalness?: number;
+  /**
+   * URL d'un .hdr équirectangulaire pour les reflets.
+   *
+   * Absente ou vide : la pièce procédurale, sans téléchargement. Le fichier
+   * est lu par le navigateur, par exemple `/local/….hdr` depuis `config/www`.
+   */
+  reflection_hdri?: string;
 }
 
 /** A full Owlnest scene, persisted by the backend integration. */
