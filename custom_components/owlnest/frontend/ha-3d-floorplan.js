@@ -22200,7 +22200,7 @@ function b0(i, e = /* @__PURE__ */ new Date()) {
   };
   return JSON.stringify(t, null, 2);
 }
-const To = (i) => !!i && typeof i == "object" && !Array.isArray(i), _0 = ["anchors", "camera_views", "cards", "rules", "parts"];
+const To = (i) => !!i && typeof i == "object" && !Array.isArray(i), _0 = ["anchors", "camera_views", "cards", "rules", "parts", "effects"];
 function x0(i) {
   let e;
   try {
@@ -22228,7 +22228,9 @@ function x0(i) {
     camera_views: t.camera_views ?? [],
     cards: t.cards ?? [],
     rules: t.rules ?? [],
-    parts: t.parts ?? []
+    parts: t.parts ?? [],
+    // Comme parts : une scène exportée avec des effets doit les retrouver à l'import.
+    effects: t.effects ?? []
   };
 }
 function y0(i, e) {

@@ -5,6 +5,15 @@ import {
   SceneFileParseError,
 } from './scene-file.mjs';
 
+const EFFECT = {
+  id: 'fx1',
+  kind: 'visibility',
+  entity: 'binary_sensor.presence',
+  mesh: 'personne',
+  triangle: 0,
+  node: 'personne',
+};
+
 const scene = {
   version: 1,
   scene_id: 'salon',
@@ -14,6 +23,7 @@ const scene = {
   cards: [],
   rules: [],
   parts: [{ id: 'p1', mesh: 'door', motion: 'swing' }],
+  effects: [EFFECT],
   settings: { language: 'fr' },
 };
 
@@ -42,7 +52,22 @@ test('une scène nue, copiée du stockage, est acceptée', () => {
   assert.equal(back.scene_id, 'x');
   assert.deepEqual(back.rules, []);
   assert.deepEqual(back.parts, []);
+  assert.deepEqual(back.effects, []);
   assert.equal(back.model_url, '');
+});
+
+test('export / import conserve model_url et effects (copie de scène)', () => {
+  const back = parseSceneFile(serializeScene(scene));
+  assert.equal(back.model_url, '/owlnest_models/salon.glb');
+  assert.deepEqual(back.effects, [EFFECT]);
+  assert.deepEqual(back.parts, scene.parts);
+});
+
+test('effects non-tableau est refusé comme les autres listes', () => {
+  assert.equal(
+    errorCode(() => parseSceneFile(JSON.stringify({ anchors: [], effects: 'x' }))),
+    'not_a_scene',
+  );
 });
 
 test('un fichier qui n’est pas une scène est refusé', () => {

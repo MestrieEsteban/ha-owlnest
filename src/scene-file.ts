@@ -58,7 +58,7 @@ export function serializeScene(scene: OwlnestScene, now = new Date()): string {
 const isObject = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === 'object' && !Array.isArray(v);
 
-const LISTS = ['anchors', 'camera_views', 'cards', 'rules', 'parts'] as const;
+const LISTS = ['anchors', 'camera_views', 'cards', 'rules', 'parts', 'effects'] as const;
 
 /**
  * Relit un fichier exporté.
@@ -102,6 +102,8 @@ export function parseSceneFile(text: string): OwlnestScene {
     cards: (raw.cards as OwlnestScene['cards']) ?? [],
     rules: (raw.rules as OwlnestScene['rules']) ?? [],
     parts: (raw.parts as OwlnestScene['parts']) ?? [],
+    // Comme parts : une scène exportée avec des effets doit les retrouver à l'import.
+    effects: (raw.effects as OwlnestScene['effects']) ?? [],
   };
 }
 
