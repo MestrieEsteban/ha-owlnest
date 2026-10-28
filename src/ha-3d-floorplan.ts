@@ -62,8 +62,9 @@ import { SceneCardRenderer } from './cards/renderer';
 import { PanelGizmo } from './panels/gizmo';
 import type { SceneCard, SceneCardType } from './cards/types';
 import { PartController, meshOrder, partTargetKey } from './parts-runtime';
+import { EffectController, effectTargetKey } from './effects-runtime';
 import { clipInfos } from './parts-clips';
-import { stampOrder, nodeOrder, resetOrder, rankOf } from './model-outline';
+import { stampOrder, nodeOrder, resetOrder, rankOf, locatePart } from './model-outline';
 import { PartHighlight, type HighlightSource, type HighlightSlot } from './part-highlight';
 import { modelScale } from './scale';
 import { partIndexOf, partFrame, guessPart, verticalAxis } from './parts';
@@ -235,6 +236,8 @@ export class Ha3dFloorplan extends HTMLElement {
 
   /** Ouvrants du modèle animés par l'état des entités (portes, volets…). */
   private _parts = new PartController();
+  /** Teintes pilotées par entité (radiateurs, etc.), sans mouvement. */
+  private _effects = new EffectController();
   /** Renseigné pendant que l'éditeur attend un clic sur une pièce du modèle. */
   private _partPickHandler: ((hit: import('./card/edit-panel').PickedPart) => void) | null = null;
   /** Mode du pick partagé : ouvrant vs hôte d'une ancre lumière. */
@@ -440,9 +443,14 @@ export class Ha3dFloorplan extends HTMLElement {
 
     // Les ouvrants suivent l'état même en édition : voir une porte s'ouvrir est
     // le seul moyen de vérifier qu'on a choisi le bon côté de gonds.
+    let liveDirty = false;
     if (this.modelLoaded && this._parts.built && this._parts.applyStates(hass.states)) {
-      this._requestRender();
+      liveDirty = true;
     }
+    if (this.modelLoaded && this._effects.built && this._effects.applyStates(hass.states)) {
+      liveDirty = true;
+    }
+    if (liveDirty) this._requestRender();
 
     if (this.modelLoaded && !this._editMode) {
       syncLights(this.anchors, hass, this._effectiveConfig, this._modelSpan);
@@ -1655,8 +1663,11 @@ export class Ha3dFloorplan extends HTMLElement {
         ...base.settings,
         orbit: orbit?.max_polar_angle !== undefined ? { max_polar_angle: orbit.max_polar_angle } : undefined,
       };
+      // Démo : tout jeter (ancres / ouvrants / effets d'une maison étrangère).
+      // Maison réelle : garder la config — cibles absentes sont signalées, pas
+      // fatales ; un effet pourri ne doit plus empêcher le nouveau GLB de charger.
       let scene: OwlnestScene = wasDemo
-        ? { ...base, settings, model_url: url, anchors: [], camera_views: [], parts: [] }
+        ? { ...base, settings, model_url: url, anchors: [], camera_views: [], parts: [], effects: [] }
         : { ...base, settings, model_url: url };
       await saveScene(this._hass, sceneId, scene);
       this._scene = scene;
@@ -2971,7 +2982,7 @@ export class Ha3dFloorplan extends HTMLElement {
         if (!this._scene) this._scene = {
           version: 1, scene_id: this._getActiveSceneId() ?? '',
           model_url: this._config?.model_url ?? '',
-          anchors: [], camera_views: [], cards: [], rules: [],
+          anchors: [], camera_views: [], cards: [], rules: [], parts: [], effects: [],
         };
         // Le menu n'envoie que ce qui change : rendu et caméra se fusionnent
         // avec l'existant (une copie entière, figée à l'ouverture du menu,
@@ -3031,6 +3042,30 @@ export class Ha3dFloorplan extends HTMLElement {
       (id) => this._parts.carried.get(id)?.length ?? 0,
       (id) => this._parts.extendInfo(id),
       () => clipInfos(this._modelRoot?.animations ?? []),
+      () => this._scene?.effects ?? [],
+      async (effects) => this._saveEffectsDirect(effects),
+      (cfg) => {
+        const applied = this._effects.configure(cfg);
+        if (applied) {
+          // Hors aperçu éditeur : synchroniser avec HA. En aperçu, configure
+          // a déjà posé l'apparence forcée (comme l'intensité d'une lumière).
+          if (this._hass && !this._effects.isPreviewing(cfg.id)) {
+            this._effects.applyStates(this._hass.states);
+          }
+          this._applyHighlight();
+          this._requestRender();
+        }
+        return applied;
+      },
+      (id, forced) => {
+        if (forced === null && this._hass) {
+          this._effects.setPreview(id, null);
+          this._effects.applyStates(this._hass.states);
+        } else {
+          this._effects.setPreview(id, forced);
+        }
+        this._requestRender();
+      },
     );
 
     this._editPanel.onTestRule = (rule) => this.runRuleNow(rule);
@@ -3554,7 +3589,7 @@ export class Ha3dFloorplan extends HTMLElement {
       const base = current ?? {
         version: 1, scene_id: sceneId,
         model_url: this._config?.model_url ?? '',
-        anchors: [], camera_views: [], cards: [], rules: [],
+        anchors: [], camera_views: [], cards: [], rules: [], parts: [], effects: [],
       };
       const updated = { ...base, cards };
       await saveScene(hass, sceneId, updated);
@@ -3578,7 +3613,7 @@ export class Ha3dFloorplan extends HTMLElement {
       const base = current ?? {
         version: 1, scene_id: sceneId,
         model_url: this._config?.model_url ?? '',
-        anchors: [], camera_views: [], cards: [], rules: [],
+        anchors: [], camera_views: [], cards: [], rules: [], parts: [], effects: [],
       };
       const updated = { ...base, rules };
       await saveScene(hass, sceneId, updated);
@@ -3604,7 +3639,7 @@ export class Ha3dFloorplan extends HTMLElement {
     const base = current ?? {
       version: 1, scene_id: sceneId ?? '',
       model_url: this._config?.model_url ?? '',
-      anchors: [], camera_views: [], cards: [], rules: [],
+      anchors: [], camera_views: [], cards: [], rules: [], parts: [], effects: [],
     };
     const updated = { ...base, parts };
     this._scene = updated;
@@ -3627,6 +3662,40 @@ export class Ha3dFloorplan extends HTMLElement {
     const unmounted = parts.some((p) => prev.get(p.id) !== partTargetKey(p) && !this._parts.hasTarget(p));
     const structural = ids.size !== known.size || [...ids].some((id) => !known.has(id)) || unmounted;
     if (structural) this.refreshParts();
+  }
+
+  /** Enregistre les effets et remonte ceux dont la cible a changé. */
+  private async _saveEffectsDirect(effects: import('./types').OwlnestEffect[]) {
+    const sceneId = this._getActiveSceneId();
+    const hass = this._hass;
+    const current = this._scene;
+    const before = current?.effects ?? [];
+    const base = current ?? {
+      version: 1, scene_id: sceneId ?? '',
+      model_url: this._config?.model_url ?? '',
+      anchors: [], camera_views: [], cards: [], rules: [], parts: [], effects: [],
+    };
+    const updated = { ...base, effects };
+    this._scene = updated;
+
+    if (sceneId && hass) {
+      try {
+        await saveScene(hass, sceneId, updated);
+      } catch (err) {
+        console.error('[Owlnest] Effects save failed:', err);
+      }
+    }
+    const ids = new Set(effects.map((e) => e.id));
+    const known = new Set(before.map((e) => e.id));
+    for (const id of known) {
+      if (!ids.has(id)) this._effects.remove(id);
+    }
+    const prev = new Map(before.map((e) => [e.id, effectTargetKey(e)]));
+    const unmounted = effects.some(
+      (e) => prev.get(e.id) !== effectTargetKey(e) && !this._effects.hasTarget(e),
+    );
+    const structural = ids.size !== known.size || [...ids].some((id) => !known.has(id)) || unmounted;
+    if (structural) this._rebuildEffects();
   }
 
   /**
@@ -3667,6 +3736,10 @@ export class Ha3dFloorplan extends HTMLElement {
     if (t.part) {
       const obj = this._parts.objectOf(t.part);
       if (obj) return { object: obj };
+      // Effet multi-cibles : la première suffit ici ; les autres passent par
+      // `followers` (même emplacement de surlignage que les suiveurs).
+      const effectObjs = this._effects.objectsOf(t.part);
+      if (effectObjs[0]) return { object: effectObjs[0] };
     }
     if (t.node !== undefined) {
       const obj = nodeOrder(root)[t.node];
@@ -4186,6 +4259,8 @@ export class Ha3dFloorplan extends HTMLElement {
 
     // Ouvrants en mouvement : tant qu'une porte pivote, il faut redessiner.
     if (this._parts.built && this._parts.update(dt)) this._dirty = true;
+    // Effets en fondu (teinte / opacité) : même contrainte de redraw.
+    if (this._effects.built && this._effects.update(dt)) this._dirty = true;
 
     const moved = this.controls?.update() ?? false;
     if (moved) this._dirty = true;
@@ -4990,12 +5065,17 @@ export class Ha3dFloorplan extends HTMLElement {
 
   private _buildParts() {
     // Un ouvrant peut changer de pièce : on repart des objets d'origine, et on
-    // refusionne une fois les ouvrants montés.
+    // refusionne une fois les ouvrants (et effets) montés.
     this._batch?.unmerge();
     try {
       this._mountParts();
       // Les hôtes émissifs doivent rester hors fusion, comme les ouvrants.
       if (this._modelRoot) this._lightEmissive.markHosts(this._modelRoot, this.anchors.values());
+      this._mountEffects();
+    } catch (err) {
+      // Ouvrants / effets ne doivent jamais laisser la carte sans modèle :
+      // _loadModel a déjà vidé la scène précédente.
+      console.error('[Owlnest] openings/effects setup failed; model kept without them:', err);
     } finally {
       this._mergeStatic();
     }
@@ -5029,7 +5109,38 @@ export class Ha3dFloorplan extends HTMLElement {
     // leur état réel, sinon toutes les portes ouvertes s'animeraient au
     // chargement de la page.
     this._parts.update(1e6);
+  }
+
+  private _mountEffects() {
+    const configs = Array.isArray(this._scene?.effects) ? this._scene!.effects! : [];
+    if (!this._modelRoot) return;
+    this._effects.dispose();
+    if (configs.length === 0) { this._applyHighlight(); return; }
+    const { missing } = this._effects.build(this._modelRoot, configs);
+    if (missing.length) {
+      console.warn(
+        `[Owlnest] ${missing.length} effect(s) not found in the model:`,
+        missing.map((m) => m.label || m.entity).join(', '),
+      );
+    }
+    try {
+      if (this._hass) this._effects.applyStates(this._hass.states);
+    } catch (err) {
+      console.warn('[Owlnest] effects applyStates failed:', err);
+    }
     this._applyHighlight();
+  }
+
+  private _rebuildEffects() {
+    if (!this._modelRoot) return;
+    this._batch?.unmerge();
+    try {
+      this._mountEffects();
+    } catch (err) {
+      console.error('[Owlnest] effects rebuild failed:', err);
+    } finally {
+      this._mergeStatic();
+    }
   }
 
   /**
@@ -5055,6 +5166,7 @@ export class Ha3dFloorplan extends HTMLElement {
     this._highlight.clear();
     this._lightEmissive.dispose();
     this._parts.dispose(this._modelRoot ?? undefined);
+    this._effects.dispose();
     if (this._ghost) { this.scene?.remove(this._ghost); this._ghost = null; }
     // Dispose card renderer
     this._cardRenderer?.dispose();
@@ -5150,168 +5262,180 @@ export class Ha3dFloorplan extends HTMLElement {
     loadingEl.remove();
     if (this._isDemo) this._showDemoBanner();
 
-    // Enable shadows on all meshes — but skip transparent/glass materials
-    // so that windows let light (and shadows) pass through.
-    model.traverse((obj) => {
-      if (obj instanceof THREE.Mesh) {
-        const mat = obj.material as THREE.Material;
-        const isGlass = mat.transparent && mat.opacity < 0.65;
-        obj.castShadow = !isGlass;
-        obj.receiveShadow = true;
-      }
-    });
-
-    const box = new THREE.Box3().setFromObject(model);
-    // Un plan se centre sur son rez-de-chaussée seul : monter d'un étage ne
-    // doit pas déplacer ce qui est déjà posé.
-    const centre = (groundBox ?? box).getCenter(new THREE.Vector3());
-    if (plan) {
-      // Un plan garde son origine : le recentrer à chaque retouche ferait
-      // glisser les ancres déjà posées (voir PlanDoc.origin).
-      const o = this._planOrigin(plan);
-      centre.x = o.x;
-      centre.z = o.y;
-    }
-    model.position.sub(centre);
-    this._modelBox.copy(box).translate(centre.negate());
-    const span = this._modelBox.getSize(new THREE.Vector3());
-    this._modelSpan = Math.max(span.x, span.y, span.z, 1e-3);
-    this._fitSunShadow();
-    this._requestShadowUpdate();
-
-    // Un export Sweet Home 3D empile son terrain, le sol de chaque pièce et le
-    // dessous des tapis à la même altitude. Strictement coplanaires, ces plans
-    // scintillent quelle que soit la précision du tampon de profondeur : on les
-    // écarte d'une fraction imperceptible plutôt que d'en supprimer un, car le
-    // terrain déborde du sol et son retrait laisserait un trou.
-    const lifted = separateCoplanarSlabs(model, this._modelSpan, verticalAxis(this._modelBox));
-    if (lifted) {
-      console.debug(`[Owlnest] ${lifted} coplanar surface(s) separated`);
-    }
-    // Avant tout placement de caméra : une borne trop serrée écrêterait la
-    // position par défaut, et l'élargir ensuite ne la replacerait pas.
-    this._fitOrbitLimits();
-    this._applyCutaway();
-
-    const saved = this._loadView();
-    if (saved && this._viewFits(saved)) {
-      this.camera!.position.fromArray(saved.pos);
-      this.controls!.target.fromArray(saved.target);
-      this._toggleLock(saved.locked);
-    } else {
-      this._frameModel();
-      this._ui?.refreshDock();
-    }
-
-    this._fitFog();
-
-    this.controls!.update();
-    this.scene.add(model);
-    this._modelRoot = model;
-    if (plan) {
-      this._refreshFloorGroup(model);
-      this._lowWalls.setPlan(this._activeDoc() ?? plan, this._activeGroup ?? model);
-      this._lowWalls.instrument(model);
-    }
-    this._paintLowWallsBtn();
-    if (ec.rendering?.transparent_background !== true && this._env) {
-      this._env.addGround(box, ec);
-    }
-    // Add occlusion plane if configured
-    if (ec.rendering?.light_occlusion === 'top' && this._env) {
-      this._env.addOcclusion(this._modelBox);
-    }
-
-    this._batch = new StaticBatch(model);
-    if (plan) this._placeFurniture(model, plan);
-    if (plan && this._syncPlanPartsAfterLoad && this._scene) {
-      this._syncPlanPartsAfterLoad = false;
-      this._scene = {
-        ...this._scene,
-        parts: syncPlanParts(model, allOpenings(plan), this._scene.parts ?? [], this._planPartLabel),
-      };
-    }
-    // Ancres avant le merge : les hôtes émissifs doivent être marqués d'abord.
-    this.anchors = detectAnchors(model, this.scene, ec, this._modelSpan);
-    this._ovPosPool.clear();
-    this._applyAttachPositions();
-    this._buildParts();
-    this._applyFloorLights();
-    this._createOverlays();
-
-    this._overlaysVisible = !(ec.tap_to_toggle ?? false);
-
-    // Le renderer a été créé avant que la scène ne soit chargée, donc avec les
-    // seuls réglages du YAML. On applique ici ceux qui viennent de la scène
-    // (qualité, exposition, brouillard…), sinon ils n'auraient d'effet qu'après
-    // une modification manuelle dans l'éditeur.
-    this._applySettingsLive();
-
-    this.modelLoaded = true;
-    if (this._hass) {
-      syncLights(this.anchors, this._hass, ec, this._modelSpan);
-      this._lightEmissive.sync(model, this.anchors, this._hass);
-      this._updateOverlayStates();
-      this._evaluatePassiveConditions();
-      this._env?.updateFromHass(this._hass);
-      // Amorce le moteur : sans cela, la premiere mise a jour d'etat apres le
-      // chargement serait consommee par l'instantane initial.
-      this._evaluateRules();
-    }
-
-    // Instantiate SimulationPanel (embedded in Weather tab — no HUD button/expand needed)
-    if (!this._sim) {
-      this._sim = new SimulationPanel(
-        null,
-        null,
-        this._env!,
-        () => this._requestRender(),
-        () => this._hass,
-        () => this.anchors,
-        () => this._effectiveConfig,
-        () => this._updateOverlayStates(),
-        () => this._modelSpan,
-      );
-    }
-
-    // Instantiate ViewManager
-    this._viewMgr = new ViewManager(
-      this.overlayContainer!,
-      this._hudLeft!,
-      this._hudSep!,
-      () => this.camera,
-      () => this.controls,
-      () => this._effectiveConfig,
-      () => this._hass,
-      () => this._getActiveSceneId(),
-      () => this._scene,
-      (scene) => { this._scene = scene; this._ui?.refreshViews(); },
-      (msg, err) => this._showToast(msg, err),
-      (pos, target) => {
-        // Une vue prise à un autre étage : on y monte (ou descend) d'abord,
-        // sinon la caméra irait dans un étage qui n'est pas construit.
-        if (this._plan?.floors?.length && !this._editMode && !this._planEditor) {
-          const k = this._floorOfY(target.y);
-          if (k !== this._floorIndex()) this._setFloor(k);
+    try {
+      // Enable shadows on all meshes — but skip transparent/glass materials
+      // so that windows let light (and shadows) pass through.
+      model.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) {
+          const mat = obj.material as THREE.Material;
+          const isGlass = mat.transparent && mat.opacity < 0.65;
+          obj.castShadow = !isGlass;
+          obj.receiveShadow = true;
         }
-        this._camAnimTo = { pos, target };
-      },
-      () => this._hudRight,
-      () => this._hudViews,
-    );
+      });
 
-    this._rebuildNormalHUD();
-    this._ui?.refreshStatus();
-    this._ui?.refreshRooms();
-    if (!tourSeen() && !this._editMode && !this._planEditor && !this.overlayContainer?.querySelector('#owlnest-demo-banner')) this._ui?.showHello();
+      const box = new THREE.Box3().setFromObject(model);
+      // Un plan se centre sur son rez-de-chaussée seul : monter d'un étage ne
+      // doit pas déplacer ce qui est déjà posé.
+      const centre = (groundBox ?? box).getCenter(new THREE.Vector3());
+      if (plan) {
+        // Un plan garde son origine : le recentrer à chaque retouche ferait
+        // glisser les ancres déjà posées (voir PlanDoc.origin).
+        const o = this._planOrigin(plan);
+        centre.x = o.x;
+        centre.z = o.y;
+      }
+      model.position.sub(centre);
+      this._modelBox.copy(box).translate(centre.negate());
+      const span = this._modelBox.getSize(new THREE.Vector3());
+      this._modelSpan = Math.max(span.x, span.y, span.z, 1e-3);
+      this._fitSunShadow();
+      this._requestShadowUpdate();
 
-    // Sync cards from scene
-    const cards = this._scene?.cards ?? [];
-    if (cards.length > 0) {
-      this._cardRenderer?.syncCards(cards, this._hass);
+      // Un export Sweet Home 3D empile son terrain, le sol de chaque pièce et le
+      // dessous des tapis à la même altitude. Strictement coplanaires, ces plans
+      // scintillent quelle que soit la précision du tampon de profondeur : on les
+      // écarte d'une fraction imperceptible plutôt que d'en supprimer un, car le
+      // terrain déborde du sol et son retrait laisserait un trou.
+      const lifted = separateCoplanarSlabs(model, this._modelSpan, verticalAxis(this._modelBox));
+      if (lifted) {
+        console.debug(`[Owlnest] ${lifted} coplanar surface(s) separated`);
+      }
+      // Avant tout placement de caméra : une borne trop serrée écrêterait la
+      // position par défaut, et l'élargir ensuite ne la replacerait pas.
+      this._fitOrbitLimits();
+      this._applyCutaway();
+
+      const saved = this._loadView();
+      if (saved && this._viewFits(saved)) {
+        this.camera!.position.fromArray(saved.pos);
+        this.controls!.target.fromArray(saved.target);
+        this._toggleLock(saved.locked);
+      } else {
+        this._frameModel();
+        this._ui?.refreshDock();
+      }
+
+      this._fitFog();
+
+      this.controls!.update();
+      this.scene.add(model);
+      this._modelRoot = model;
+      if (plan) {
+        this._refreshFloorGroup(model);
+        this._lowWalls.setPlan(this._activeDoc() ?? plan, this._activeGroup ?? model);
+        this._lowWalls.instrument(model);
+      }
+      this._paintLowWallsBtn();
+      if (ec.rendering?.transparent_background !== true && this._env) {
+        this._env.addGround(box, ec);
+      }
+      // Add occlusion plane if configured
+      if (ec.rendering?.light_occlusion === 'top' && this._env) {
+        this._env.addOcclusion(this._modelBox);
+      }
+
+      this._batch = new StaticBatch(model);
+      if (plan) this._placeFurniture(model, plan);
+      if (plan && this._syncPlanPartsAfterLoad && this._scene) {
+        this._syncPlanPartsAfterLoad = false;
+        this._scene = {
+          ...this._scene,
+          parts: syncPlanParts(model, allOpenings(plan), this._scene.parts ?? [], this._planPartLabel),
+        };
+      }
+      // Ancres avant le merge : les hôtes émissifs doivent être marqués d'abord.
+      this.anchors = detectAnchors(model, this.scene, ec, this._modelSpan);
+      this._ovPosPool.clear();
+      this._applyAttachPositions();
+      this._buildParts();
+      this._applyFloorLights();
+      this._createOverlays();
+
+      this._overlaysVisible = !(ec.tap_to_toggle ?? false);
+
+      // Le renderer a été créé avant que la scène ne soit chargée, donc avec les
+      // seuls réglages du YAML. On applique ici ceux qui viennent de la scène
+      // (qualité, exposition, brouillard…), sinon ils n'auraient d'effet qu'après
+      // une modification manuelle dans l'éditeur.
+      this._applySettingsLive();
+
+      this.modelLoaded = true;
+      if (this._hass) {
+        syncLights(this.anchors, this._hass, ec, this._modelSpan);
+        this._lightEmissive.sync(model, this.anchors, this._hass);
+        this._updateOverlayStates();
+        this._evaluatePassiveConditions();
+        this._env?.updateFromHass(this._hass);
+        // Amorce le moteur : sans cela, la premiere mise a jour d'etat apres le
+        // chargement serait consommee par l'instantane initial.
+        this._evaluateRules();
+      }
+
+      // Instantiate SimulationPanel (embedded in Weather tab — no HUD button/expand needed)
+      if (!this._sim) {
+        this._sim = new SimulationPanel(
+          null,
+          null,
+          this._env!,
+          () => this._requestRender(),
+          () => this._hass,
+          () => this.anchors,
+          () => this._effectiveConfig,
+          () => this._updateOverlayStates(),
+          () => this._modelSpan,
+        );
+      }
+
+      // Instantiate ViewManager
+      this._viewMgr = new ViewManager(
+        this.overlayContainer!,
+        this._hudLeft!,
+        this._hudSep!,
+        () => this.camera,
+        () => this.controls,
+        () => this._effectiveConfig,
+        () => this._hass,
+        () => this._getActiveSceneId(),
+        () => this._scene,
+        (scene) => { this._scene = scene; this._ui?.refreshViews(); },
+        (msg, err) => this._showToast(msg, err),
+        (pos, target) => {
+          // Une vue prise à un autre étage : on y monte (ou descend) d'abord,
+          // sinon la caméra irait dans un étage qui n'est pas construit.
+          if (this._plan?.floors?.length && !this._editMode && !this._planEditor) {
+            const k = this._floorOfY(target.y);
+            if (k !== this._floorIndex()) this._setFloor(k);
+          }
+          this._camAnimTo = { pos, target };
+        },
+        () => this._hudRight,
+        () => this._hudViews,
+      );
+
+      this._rebuildNormalHUD();
+      this._ui?.refreshStatus();
+      this._ui?.refreshRooms();
+      if (!tourSeen() && !this._editMode && !this._planEditor && !this.overlayContainer?.querySelector('#owlnest-demo-banner')) this._ui?.showHello();
+
+      // Sync cards from scene
+      const cards = this._scene?.cards ?? [];
+      if (cards.length > 0) {
+        this._cardRenderer?.syncCards(cards, this._hass);
+      }
+
+      this._requestRender();
+    } catch (err) {
+      // Le GLB est déjà là : une panne d'ancres / ouvrants / effets ne doit pas
+      // laisser `_modelRoot` null ni bloquer tout nouvel essai de chargement.
+      console.error('[Owlnest] model setup failed after GLB load:', err);
+      if (!this._modelRoot && this.scene) {
+        this.scene.add(model);
+        this._modelRoot = model;
+      }
+      this.modelLoaded = !!this._modelRoot;
+      this._requestRender();
     }
-
-    this._requestRender();
   }
 
   // ── Overlay positioning + clustering ──────────────────────────────────

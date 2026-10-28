@@ -27,11 +27,15 @@ import { FACADE_COLORS, GROUND_COLORS } from '../plan/rooms';
 import { deviceTint } from '../ui/device-tint';
 import type { FacadeMaterial } from '../plan/types';
 import { openFraction, hasOpenSemantics, isTilted, type ExtendInfo } from '../parts-runtime';
+import { stateValueChipLabel } from '../state-value-label';
 import type { ClipInfo } from '../parts-clips';
 import { detectionLabel, resolveLevel } from '../quality';
 import type { TapAction } from '../entities/descriptors';
 import type { QualityLevel } from '../quality';
-import type { AnchorKind, OwlnestPart, ExtendAxis } from '../types';
+import type { AnchorKind, OwlnestPart, OwlnestEffect, EffectKind, EffectTarget, ExtendAxis } from '../types';
+import {
+  effectActive, effectRefKey, effectTargets, effectWithoutTarget, effectWithTarget,
+} from '../effects-runtime';
 import {
   filterOutline, ancestorsOf, locatePart, revealRanks, outlineRows, centredScrollTop, PIECE_ROW,
   type ModelOutline, type OutlineRow,
@@ -130,6 +134,7 @@ export function editorTabs(withPlan: boolean): { id: string; icon: string; label
     { id: 'anchors', icon: 'bulb', label: t('tabDevices') },
     ...(CARDS_ENABLED ? [{ id: 'cards', icon: 'layout', label: t('tabCards') }] : []),
     ...(PARTS_ENABLED ? [{ id: 'parts', icon: 'door', label: t('tabParts') }] : []),
+    { id: 'effects', icon: 'sparkle', label: t('tabEffects') },
     { id: 'rules', icon: 'bolt', label: t('tabRules') },
     { id: 'camera', icon: 'camera', label: t('tabCamera') },
     { id: 'weather', icon: 'brush', label: t('tabLook') },
@@ -493,6 +498,15 @@ export class EditPanel {
     private getExtendInfo?: (id: string) => ExtendInfo | null,
     /** Animations enregistrées dans le modèle (pistes NLA de Blender). */
     private getClips?: () => ClipInfo[],
+    private getEffects?: () => OwlnestEffect[],
+    private saveEffects?: (effects: OwlnestEffect[]) => Promise<void>,
+    /** Applique un effet immédiatement. Retourne `false` s'il n'est pas monté. */
+    private onConfigureEffect?: (cfg: OwlnestEffect) => boolean,
+    /**
+     * Force l'apparence de l'effet pendant l'édition (`true` / `false`), ou
+     * `null` pour rendre la main à l'état HA — comme l'intensité d'une lumière.
+     */
+    private onPreviewEffect?: (id: string, forced: boolean | null) => void,
   ) {}
 
   // ── Card undo/redo ────────────────────────────────────────────────────────
@@ -951,6 +965,7 @@ export class EditPanel {
     this._livePartRows.clear();
     this._liveForm = null;
     this._closePartModal?.();
+    this._closeEffectModal?.();
     this._closeLightModal?.();
     this._closeScenePrompt?.();
     this._closePopmenu();
@@ -1056,8 +1071,9 @@ export class EditPanel {
     const cards = this.getCards ? this.getCards() : [];
     const rulesCount = (this.getRules?.() ?? []).length;
     const partsCount = (this.getParts?.() ?? []).length;
+    const effectsCount = (this.getEffects?.() ?? []).length;
 
-    const TAB_IDS = ['anchors', 'cards', 'parts', 'rules', 'camera', 'weather', 'settings'] as const;
+    const TAB_IDS = ['anchors', 'cards', 'parts', 'effects', 'rules', 'camera', 'weather', 'settings'] as const;
     type TabId = typeof TAB_IDS[number];
     // Un onglet masqué mémorisé d'un précédent rendu ne doit pas être restauré :
     // aucun bouton ne permettrait d'en sortir.
@@ -1371,6 +1387,19 @@ export class EditPanel {
     partsPane.appendChild(partsBody);
     this._partsBody = partsBody;
     this._fillPartsList(partsBody);
+
+    // ── Effets ────────────────────────────────────────────────────────
+    const effectsPane = tabPanes.get('effects')!;
+    effectsPane.style.cssText += ';overflow:hidden;';
+    buildTabHeader(effectsPane, t('tabEffects'), t('tabEffectsDesc'), {
+      label: t('addEffect'),
+      onClick: () => this._startEffectPick(),
+    });
+    const effectsBody = document.createElement('div');
+    effectsBody.style.cssText = 'overflow-y:auto;flex:1;min-height:0;';
+    effectsPane.appendChild(effectsBody);
+    this._effectsBody = effectsBody;
+    this._fillEffectsList(effectsBody);
 
     // ── Ambiance (lumière du jour, météo, simulation) ─────────────────
     const weatherPane = tabPanes.get('weather')!;
@@ -2702,6 +2731,89 @@ export class EditPanel {
 
     wrap.append(input, btn);
     return { wrap, input };
+  }
+
+  /**
+   * Puces d'états / valeurs + saisie libre.
+   *
+   * Owlnest ne découvre pas toujours tous les états d'une entité : la zone
+   * texte permet d'en ajouter à la main ; elles fusionnent dans `when` /
+   * `openWhen` comme les puces connues.
+   */
+  private _stateValuePicker(opts: {
+    options: string[];
+    selected: string[] | undefined;
+    labelOf?: (value: string) => string;
+    onChange: (next: string[] | undefined) => void;
+    hintAuto: string;
+    hintSet: string;
+    inputStyle: string;
+  }): HTMLElement {
+    const selected = opts.selected ?? [];
+    const seen = new Set<string>();
+    const options: string[] = [];
+    for (const v of [...opts.options, ...selected]) {
+      if (!v || seen.has(v)) continue;
+      seen.add(v);
+      options.push(v);
+    }
+
+    const root = document.createElement('div');
+
+    const chips = document.createElement('div');
+    chips.style.cssText = 'display:flex;flex-wrap:wrap;gap:5px;';
+    for (const value of options) {
+      const chip = document.createElement('button');
+      const on = selected.includes(value);
+      chip.style.cssText = [
+        'padding:3px 8px', 'border-radius:99px', 'font-size:10px',
+        'cursor:pointer', 'font-family:inherit',
+        on ? 'background:rgba(74,222,128,0.18)' : 'background:rgba(255,255,255,0.05)',
+        on ? 'color:#4ade80' : 'color:#94a3b8',
+        on ? 'border:1px solid rgba(74,222,128,0.45)' : 'border:1px solid rgba(255,255,255,0.1)',
+      ].join(';');
+      // Libellé ami seulement pour les options découvertes ; saisie libre = brut.
+      chip.textContent = stateValueChipLabel(value, opts.options, opts.labelOf);
+      chip.addEventListener('click', (e) => {
+        e.preventDefault();
+        const set = new Set(selected);
+        if (set.has(value)) set.delete(value); else set.add(value);
+        opts.onChange(set.size ? [...set] : undefined);
+      });
+      chips.appendChild(chip);
+    }
+    if (options.length) root.appendChild(chips);
+
+    const customRow = document.createElement('div');
+    customRow.style.cssText = 'display:flex;gap:5px;align-items:center;margin-top:6px;';
+    const custom = document.createElement('input');
+    custom.type = 'text';
+    custom.placeholder = t('effectWhenCustomPh');
+    custom.style.cssText = opts.inputStyle + ';flex:1;min-width:0;';
+    custom.title = t('effectWhenCustom');
+    const addBtn = document.createElement('button');
+    addBtn.textContent = t('effectWhenCustomAdd');
+    addBtn.style.cssText = 'flex:0 0 auto;background:rgba(125,209,252,0.12);border:1px solid rgba(125,209,252,0.3);border-radius:6px;color:#7dd3fc;font-size:10px;padding:5px 9px;cursor:pointer;font-family:inherit;white-space:nowrap;';
+    const commitCustom = () => {
+      const parts = custom.value.split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+      if (!parts.length) return;
+      const set = new Set(selected);
+      for (const p of parts) set.add(p);
+      custom.value = '';
+      opts.onChange([...set]);
+    };
+    addBtn.addEventListener('click', (e) => { e.preventDefault(); commitCustom(); });
+    custom.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); commitCustom(); }
+    });
+    customRow.append(custom, addBtn);
+    root.appendChild(customRow);
+
+    const hint = document.createElement('div');
+    hint.style.cssText = 'font-size:9px;color:#64748b;line-height:1.5;margin-top:4px;';
+    hint.textContent = selected.length ? opts.hintSet : opts.hintAuto;
+    root.appendChild(hint);
+    return root;
   }
 
   /**
@@ -4935,6 +5047,11 @@ export class EditPanel {
   // ── Ouvrants ──────────────────────────────────────────────────────────────
 
   private _partsBody: HTMLElement | null = null;
+  private _effectsBody: HTMLElement | null = null;
+  private _closeEffectModal: (() => void) | null = null;
+  private _discardEffectModal: (() => void) | null = null;
+  private _effectModalId: string | null = null;
+  private _effectModalPos: WindowPos | null = null;
   /** Ferme le formulaire d'ouvrant affiché, en conservant ses réglages. */
   private _closePartModal: (() => void) | null = null;
   /** Ferme le dialogue de scène (renommer, supprimer, importer). */
@@ -6101,7 +6218,16 @@ export class EditPanel {
    * n'est hors d'atteinte.
    */
   private _partObjectSection(
-    draft: OwlnestPart,
+    draft: {
+      id: string;
+      mesh: string;
+      meshIndex?: number;
+      triangle: number;
+      node?: string;
+      nodeIndex?: number;
+      motion?: OwlnestPart['motion'];
+      followers?: import('../types').PartNodeRef[];
+    },
     inputStyle: string,
     onChange: () => void,
     opts?: {
@@ -6113,6 +6239,15 @@ export class EditPanel {
         summaryText: () => string;
         focusRank: () => number | null;
       };
+      /** Rangs supplémentaires à surligner (autres cibles d'un effet, etc.). */
+      extraFollowers?: () => number[];
+      /**
+       * Ctrl/⌘+clic sur une ligne : multi-sélection (ex. cibles d'effet).
+       * Absent : le clic modifié se comporte comme un clic simple.
+       */
+      onModClick?: (rank: number) => void;
+      /** Sous l'arbre ; défaut : aide des ouvrants. */
+      hint?: string;
     },
   ): {
     el: HTMLElement; dispose: () => void; reveal: () => void; mute: (on: boolean) => void; refresh: () => void;
@@ -6129,9 +6264,17 @@ export class EditPanel {
     // sans reconstruire la section — `rebuild` le recalcule.
     let seed = locatePart(outline, draft).seed;
     const selectedRank = (): number | null => locatePart(outline, draft).selected;
+    const extraRanks = (): number[] => opts?.extraFollowers?.() ?? [];
 
     const expanded = new Set<number>(revealRanks(outline, { selected: selectedRank(), seed }));
     const reveal = (rank: number) => { for (const a of ancestorsOf(outline, rank)) expanded.add(a); };
+    const revealExtras = () => {
+      for (const r of extraRanks()) {
+        for (const a of ancestorsOf(outline, r)) expanded.add(a);
+        expanded.add(r);
+      }
+    };
+    revealExtras();
     /** Replis demandés pendant un filtrage, qui sinon déplie d'office. */
     let collapsed = new Set<number>();
     let query = '';
@@ -6143,10 +6286,15 @@ export class EditPanel {
     });
     const selectedTarget = (): PartHighlightTarget => {
       const r = selectedRank();
-      const followers = draft.motion === 'extend'
+      const fromExtend = draft.motion === 'extend'
         ? (draft.followers ?? []).map((f) => f.nodeIndex).filter((n): n is number => n !== undefined)
-        : undefined;
-      return { part: draft.id, node: r ?? undefined, mesh: seed?.meshRank, triangle: draft.triangle, followers };
+        : [];
+      const extra = extraRanks();
+      const followers = [...fromExtend, ...extra];
+      return {
+        part: draft.id, node: r ?? undefined, mesh: seed?.meshRank, triangle: draft.triangle,
+        followers: followers.length ? followers : undefined,
+      };
     };
     let hover: PartHighlightTarget | null = null;
     let muted = false;
@@ -6204,7 +6352,7 @@ export class EditPanel {
 
     const hint = document.createElement('div');
     hint.style.cssText = 'font-size:9px;color:#64748b;line-height:1.5;margin-top:5px;';
-    hint.textContent = multi ? t('lightHostTreeHint') : t('partObjectHint');
+    hint.textContent = multi ? t('lightHostTreeHint') : opts?.hint ?? t('partObjectHint');
     inner.appendChild(hint);
 
     // ── Sélection ───────────────────────────────────────────────────────
@@ -6276,6 +6424,7 @@ export class EditPanel {
     let f = filterOutline(outline, '');
     let current: number | null = null;
     let selectedSet = new Set<number>();
+    let marked = new Set<number>();
 
     /** Dessine les seules lignes visibles, placées à leur hauteur dans la liste. */
     const paint = () => {
@@ -6287,7 +6436,7 @@ export class EditPanel {
         const { rank, node, depth, hasKids, open } = rows[i];
         const toggle = hasKids ? (open ? 'open' : 'closed') : null;
         const sel = node
-          ? (multi ? selectedSet.has(rank) : current === rank)
+          ? (multi ? selectedSet.has(rank) : current === rank || marked.has(rank))
           : (!multi && current === null);
         // La pièce cliquée, feuille virtuelle sous sa maille.
         const el = node
@@ -6330,6 +6479,7 @@ export class EditPanel {
       rows = outlineRows(outline, effective, f, seed);
       current = loc.selected;
       selectedSet = multi ? new Set(multi.selectedRanks()) : new Set();
+      marked = new Set(extraRanks());
       spacer.style.height = `${rows.length * ROW_H}px`;
 
       if (multi) {
@@ -6339,7 +6489,8 @@ export class EditPanel {
         parentBtn.disabled = n ? !n.parent : !seed;
       } else {
         const n = current !== null ? outline.byRank[current] : null;
-        summary.textContent = n ? `${n.name} · ${trisLabel(n.tris)}` : `${t('partObjectPiece')}${seed ? ` · ${seed.name}` : ''}`;
+        const extra = marked.size ? ` · +${marked.size}` : '';
+        summary.textContent = n ? `${n.name} · ${trisLabel(n.tris)}${extra}` : `${t('partObjectPiece')}${seed ? ` · ${seed.name}` : ''}${extra}`;
         parentBtn.disabled = n ? !n.parent : !seed;
       }
       parentBtn.style.opacity = parentBtn.disabled ? '0.35' : '1';
@@ -6406,6 +6557,12 @@ export class EditPanel {
         tryReveal();
         return;
       }
+      // Comme l'éditeur d'ancres : Ctrl et ⌘ (meta) pour la multi-sélection.
+      if ((e.ctrlKey || e.metaKey) && opts?.onModClick) {
+        e.preventDefault();
+        opts.onModClick(r);
+        return;
+      }
       select(r);
     });
     tree.addEventListener('mouseover', (e) => {
@@ -6462,6 +6619,7 @@ export class EditPanel {
       },
       /** Relit le brouillon (nouvelle maille après un pick) et recentre la liste. */
       refresh: () => {
+        revealExtras();
         rebuild();
         highlight();
         scrollToSelection();
@@ -6481,6 +6639,680 @@ export class EditPanel {
       : [...current, { ...draft }];
     await this.saveParts?.(next);
     if (refreshList && this._partsBody) this._fillPartsList(this._partsBody);
+  }
+
+  // ── Effets ────────────────────────────────────────────────────────────────
+
+  private _startEffectPick() {
+    this.showStatusBar(t('effectPickHint'));
+    this.onStartPartPicking?.((hit) => {
+      this.hideStatusBar();
+      const effects = this.getEffects?.() ?? [];
+      const existing = effects.find(
+        (e) => !e.node && e.mesh === hit.mesh && e.triangle === hit.triangle,
+      ) ?? effects.find(
+        (e) => !!e.node && e.nodeIndex === hit.meshIndex && e.mesh === hit.mesh,
+      );
+      if (existing) { this._openEffectModal(existing, hit); return; }
+      // Même résolution nœud que les cibles ajoutées ensuite (radiateur multi-matériau).
+      const outline = this.getModelOutline?.();
+      const seed = outline
+        ? locatePart(outline, { mesh: hit.mesh, meshIndex: hit.meshIndex }).seed
+        : null;
+      this._openEffectModal({
+        id: `effect_${Date.now().toString(36)}`,
+        kind: 'material',
+        entity: '',
+        mesh: hit.mesh,
+        meshIndex: hit.meshIndex >= 0 ? hit.meshIndex : undefined,
+        triangle: hit.triangle,
+        node: seed?.name,
+        nodeIndex: seed?.rank,
+        color: '#ef4444',
+        // Comme les ouvrants : fondu doux par défaut ; absent = 0 (instant).
+        duration: 1.2,
+      }, hit);
+    });
+  }
+
+  private _fillEffectsList(pane: HTMLElement) {
+    pane.innerHTML = '';
+    const effects = this.getEffects?.() ?? [];
+    const hass = this.getHass();
+    if (effects.length === 0) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'padding:16px 14px;font-size:11px;color:#64748b;line-height:1.55;';
+      empty.innerHTML = t('effectsEmpty');
+      pane.appendChild(empty);
+      return;
+    }
+    for (const effect of effects) {
+      const row = document.createElement('div');
+      row.style.cssText = [
+        'display:flex', 'align-items:center', 'gap:8px', 'padding:8px 12px',
+        'border-bottom:1px solid rgba(255,255,255,0.06)', 'cursor:pointer',
+      ].join(';');
+      const kind = effect.kind === 'visibility' ? t('effectKindVisibility') : t('effectKindMaterial');
+      const friendly = hass?.states[effect.entity]?.attributes?.friendly_name;
+      const title = effect.label
+        || (typeof friendly === 'string' && friendly)
+        || effect.entity
+        || effect.node
+        || effect.mesh;
+      const left = document.createElement('div');
+      left.style.cssText = 'flex:1;min-width:0;';
+      const nTargets = effectTargets(effect).length;
+      left.innerHTML =
+        `<div style="font-size:11px;font-weight:600;color:#e2e8f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${title}</div>` +
+        `<div style="font-size:9px;color:#64748b;margin-top:2px;">${kind}` +
+        (nTargets > 1 ? ` · ${tn('effectTargetsN', nTargets)}` : '') +
+        (effect.entity ? ` · ${effect.entity}` : '') +
+        (effect.kind === 'material' && effect.color
+          ? ` · <span style="color:${effect.color}">●</span>` : '') +
+        `</div>`;
+      const del = document.createElement('button');
+      del.textContent = '×';
+      del.title = t('effectDelete');
+      del.style.cssText = 'flex-shrink:0;width:24px;height:24px;border-radius:6px;border:1px solid rgba(255,255,255,0.1);background:transparent;color:#94a3b8;cursor:pointer;font-size:14px;';
+      let armed = false;
+      del.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!armed) {
+          armed = true;
+          del.textContent = '!';
+          del.style.color = '#f87171';
+          del.title = t('effectDeleteConfirm');
+          setTimeout(() => { armed = false; del.textContent = '×'; del.style.color = '#94a3b8'; del.title = t('effectDelete'); }, 3000);
+          return;
+        }
+        if (this._effectModalId === effect.id) this._discardEffectModal?.();
+        const next = (this.getEffects?.() ?? []).filter((x) => x.id !== effect.id);
+        this.saveEffects?.(next).then(() => this._fillEffectsList(pane));
+      });
+      row.append(left, del);
+      row.addEventListener('click', () => this._openEffectModal(effect, null));
+      pane.appendChild(row);
+    }
+  }
+
+  private _openEffectModal(effect: OwlnestEffect, hit: PickedPart | null) {
+    this._closeEffectModal?.();
+    document.getElementById('owlnest-effect-modal')?.remove();
+    const draft: OwlnestEffect = JSON.parse(JSON.stringify(effect));
+    this._pieceTris = hit?.triangles ?? null;
+    const original: OwlnestEffect = JSON.parse(JSON.stringify(effect));
+    const isNew = !(this.getEffects?.() ?? []).some((e) => e.id === effect.id);
+
+    const inputStyle = 'width:100%;box-sizing:border-box;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#e2e8f0;padding:5px 8px;font-size:11px;outline:none;font-family:inherit;';
+    const lblStyle = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;display:block;';
+
+    let saveTimer: ReturnType<typeof setTimeout> | null = null;
+    let closed = false;
+
+    /** Rang d'une cible pour l'arbre / le surlignage suiveur. */
+    const rankOf = (ref: EffectTarget): number | null => {
+      if (ref.nodeIndex !== undefined) return ref.nodeIndex;
+      const outline = this.getModelOutline?.();
+      if (!outline) return null;
+      return locatePart(outline, ref).seed?.rank ?? null;
+    };
+
+    /** Toutes les cibles sauf la principale (déjà dans `selected`). */
+    const extraFollowerRanks = (): number[] => {
+      const ranks: number[] = [];
+      for (const ref of draft.targets ?? []) {
+        const r = rankOf(ref);
+        if (r !== null) ranks.push(r);
+      }
+      return ranks;
+    };
+
+    let fillTargets: () => void = () => {};
+
+    const apply = () => {
+      if (closed) return;
+      if (!this.onConfigureEffect?.({ ...draft })) {
+        void this._commitEffect(draft, false);
+      }
+      // Aperçu forcé « actif » : on voit couleur / visibilité sans attendre HA.
+      this.onPreviewEffect?.(draft.id, true);
+      fillTargets();
+      objectSection?.refresh();
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => { void this._commitEffect(draft, false); }, 600);
+      refreshReadout();
+    };
+
+    const dialog = document.createElement('dialog');
+    dialog.id = 'owlnest-effect-modal';
+    dialog.style.cssText = [
+      'position:fixed', 'inset:auto', 'margin:0', 'z-index:9999',
+      'top:50%', 'left:50%', 'transform:translate(-50%,-50%)',
+      'width:min(400px,94vw)', 'max-height:86vh',
+      'background:rgba(6,10,22,0.97)', 'backdrop-filter:blur(20px)',
+      'border:1px solid rgba(255,255,255,0.1)', 'border-radius:14px',
+      'box-shadow:0 20px 60px rgba(0,0,0,0.8)', 'padding:0',
+      'color:#e2e8f0', 'font-family:var(--primary-font-family,sans-serif)',
+      'display:flex', 'flex-direction:column', 'overflow:hidden',
+    ].join(';');
+    dialog.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Escape') { e.preventDefault(); void cancel(); }
+    });
+
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.08);flex-shrink:0;gap:8px;';
+    makeDraggable(dialog, hdr, {
+      get: () => this._effectModalPos,
+      set: (pos) => { this._effectModalPos = pos; },
+    });
+    const title = document.createElement('div');
+    title.style.cssText = 'font-size:12px;font-weight:700;flex:1;';
+    title.textContent = t('effectTitle');
+    hdr.appendChild(title);
+    dialog.appendChild(hdr);
+
+    const body = document.createElement('div');
+    body.style.cssText = 'padding:14px 16px;overflow-y:auto;flex:1;min-height:0;';
+    dialog.appendChild(body);
+
+    const field = (label: string, control: HTMLElement, into: HTMLElement = body) => {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'margin-bottom:12px;';
+      const l = document.createElement('label');
+      l.style.cssText = lblStyle;
+      l.textContent = label;
+      wrap.append(l, control);
+      into.appendChild(wrap);
+      return wrap;
+    };
+
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.style.cssText = inputStyle;
+    nameInput.value = draft.label ?? '';
+    const refreshName = () => {
+      const friendly = this.getHass()?.states[draft.entity]?.attributes?.friendly_name;
+      const fallback = (typeof friendly === 'string' && friendly) || draft.entity || draft.node || draft.mesh || t('effectTitle');
+      nameInput.placeholder = fallback;
+      title.textContent = draft.label || fallback;
+    };
+    nameInput.addEventListener('input', () => {
+      draft.label = nameInput.value.trim() || undefined;
+      refreshName();
+      apply();
+    });
+    field(t('effectName'), nameInput);
+    refreshName();
+
+    // Déclaré avant la section objet : `apply` l'appelle via refresh.
+    let objectSection: ReturnType<EditPanel['_partObjectSection']> = null;
+
+    const targetLabel = (ref: EffectTarget) =>
+      ref.label || ref.node || `${ref.mesh} · ${ref.triangle}`;
+
+    /** Applique un brouillon après ajout / retrait de cible. */
+    const adoptTargets = (next: OwlnestEffect) => {
+      draft.mesh = next.mesh;
+      draft.meshIndex = next.meshIndex;
+      draft.triangle = next.triangle;
+      draft.node = next.node;
+      draft.nodeIndex = next.nodeIndex;
+      draft.targets = next.targets;
+      fillTargets();
+      apply();
+    };
+
+    const hitToTarget = (h: PickedPart): EffectTarget => {
+      const outline = this.getModelOutline?.();
+      const loc = outline ? locatePart(outline, {
+        mesh: h.mesh, meshIndex: h.meshIndex,
+      }) : null;
+      // Nœud de la maille cliquée : un radiateur multi-matériau reste entier.
+      const seed = loc?.seed;
+      return {
+        mesh: h.mesh,
+        meshIndex: h.meshIndex >= 0 ? h.meshIndex : undefined,
+        triangle: h.triangle,
+        node: seed?.name,
+        nodeIndex: seed?.rank,
+        label: seed?.name || `${h.size.map((v) => v.toFixed(0)).join(' \u00d7 ')} cm`,
+      };
+    };
+
+    /** Cible depuis une ligne de l'arbre (nœud entier ; maille = amorce). */
+    const rankToTarget = (rank: number): EffectTarget | null => {
+      if (rank === PIECE_ROW) return null;
+      const outline = this.getModelOutline?.();
+      const n = outline?.byRank[rank];
+      if (!n) return null;
+      return {
+        mesh: n.name,
+        meshIndex: n.meshRank >= 0 ? n.meshRank : undefined,
+        triangle: 0,
+        node: n.name,
+        nodeIndex: n.rank,
+        label: n.name,
+      };
+    };
+
+    /** Ctrl/⌘+clic dans l'arbre : même ajout / retrait que le clic modèle. */
+    const toggleTreeTarget = (rank: number) => {
+      const next = rankToTarget(rank);
+      if (!next) return;
+      const list = effectTargets(draft);
+      const key = effectRefKey(next);
+      const idx = list.findIndex((ref) =>
+        effectRefKey(ref) === key || rankOf(ref) === rank);
+      if (idx >= 0) {
+        if (list.length <= 1) return;
+        adoptTargets(effectWithoutTarget(draft, idx));
+        return;
+      }
+      adoptTargets(effectWithTarget(draft, next));
+    };
+
+    objectSection = this._partObjectSection(
+      draft,
+      inputStyle,
+      () => apply(),
+      {
+        extraFollowers: extraFollowerRanks,
+        onModClick: toggleTreeTarget,
+        hint: t('effectObjectHint'),
+      },
+    );
+    if (objectSection) body.appendChild(objectSection.el);
+
+    // ── Liste unifiée des cibles (principale + extras) ───────────────────
+    const targetsTitle = document.createElement('div');
+    targetsTitle.textContent = t('effectTargets');
+    targetsTitle.title = t('effectTargetsHint');
+    targetsTitle.style.cssText = 'font-size:11px;color:#cbd5e1;margin:4px 0 5px;';
+
+    const targetsList = document.createElement('div');
+    targetsList.style.cssText = 'display:flex;flex-direction:column;gap:3px;margin-bottom:5px;';
+
+    fillTargets = () => {
+      targetsList.textContent = '';
+      const list = effectTargets(draft);
+      if (!list.length) {
+        const vide = document.createElement('div');
+        vide.textContent = t('effectTargetsEmpty');
+        vide.style.cssText = 'font-size:10px;color:#64748b;';
+        targetsList.appendChild(vide);
+        return;
+      }
+      list.forEach((ref, i) => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:10px;color:#94a3b8;background:rgba(255,255,255,0.04);border-radius:4px;padding:3px 6px;';
+        const name = document.createElement('span');
+        name.textContent = i === 0
+          ? `${targetLabel(ref)} · ${t('effectTargetsPrimary')}`
+          : targetLabel(ref);
+        name.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        const drop = document.createElement('button');
+        drop.textContent = '\u2715';
+        drop.title = t('effectTargetsDrop');
+        drop.style.cssText = 'background:none;border:none;color:#94a3b8;cursor:pointer;font-size:11px;padding:0 2px;';
+        // Toujours au moins une cible : pas de croix sur la seule restante.
+        if (list.length <= 1) {
+          drop.disabled = true;
+          drop.style.opacity = '0.35';
+          drop.style.cursor = 'default';
+        } else {
+          drop.addEventListener('click', () => {
+            adoptTargets(effectWithoutTarget(draft, i));
+          });
+        }
+        row.append(name, drop);
+        targetsList.appendChild(row);
+      });
+    };
+
+    const targetsAdd = document.createElement('button');
+    targetsAdd.textContent = t('effectTargetsAdd');
+    targetsAdd.style.cssText = 'width:100%;background:rgba(125,209,252,0.12);border:1px solid rgba(125,209,252,0.3);color:#7dd3fc;border-radius:5px;padding:5px;font-size:10px;cursor:pointer;margin-bottom:6px;';
+    targetsAdd.addEventListener('click', () => {
+      if (!this.onStartPartPicking) return;
+      this.showStatusBar?.(t('effectTargetsPick'));
+      this.onStartPartPicking((h) => {
+        this.hideStatusBar?.();
+        adoptTargets(effectWithTarget(draft, hitToTarget(h)));
+      });
+    });
+
+    const targetsHint = document.createElement('div');
+    targetsHint.style.cssText = 'font-size:9px;color:#64748b;line-height:1.5;margin-bottom:12px;';
+    targetsHint.textContent = t('effectTargetsHint');
+
+    body.append(targetsTitle, targetsList, targetsAdd, targetsHint);
+    fillTargets();
+
+    const previewNote = document.createElement('div');
+    previewNote.style.cssText = 'font-size:9px;color:#64748b;line-height:1.5;margin:-4px 0 12px;';
+    previewNote.textContent = t('effectPreviewNote');
+    body.appendChild(previewNote);
+
+    // ── Type d'effet ──────────────────────────────────────────────────
+    const kindSel = document.createElement('select');
+    kindSel.style.cssText = inputStyle + SELECT_STYLE;
+    for (const [value, label] of [
+      ['material', t('effectKindMaterial')],
+      ['visibility', t('effectKindVisibility')],
+    ] as const) {
+      const o = document.createElement('option');
+      o.value = value; o.textContent = label;
+      kindSel.appendChild(styleOption(o));
+    }
+    kindSel.value = draft.kind;
+    field(t('effectKind'), kindSel);
+
+    const lookBox = document.createElement('div');
+    body.appendChild(lookBox);
+
+    const rebuildLook = () => {
+      lookBox.innerHTML = '';
+      if (draft.kind === 'visibility') {
+        const inv = document.createElement('label');
+        inv.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:11px;color:#cbd5e1;cursor:pointer;margin-bottom:12px;';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = !!draft.invert;
+        cb.addEventListener('change', () => { draft.invert = cb.checked || undefined; apply(); });
+        inv.append(cb, document.createTextNode(t('effectInvert')));
+        lookBox.appendChild(inv);
+        const hint = document.createElement('div');
+        hint.style.cssText = 'font-size:9px;color:#64748b;line-height:1.5;margin-top:-8px;margin-bottom:12px;';
+        hint.textContent = t('effectVisibilityHint');
+        lookBox.appendChild(hint);
+        return;
+      }
+      // material
+      draft.invert = undefined;
+      if (!draft.color) draft.color = '#ef4444';
+      const styleSel = document.createElement('select');
+      styleSel.style.cssText = inputStyle + SELECT_STYLE;
+      for (const [value, label] of [
+        ['fill', t('effectStyleFill')],
+        ['outline', t('effectStyleOutline')],
+      ] as const) {
+        const o = document.createElement('option');
+        o.value = value; o.textContent = label;
+        styleSel.appendChild(styleOption(o));
+      }
+      styleSel.value = draft.style === 'outline' ? 'outline' : 'fill';
+      styleSel.addEventListener('change', () => {
+        draft.style = styleSel.value === 'outline' ? 'outline' : undefined;
+        if (draft.style === 'outline') draft.strength = undefined;
+        rebuildLook();
+        apply();
+      });
+      field(t('effectStyle'), styleSel, lookBox);
+      const styleHint = document.createElement('div');
+      styleHint.style.cssText = 'font-size:9px;color:#64748b;line-height:1.5;margin-top:-8px;margin-bottom:12px;';
+      styleHint.textContent = draft.style === 'outline'
+        ? t('effectStyleOutlineHint')
+        : t('effectStyleFillHint');
+      lookBox.appendChild(styleHint);
+
+      const colorWrap = document.createElement('div');
+      colorWrap.style.cssText = 'display:flex;align-items:center;gap:8px;';
+      const colorInput = document.createElement('input');
+      colorInput.type = 'color';
+      colorInput.value = draft.color;
+      colorInput.style.cssText = 'width:42px;height:28px;border:none;background:transparent;cursor:pointer;padding:0;';
+      colorInput.addEventListener('input', () => { draft.color = colorInput.value; apply(); });
+      colorWrap.appendChild(colorInput);
+      field(t('effectColor'), colorWrap, lookBox);
+
+      if (draft.style !== 'outline') {
+        const strength = document.createElement('input');
+        strength.type = 'range';
+        strength.min = '5'; strength.max = '100'; strength.step = '5';
+        strength.value = String(Math.round((draft.strength ?? 0.55) * 100));
+        const sOut = document.createElement('span');
+        sOut.style.cssText = 'font-size:10px;color:#94a3b8;margin-left:8px;min-width:38px;text-align:right;';
+        sOut.textContent = `${strength.value} %`;
+        strength.addEventListener('input', () => {
+          const v = strength.valueAsNumber;
+          sOut.textContent = `${v} %`;
+          draft.strength = v === 55 ? undefined : v / 100;
+          apply();
+        });
+        const sRow = document.createElement('div');
+        sRow.style.cssText = 'display:flex;align-items:center;';
+        sRow.append(strength, sOut);
+        field(t('effectStrength'), sRow, lookBox);
+      }
+
+      const glow = document.createElement('input');
+      glow.type = 'range';
+      glow.min = '0'; glow.max = '100'; glow.step = '5';
+      glow.value = String(Math.round((draft.glow ?? 0.35) * 100));
+      const gOut = document.createElement('span');
+      gOut.style.cssText = 'font-size:10px;color:#94a3b8;margin-left:8px;min-width:38px;text-align:right;';
+      gOut.textContent = `${glow.value} %`;
+      glow.addEventListener('input', () => {
+        const v = glow.valueAsNumber;
+        gOut.textContent = `${v} %`;
+        draft.glow = v === 35 ? undefined : v / 100;
+        apply();
+      });
+      const gRow = document.createElement('div');
+      gRow.style.cssText = 'display:flex;align-items:center;';
+      gRow.append(glow, gOut);
+      field(t('effectGlow'), gRow, lookBox);
+    };
+    kindSel.addEventListener('change', () => {
+      draft.kind = kindSel.value as EffectKind;
+      if (draft.kind === 'visibility') {
+        draft.color = undefined;
+        draft.strength = undefined;
+        draft.glow = undefined;
+        draft.style = undefined;
+      } else if (!draft.color) {
+        draft.color = '#ef4444';
+      }
+      rebuildLook();
+      apply();
+    });
+    rebuildLook();
+
+    // Visible à travers les murs — commun aux deux types.
+    const seeWrap = document.createElement('label');
+    seeWrap.style.cssText = 'display:flex;align-items:flex-start;gap:8px;font-size:11px;color:#cbd5e1;cursor:pointer;margin-bottom:4px;';
+    const seeCb = document.createElement('input');
+    seeCb.type = 'checkbox';
+    seeCb.checked = draft.seeThrough === true;
+    seeCb.style.cssText = 'margin-top:2px;';
+    seeCb.addEventListener('change', () => {
+      draft.seeThrough = seeCb.checked ? true : undefined;
+      apply();
+    });
+    const seeText = document.createElement('span');
+    seeText.innerHTML = `${t('effectSeeThrough')}<div style="font-size:9px;color:#64748b;line-height:1.45;margin-top:2px;">${t('effectSeeThroughHint')}</div>`;
+    seeWrap.append(seeCb, seeText);
+    body.appendChild(seeWrap);
+
+    // Durée du fondu — commun aux deux types ; 0 / absent = instantané.
+    const dur = document.createElement('input');
+    dur.type = 'number'; dur.min = '0'; dur.max = '10'; dur.step = '0.1';
+    dur.value = String(draft.duration ?? 0);
+    dur.style.cssText = inputStyle;
+    dur.addEventListener('change', () => {
+      const v = Math.max(0, dur.valueAsNumber || 0);
+      // Ne stocker que les valeurs non nulles (défaut runtime = 0).
+      draft.duration = v > 0 ? Math.round(v * 10) / 10 : undefined;
+      dur.value = String(draft.duration ?? 0);
+      apply();
+    });
+    field(t('effectDuration'), dur);
+    const durHint = document.createElement('div');
+    durHint.style.cssText = 'font-size:9px;color:#64748b;line-height:1.5;margin-top:-8px;margin-bottom:12px;';
+    durHint.textContent = t('effectDurationHint');
+    body.appendChild(durHint);
+
+    // ── Entité ───────────────────────────────────────────────────────
+    const { wrap: entityWrap } = this._entityField(draft.entity, inputStyle, (id) => {
+      draft.entity = id;
+      draft.when = undefined;
+      refreshName();
+      rebuildWhen();
+      apply();
+    });
+    field(t('effectEntity'), entityWrap);
+
+    const attrInput = document.createElement('input');
+    attrInput.type = 'text';
+    attrInput.style.cssText = inputStyle;
+    attrInput.placeholder = t('effectAttributePh');
+    attrInput.value = draft.attribute ?? '';
+    attrInput.addEventListener('input', () => {
+      draft.attribute = attrInput.value.trim() || undefined;
+      rebuildWhen();
+      apply();
+    });
+    field(t('effectAttribute'), attrInput);
+
+    const readout = document.createElement('div');
+    readout.style.cssText = 'background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:7px;padding:7px 9px;margin-bottom:12px;font-size:10px;line-height:1.6;';
+    body.appendChild(readout);
+
+    const whenBox = document.createElement('div');
+    body.appendChild(whenBox);
+
+    const refreshReadout = () => {
+      if (!draft.entity) {
+        readout.innerHTML = `<span style="color:#fbbf24;">⚠ ${t('effectNoEntity')}</span>`;
+        return;
+      }
+      const st = this.getHass()?.states[draft.entity];
+      if (!st) {
+        readout.innerHTML = `<span style="color:#fbbf24;">⚠ ${t('effectEntityUnknown')}</span>`;
+        return;
+      }
+      const on = effectActive(draft, st.state, st.attributes);
+      const raw = draft.attribute != null
+        ? String(st.attributes?.[draft.attribute] ?? '—')
+        : stateLabel(draft.entity, st.state, st.attributes);
+      const verdict = on
+        ? (draft.kind === 'visibility' ? t('effectReadVisible') : t('effectReadOn'))
+        : (draft.kind === 'visibility' ? t('effectReadHidden') : t('effectReadOff'));
+      readout.innerHTML =
+        `<div style="color:#64748b;">${t('effectReadNow')}</div>` +
+        `<div><span style="color:#e2e8f0;">${raw}</span>` +
+        `<span style="color:#64748b;"> → </span>` +
+        `<span style="color:${on ? '#4ade80' : '#94a3b8'};font-weight:700;">${verdict}</span></div>`;
+    };
+
+    const HVAC_ACTIONS = ['heating', 'cooling', 'drying', 'fan', 'idle', 'off'];
+
+    const rebuildWhen = () => {
+      whenBox.innerHTML = '';
+      if (!draft.entity) return;
+      const st = this.getHass()?.states[draft.entity];
+      let options: string[];
+      if (draft.attribute) {
+        const cur = st?.attributes?.[draft.attribute];
+        options = draft.attribute === 'hvac_action' ? [...HVAC_ACTIONS] : [];
+        if (cur != null && !options.includes(String(cur))) options.push(String(cur));
+      } else {
+        options = knownStates(draft.entity, st?.state);
+      }
+      const picker = this._stateValuePicker({
+        options,
+        selected: draft.when,
+        labelOf: draft.attribute
+          ? undefined
+          : (value) => stateLabel(draft.entity, value, st?.attributes ?? {}),
+        onChange: (next) => {
+          draft.when = next;
+          rebuildWhen();
+          apply();
+        },
+        hintAuto: t('effectWhenAuto'),
+        hintSet: t('effectWhenSet'),
+        inputStyle,
+      });
+      field(t('effectWhen'), picker, whenBox);
+    };
+
+    const foot = document.createElement('div');
+    foot.style.cssText = 'display:flex;gap:8px;padding:12px 16px;border-top:1px solid rgba(255,255,255,0.08);flex-shrink:0;';
+    const mkBtn = (label: string, primary: boolean) => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      b.style.cssText = [
+        'flex:1', 'padding:7px 10px', 'border-radius:7px', 'font-size:11px',
+        'font-weight:600', 'cursor:pointer', 'font-family:inherit',
+        primary ? 'background:#0ea5e9' : 'background:rgba(255,255,255,0.06)',
+        primary ? 'color:#04121f' : 'color:#cbd5e1',
+        primary ? 'border:none' : 'border:1px solid rgba(255,255,255,0.12)',
+      ].join(';');
+      return b;
+    };
+    const close = () => {
+      if (saveTimer) clearTimeout(saveTimer);
+      // Fin d'aperçu forcé : l'état HA reprend la main (comme à la fermeture
+      // du panneau lumière après un réglage d'intensité).
+      this.onPreviewEffect?.(draft.id, null);
+      objectSection?.dispose();
+      if (this._closeEffectModal === flushAndClose) this._closeEffectModal = null;
+      if (this._discardEffectModal === close) { this._discardEffectModal = null; this._effectModalId = null; }
+      closed = true;
+      dialog.close();
+      dialog.remove();
+    };
+    const cancel = async () => {
+      close();
+      if (isNew) {
+        const next = (this.getEffects?.() ?? []).filter((e) => e.id !== original.id);
+        await this.saveEffects?.(next);
+        if (this._effectsBody) this._fillEffectsList(this._effectsBody);
+      } else {
+        this.onConfigureEffect?.({ ...original });
+        await this._commitEffect(original, true);
+      }
+    };
+    const flushAndClose = () => {
+      close();
+      void this._commitEffect(draft, true);
+    };
+    this._closeEffectModal = flushAndClose;
+    this._discardEffectModal = close;
+    this._effectModalId = draft.id;
+
+    const cancelBtn = mkBtn(t('btnCancel'), false);
+    cancelBtn.addEventListener('click', () => { void cancel(); });
+    const ok = mkBtn(t('ruleModalSave'), true);
+    ok.addEventListener('click', async () => {
+      await this._commitEffect(draft, true);
+      close();
+    });
+    foot.append(cancelBtn, ok);
+    dialog.appendChild(foot);
+
+    document.body.appendChild(dialog);
+    dialog.show();
+    objectSection?.reveal();
+    void this._commitEffect(draft, false).then(() => {
+      // Après montage : forcer l'aperçu actif (couleur / visibilité visibles).
+      this.onPreviewEffect?.(draft.id, true);
+      objectSection?.refresh();
+    });
+    rebuildWhen();
+    refreshReadout();
+  }
+
+  private async _commitEffect(draft: OwlnestEffect, refreshList: boolean) {
+    const current = this.getEffects?.() ?? [];
+    const exists = current.some((e) => e.id === draft.id);
+    const next = exists
+      ? current.map((e) => (e.id === draft.id ? { ...draft } : e))
+      : [...current, { ...draft }];
+    await this.saveEffects?.(next);
+    if (refreshList && this._effectsBody) this._fillEffectsList(this._effectsBody);
   }
 
   private _openRuleModal(existing: OwlnestRule | null, onSaved: () => void) {

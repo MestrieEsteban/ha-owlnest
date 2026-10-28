@@ -9,6 +9,7 @@
 - [Navigation dans la scène](#navigation-dans-la-scène)
 - [Ancres](#ancres)
 - [Ouvrants](#ouvrants)
+- [Effets](#effets)
 - [Vues caméra](#vues-caméra)
 - [Moteur de règles](#moteur-de-règles)
 - [Environnement](#environnement)
@@ -270,6 +271,30 @@ Si deux ouvrants reçoivent des animations qui bougent le même nœud, c'est le 
 Exportez depuis Blender avec **Animation → NLA Tracks**. Les actions qui commencent à l'image 1 (et non 0) sont gérées. three.js assainit les noms (`tela.001` → `tela001`).
 
 > **Exemple** : un fauteuil inclinable exporté en `Reclinar_Der`, `Reclinar_Izq`, `Cabezal_Der`, `Cabezal_Izq`. Liez le `cover` de droite à `Reclinar_Der` et `Cabezal_Der` : les deux mécanismes suivent la position de ce volet. Un second ouvrant avec le `cover` de gauche et les deux pistes `*_Izq` laisse le côté droit tranquille.
+
+---
+
+## Effets
+
+Les effets teintent ou montrent / cachent des objets du modèle d'après une entité Home Assistant, sans les déplacer. Ils forment une liste de scène distincte des ouvrants.
+
+### Ajouter un effet
+
+1. Mode édition → onglet **Effets** → **+ Effet**
+2. Cliquez le premier objet sur le modèle (curseur en croix, comme pour les ouvrants). L'arborescence **Objet** permet de choisir un objet ou groupe Blender entier
+3. Optionnel : ajoutez d'autres cibles (ex. tous les radiateurs) avec **+ Cliquer un objet du modèle**, ou **Ctrl+clic** (**⌘+clic** sur Mac) dans l'arborescence **Objet**
+4. Choisissez le type, liez une entité. Tant que le panneau est ouvert, l'effet s'affiche **en direct** sur le modèle ; **Annuler** restaure l'état précédent
+
+| Type | Description |
+|---|---|
+| **Matériau** | Met en évidence le ou les objets quand la condition est vraie (ex. radiateurs tant que le `climate` rapporte `hvac_action: heating`). **Rendu** : **Remplissage** teinte toute la surface (couleur + lueur) ; **Contour** ne dessine que les arêtes colorées |
+| **Visibilité** | Montre le ou les objets quand la condition est vraie, les cache sinon (ex. une silhouette quand un capteur de présence est on). **Inverser** reverse ce sens |
+
+**Visible à travers les murs** dessine l'objet (ou son contour) par-dessus le modèle tant que l'effet est actif (sans test de profondeur), pour le lire derrière un mur — comme le surlignage de l'éditeur.
+
+**Durée** (facultatif) fond l'apparence quand la condition s'allume ou s'éteint (teinte, contour, see-through et opacité de visibilité). Laissez à 0 pour un basculement instantané — le défaut des scènes plus anciennes.
+
+**Attribut** (facultatif) lit un attribut d'entité à la place de l'état — pour un thermostat, indiquez `hvac_action` et sélectionnez `heating` sous **Actif quand**. Laissez **Actif quand** vide pour le repli d'Owlnest (on/off selon le type d'entité, ou toute valeur d'attribut hors arrêt). Si une valeur manque dans la liste proposée, saisissez-la sous **Ajouter une valeur** (virgules acceptées) ; les entrées personnalisées sont enregistrées dans `when` comme les puces.
 
 ---
 

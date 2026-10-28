@@ -56,6 +56,7 @@ export function emptyScene(sceneId: string): OwlnestScene {
     cards: [],
     rules: [],
     parts: [],
+    effects: [],
   };
 }
 
@@ -346,5 +347,8 @@ export function buildSceneFromEditor(
     // Le logement dessiné n'existe que dans la scène : l'oublier ici l'effaçait
     // au premier enregistrement depuis l'éditeur d'ancres.
     ...(current?.plan ? { plan: current.plan } : {}),
+    // Comme parts : l'éditeur d'ancres ne touche pas aux effets, il faut les
+    // reporter sinon un déplacement d'ancre les efface de la scène.
+    effects: current?.effects ?? [],
   };
 }

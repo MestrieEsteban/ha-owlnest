@@ -9,6 +9,7 @@
 - [Scene navigation](#scene-navigation)
 - [Anchors](#anchors)
 - [Openings](#openings)
+- [Effects](#effects)
 - [Camera views](#camera-views)
 - [Rules engine](#rules-engine)
 - [Environment](#environment)
@@ -270,6 +271,30 @@ If two openings are given clips that move the same node, the last one applied ea
 Export from Blender with **Animation → NLA Tracks**. Actions that start at frame 1 (not 0) are handled. three.js sanitises names (`tela.001` → `tela001`).
 
 > **Example**: a reclining sofa exported as `Reclinar_Der`, `Reclinar_Izq`, `Cabezal_Der`, `Cabezal_Izq`. Bind the right-hand cover to `Reclinar_Der` and `Cabezal_Der`; both mechanisms follow that cover's position. A second opening with the left-hand cover and the two `*_Izq` clips leaves the right side alone.
+
+---
+
+## Effects
+
+Effects tint or show/hide model objects from a Home Assistant entity, without moving them. They live in a separate scene list from openings.
+
+### Adding an effect
+
+1. Edit mode → **Effects** tab → **+ Effect**
+2. Click the first object on the model (crosshair cursor, same as openings). Use the **Object** tree to pick a whole Blender object or group
+3. Optionally add more targets (e.g. every radiator): **+ Click an object on the model**, or **Ctrl+click** (**⌘+click** on Mac) rows in the **Object** tree
+4. Choose the type, link an entity. While the panel is open, the effect is shown **live** on the model; **Cancel** restores the previous state
+
+| Type | Description |
+|---|---|
+| **Material** | Highlights the object(s) when the condition matches (e.g. radiators while `climate` reports `hvac_action: heating`). **Look**: **Fill** tints the whole surface (colour + glow); **Outline** draws coloured edges only |
+| **Visibility** | Shows the object(s) when the condition matches, hides them otherwise (e.g. a person mesh when a presence sensor is on). Optional **Reverse** flips that |
+
+**See through walls** draws the object (or its outline) on top while the effect is active (no depth test), so it stays readable behind walls — same idea as the editor highlight overlays.
+
+**Duration** (optional) soft-fades the look when the condition turns on or off (tint, outline, see-through, and visibility opacity). Leave at 0 for an instant switch — the default for older scenes.
+
+**Attribute** (optional) reads an entity attribute instead of the state — for climate, set `hvac_action` and select `heating` under **Active when**. Leave **Active when** empty to use Owlnest's default (on/off for the entity type, or any non-idle attribute value). If a value is missing from the suggested list, type it under **Add a value** (comma-separated allowed); custom entries are saved in `when` like the chips.
 
 ---
 

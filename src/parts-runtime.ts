@@ -335,9 +335,13 @@ export function resolveMesh(
   cfg: { mesh: string; meshIndex?: number; triangle: number },
 ): THREE.Mesh | null {
   const fits = (m: THREE.Mesh | undefined) => {
-    if (!m) return false;
+    if (!m?.geometry) return false;
+    // Sans position (maille vide / corrompue), refuser plutôt que lever :
+    // un ouvrant ou un effet qui tombe ici ne doit pas faire échouer tout le chargement.
     const idx = m.geometry.getIndex();
-    const tris = (idx ? idx.count : m.geometry.getAttribute('position').count) / 3;
+    const pos = m.geometry.getAttribute('position');
+    if (!idx && !pos) return false;
+    const tris = (idx ? idx.count : pos.count) / 3;
     return cfg.triangle < tris;
   };
 
@@ -389,19 +393,31 @@ export class PartController {
     const resolved: { cfg: OwlnestPart; mount: () => LiveMesh | null }[] = [];
     const animated: OwlnestPart[] = [];
     const claimed = new Set<string>();
-    for (const cfg of configs) {
-      if (cfg.motion === 'animation') { animated.push(cfg); continue; }
-      const mount = this._resolve(cfg, meshes, nodes, claimed);
-      if (mount) resolved.push({ cfg, mount });
-      else missing.push(cfg);
+    const list = Array.isArray(configs) ? configs : [];
+    for (const cfg of list) {
+      if (!cfg) continue;
+      try {
+        if (cfg.motion === 'animation') { animated.push(cfg); continue; }
+        const mount = this._resolve(cfg, meshes, nodes, claimed);
+        if (mount) resolved.push({ cfg, mount });
+        else missing.push(cfg);
+      } catch (err) {
+        console.warn(`[Owlnest] opening "${cfg.label || cfg.entity || cfg.id}" failed to resolve:`, err);
+        missing.push(cfg);
+      }
     }
     // Les pièces d'abord : leur maille peut appartenir à un nœud animé, qu'elles
     // doivent suivre une fois détachées.
     resolved.sort((a, b) => Number(!!a.cfg.node) - Number(!!b.cfg.node));
     for (const { cfg, mount } of resolved) {
-      const item = mount();
-      if (item) this.items.push(item);
-      else missing.push(cfg);
+      try {
+        const item = mount();
+        if (item) this.items.push(item);
+        else missing.push(cfg);
+      } catch (err) {
+        console.warn(`[Owlnest] opening "${cfg.label || cfg.entity || cfg.id}" failed to mount:`, err);
+        missing.push(cfg);
+      }
     }
 
     this._built = true;
@@ -411,11 +427,16 @@ export class PartController {
     // Les animations en dernier : les autres ouvrants se mesurent au repos.
     let ok = this.items.length;
     for (const cfg of animated) {
-      const anim = this._mountClips(cfg);
-      this.anims.push(anim);
-      // Monté quand même : l'éditeur doit pouvoir choisir une autre animation.
-      if (anim.rig.missing.length) missing.push(cfg);
-      else ok++;
+      try {
+        const anim = this._mountClips(cfg);
+        this.anims.push(anim);
+        // Monté quand même : l'éditeur doit pouvoir choisir une autre animation.
+        if (anim.rig.missing.length) missing.push(cfg);
+        else ok++;
+      } catch (err) {
+        console.warn(`[Owlnest] opening "${cfg.label || cfg.entity || cfg.id}" failed to mount clips:`, err);
+        missing.push(cfg);
+      }
     }
     return { ok, missing };
   }

@@ -514,6 +514,106 @@ export interface OwlnestPart {
   tintStrength?: number;
 }
 
+/** Types d'effet pilotés par une entité, sans mouvement d'ouvrant. */
+export type EffectKind = 'material' | 'visibility';
+
+/**
+ * Rendu d'un effet `material`.
+ *
+ * - `fill` — teinte la surface (défaut, comme `PartTint`).
+ * - `outline` — arêtes colorées (`EdgesGeometry`), sans peindre le volume.
+ */
+export type EffectMaterialStyle = 'fill' | 'outline';
+
+/**
+ * Une cible d'effet : même forme que la cible principale d'`OwlnestEffect`.
+ *
+ * Un radiateur multi-maille ou plusieurs objets disjoints partagent un effet
+ * sans dupliquer la configuration d'entité.
+ */
+export interface EffectTarget {
+  mesh: string;
+  meshIndex?: number;
+  triangle: number;
+  node?: string;
+  nodeIndex?: number;
+  /** Libellé pour la liste de l'éditeur (nom d'objet, cotes…). */
+  label?: string;
+}
+
+/**
+ * Effet visuel piloté par une entité, sans mouvement.
+ *
+ * - `material` — teinte + lueur quand la condition correspond (ex. radiateurs
+ *   rouges si `hvac_action=heating`).
+ * - `visibility` — montre ou cache l'objet (ex. personne sur une chaise si
+ *   presence = on).
+ *
+ * Ciblage comme un ouvrant : nœud et/ou maille + triangle d'amorce. Les objets
+ * supplémentaires vont dans `targets` (même forme).
+ */
+export interface OwlnestEffect {
+  id: string;
+  kind: EffectKind;
+  entity: string;
+  /**
+   * Attribut lu à la place de l'état (`hvac_action`, etc.). Absent : l'état
+   * lui-même.
+   */
+  attribute?: string;
+  /**
+   * Valeurs qui activent l'effet. Absentes : repli sensible (état « on », ou
+   * attribut hors des valeurs d'arrêt).
+   */
+  when?: string[];
+  /** Inverse la condition (utile surtout pour `visibility`). */
+  invert?: boolean;
+  /** Nom de la maille du clic d'origine. */
+  mesh: string;
+  meshIndex?: number;
+  triangle: number;
+  /** Nœud ciblé en entier — un objet ou groupe Blender. */
+  node?: string;
+  nodeIndex?: number;
+  /**
+   * Autres objets touchés par le même effet (clics supplémentaires).
+   * Absent ou vide : seule la cible principale.
+   */
+  targets?: EffectTarget[];
+  label?: string;
+  /**
+   * Couleur de teinte (`#rrggbb`). Obligatoire pour `material` ; ignorée pour
+   * `visibility`.
+   */
+  color?: string;
+  /**
+   * Style `material` : surface pleine ou arêtes seules. Absent : `fill`.
+   */
+  style?: EffectMaterialStyle;
+  /**
+   * Intensité de la teinte, 0–1. Absente : 0,55 (même dosage que les ouvrants).
+   * Ignorée en `outline` (seules couleur et lueur comptent).
+   */
+  strength?: number;
+  /**
+   * Intensité de la lueur émissive, 0–1. Absente : le dosage d'origine de
+   * `part-tint` (0,35). En `outline`, module l'opacité des arêtes.
+   */
+  glow?: number;
+  /**
+   * Quand l'effet est actif : dessine l'objet par-dessus le reste du modèle
+   * (`depthTest: false`), comme le surlignage de l'éditeur — lisible à travers
+   * les murs. Absent ou faux : profondeur normale.
+   */
+  seeThrough?: boolean;
+  /**
+   * Durée du fondu à l'allumage / extinction, en secondes. Absente ou 0 :
+   * bascule instantanée (scènes enregistrées avant ce champ). Comme les
+   * ouvrants, on ne stocke que les valeurs non nulles.
+   */
+  duration?: number;
+}
+
 export interface OwlnestScene {
   version: number;
   scene_id: string;
@@ -523,8 +623,7 @@ export interface OwlnestScene {
   cards: import('./cards/types').SceneCard[];
   rules: import('./rules/types').OwlnestRule[];
   parts?: OwlnestPart[];
-  /** Effets visuels (visibilité, etc.) — optionnel; conservé à l'export/import. */
-  effects?: unknown[];
+  effects?: OwlnestEffect[];
   settings?: SceneSettings;
   /**
    * Logement dessiné dans la carte (voir plan/). Quand il a des pièces, c'est
