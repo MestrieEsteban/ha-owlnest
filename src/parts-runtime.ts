@@ -423,6 +423,11 @@ export class PartController {
   private _mountClips(cfg: OwlnestPart): LiveClips {
     const root = this._root;
     const rig = new ClipRig(root ?? new THREE.Group(), root?.animations ?? [], cfg.clips ?? []);
+    // Ces nœuds restent dans le modèle : signaler leur mouvement empêche le
+    // regroupement statique de figer leur géométrie dans la pose initiale.
+    for (const node of rig.nodes) {
+      node.userData.owlnestAnimated = (node.userData.owlnestAnimated ?? 0) + 1;
+    }
     const target = root ? commonAncestor(rig.nodes, root) : null;
     return {
       cfg, rig, target, tint: target ? new PartTint(target, cfg.id) : null,
@@ -432,6 +437,11 @@ export class PartController {
 
   private _unmountClips(anim: LiveClips) {
     anim.tint?.restore();
+    for (const node of anim.rig.nodes) {
+      const claims = Number(node.userData.owlnestAnimated) - 1;
+      if (claims > 0) node.userData.owlnestAnimated = claims;
+      else delete node.userData.owlnestAnimated;
+    }
     anim.rig.restore();
   }
 
