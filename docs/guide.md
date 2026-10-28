@@ -144,9 +144,9 @@ For `light` entities, three styles are available:
 | `point` | Omnidirectional light (classic bulb) |
 | `spot` | Directed cone beam (recessed spotlight) |
 | `beam` | Narrow focused beam (projector) |
-| `mesh` | **Object shape** — one rectangular area light per selected GLB host (bounding-box approximation). Available only when at least one host object is selected. |
+| `mesh` | **Object shape**: one rectangular area light per selected GLB host (bounding-box approximation). Available only when at least one host object is selected. |
 
-You can **enable several cast types at once** (e.g. point + mesh). Persist as `lightStyle` when only one type is selected, or `lightStyles: [...]` when several. Style, direction and the options below are configured in the **light floating panel** (edit mode: place a light, or click its marker / list row → **Edit light…**).
+You can **enable several cast types at once** (e.g. point + mesh). Persist as `lightStyle` when only one type is selected, or `lightStyles: [...]` when several. Style, direction and the options below are set in the **light window** (edit mode: pick the light, then **Edit light…** in its sheet).
 
 ### Light modes, object and emissive
 
@@ -155,7 +155,7 @@ A light anchor can:
 | Mode | How |
 |---|---|
 | **3D light only** | Cast a Point/Spot (default). No GLB object required. |
-| **Emissive only** | Turn off “Cast 3D light” and pick mesh(es) on the model — the objects glow, no Point/Spot. |
+| **Emissive only** | Turn off “Cast 3D light” and pick mesh(es) on the model, the objects glow, no Point/Spot. |
 | **Both** | Cast light and pick host mesh(es) for emissive glow. |
 
 - **Object(s)**: optional unless you use emissive or the **object shape** cast style (then at least one). Pick on the model or in the object tree; **Ctrl+click** toggles meshes in/out of the selection (plain click replaces). Clear removes all (and falls back from `mesh` to `point`).
@@ -290,11 +290,11 @@ Effects tint or show/hide model objects from a Home Assistant entity, without mo
 | **Material** | Highlights the object(s) when the condition matches (e.g. radiators while `climate` reports `hvac_action: heating`). **Look**: **Fill** tints the whole surface (colour + glow); **Outline** draws coloured edges only |
 | **Visibility** | Shows the object(s) when the condition matches, hides them otherwise (e.g. a person mesh when a presence sensor is on). Optional **Reverse** flips that |
 
-**See through walls** draws the object (or its outline) on top while the effect is active (no depth test), so it stays readable behind walls — same idea as the editor highlight overlays.
+**See through walls** draws the object (or its outline) on top while the effect is active (no depth test), so it stays readable behind walls, same idea as the editor highlight overlays.
 
-**Duration** (optional) soft-fades the look when the condition turns on or off (tint, outline, see-through, and visibility opacity). Leave at 0 for an instant switch — the default for older scenes.
+**Duration** (optional) soft-fades the look when the condition turns on or off (tint, outline, see-through, and visibility opacity). Leave at 0 for an instant switch, the default for older scenes.
 
-**Attribute** (optional) reads an entity attribute instead of the state — for climate, set `hvac_action` and select `heating` under **Active when**. Leave **Active when** empty to use Owlnest's default (on/off for the entity type, or any non-idle attribute value). If a value is missing from the suggested list, type it under **Add a value** (comma-separated allowed); custom entries are saved in `when` like the chips.
+**Attribute** (optional) reads an entity attribute instead of the state, for climate, set `hvac_action` and select `heating` under **Active when**. Leave **Active when** empty to use Owlnest's default (on/off for the entity type, or any non-idle attribute value). If a value is missing from the suggested list, type it under **Add a value** (comma-separated allowed); custom entries are saved in `when` like the chips.
 
 ---
 
@@ -430,7 +430,7 @@ All rendering settings are configurable in the editor's **Config** tab.
 | `reflections` | Metals and mirrors reflect a procedural room instead of rendering black. Other materials are unchanged. | `false` |
 | `reflection_intensity` | How strongly those metals and mirrors reflect the procedural room. `0` hides the reflection without turning the feature off. | `1` |
 | `reflection_metalness` | Minimum metalness for a material to receive the reflection. Lower includes more surfaces. | `0.5` |
-| `reflection_hdri` | Optional URL of an equirectangular .hdr reflected by metals and mirrors. Empty keeps the procedural room, with no download. A 1k file in `/config/www`, used as `/local/….hdr`, is enough. | — |
+| `reflection_hdri` | Optional URL of an equirectangular .hdr reflected by metals and mirrors. Empty keeps the procedural room, with no download. A 1k file in `/config/www`, used as `/local/….hdr`, is enough. | |
 | `exposure` | Global brightness (tone mapping) | — |
 | `fog_density` | Ambient fog density | `0.018` |
 | `transparent_background` | Transparent background (see-through to dashboard) | `false` |

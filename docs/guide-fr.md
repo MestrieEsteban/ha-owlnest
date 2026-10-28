@@ -144,9 +144,9 @@ Pour les entités `light`, trois styles sont disponibles :
 | `point` | Lumière omnidirectionnelle (ampoule classique) |
 | `spot` | Faisceau conique dirigé (spot encastré) |
 | `beam` | Faisceau étroit et concentré (projecteur) |
-| `mesh` | **Forme objet** — une lumière rectangulaire par hôte GLB choisi (approximation de la boîte englobante). Disponible seulement si au moins un objet hôte est sélectionné. |
+| `mesh` | **Forme objet** : une lumière rectangulaire par hôte GLB choisi (approximation de la boîte englobante). Disponible seulement si au moins un objet hôte est sélectionné. |
 
-On peut **activer plusieurs types à la fois** (ex. point + mesh). Persistance : `lightStyle` s’il n’y en a qu’un, sinon `lightStyles: [...]`. Le style, la direction et les options ci-dessous se règlent dans le **flotante lumière** (mode édition : placer une lumière, ou cliquer son marqueur / sa ligne → **Modifier la lumière…**).
+On peut **activer plusieurs types à la fois** (ex. point + mesh). Persistance : `lightStyle` s’il n’y en a qu’un, sinon `lightStyles: [...]`. Le style, la direction et les options ci-dessous se règlent dans la **fenêtre de la lumière** (mode édition : choisir la lumière, puis **Modifier la lumière…** dans sa fiche).
 
 ### Modes, objet et émisivité
 
@@ -155,7 +155,7 @@ Une ancre lumière peut :
 | Mode | Comment |
 |---|---|
 | **Lumière 3D seule** | Émettre une Point/Spot (défaut). Aucun objet GLB requis. |
-| **Émisivité seule** | Décocher « Émettre une lumière 3D » et choisir une ou plusieurs mailles — les objets brillent, sans Point/Spot. |
+| **Émisivité seule** | Décocher « Émettre une lumière 3D » et choisir une ou plusieurs mailles, les objets brillent, sans Point/Spot. |
 | **Les deux** | Lumière 3D + maille(s) hôte(s) pour l’émisivité. |
 
 - **Objet(s)** : optionnel sauf pour l’émisivité ou le style **forme objet** (alors au moins un). Clic sur le modèle ou arbre d’objets ; **Ctrl+clic** ajoute/retire une maille (clic simple remplace). Tout retirer fait repasser `mesh` en `point`.
@@ -290,11 +290,11 @@ Les effets teintent ou montrent / cachent des objets du modèle d'après une ent
 | **Matériau** | Met en évidence le ou les objets quand la condition est vraie (ex. radiateurs tant que le `climate` rapporte `hvac_action: heating`). **Rendu** : **Remplissage** teinte toute la surface (couleur + lueur) ; **Contour** ne dessine que les arêtes colorées |
 | **Visibilité** | Montre le ou les objets quand la condition est vraie, les cache sinon (ex. une silhouette quand un capteur de présence est on). **Inverser** reverse ce sens |
 
-**Visible à travers les murs** dessine l'objet (ou son contour) par-dessus le modèle tant que l'effet est actif (sans test de profondeur), pour le lire derrière un mur — comme le surlignage de l'éditeur.
+**Visible à travers les murs** dessine l'objet (ou son contour) par-dessus le modèle tant que l'effet est actif (sans test de profondeur), pour le lire derrière un mur, comme le surlignage de l'éditeur.
 
-**Durée** (facultatif) fond l'apparence quand la condition s'allume ou s'éteint (teinte, contour, see-through et opacité de visibilité). Laissez à 0 pour un basculement instantané — le défaut des scènes plus anciennes.
+**Durée** (facultatif) fond l'apparence quand la condition s'allume ou s'éteint (teinte, contour, see-through et opacité de visibilité). Laissez à 0 pour un basculement instantané, le défaut des scènes plus anciennes.
 
-**Attribut** (facultatif) lit un attribut d'entité à la place de l'état — pour un thermostat, indiquez `hvac_action` et sélectionnez `heating` sous **Actif quand**. Laissez **Actif quand** vide pour le repli d'Owlnest (on/off selon le type d'entité, ou toute valeur d'attribut hors arrêt). Si une valeur manque dans la liste proposée, saisissez-la sous **Ajouter une valeur** (virgules acceptées) ; les entrées personnalisées sont enregistrées dans `when` comme les puces.
+**Attribut** (facultatif) lit un attribut d'entité à la place de l'état, pour un thermostat, indiquez `hvac_action` et sélectionnez `heating` sous **Actif quand**. Laissez **Actif quand** vide pour le repli d'Owlnest (on/off selon le type d'entité, ou toute valeur d'attribut hors arrêt). Si une valeur manque dans la liste proposée, saisissez-la sous **Ajouter une valeur** (virgules acceptées) ; les entrées personnalisées sont enregistrées dans `when` comme les puces.
 
 ---
 
@@ -430,7 +430,7 @@ Tous les paramètres de rendu se configurent dans l'onglet **Config** de l'édit
 | `reflections` | Les métaux et les miroirs reflètent une pièce procédurale au lieu de s'afficher en noir. Les autres matériaux ne changent pas. | `false` |
 | `reflection_intensity` | Force avec laquelle ces métaux et ces miroirs reflètent la pièce procédurale. `0` masque le reflet sans désactiver l'option. | `1` |
 | `reflection_metalness` | Métal minimum pour qu'un matériau reçoive le reflet. Plus bas inclut davantage de surfaces. | `0.5` |
-| `reflection_hdri` | URL facultative d'un .hdr équirectangulaire reflété par les métaux et les miroirs. Vide : la pièce procédurale, sans téléchargement. Un fichier 1k dans `/config/www`, en chemin `/local/….hdr`, suffit. | — |
+| `reflection_hdri` | URL facultative d'un .hdr équirectangulaire reflété par les métaux et les miroirs. Vide : la pièce procédurale, sans téléchargement. Un fichier 1k dans `/config/www`, en chemin `/local/….hdr`, suffit. | |
 | `exposure` | Luminosité globale (tone mapping) | — |
 | `fog_density` | Densité du brouillard ambiant | `0.018` |
 | `transparent_background` | Fond transparent (laisse voir le dashboard) | `false` |
