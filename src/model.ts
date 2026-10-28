@@ -1,12 +1,49 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import type { AnchorEntry, AnchorConfig, CardConfig, EditableAnchor, LightStyle } from './types';
 import { qualityFromConfig } from './quality';
 import { lightScale } from './lights';
 import { bustCache, shouldRetryUncached } from './model-errors';
 
-function fetchGLTF(url: string): Promise<THREE.Group> {
+/**
+ * Décodeurs Draco (WASM + wrapper) hébergés par Google.
+ *
+ * Blender exporte souvent `KHR_draco_mesh_compression` : sans DRACOLoader le
+ * GLTFLoader lève « No DRACOLoader instance provided ». On ne bundlise pas les
+ * ~300 ko de wasm dans la carte (servie par l'intégration) — le CDN versionné
+ * est l'approche des exemples three.js / de nombreuses cartes HA. CORS est
+ * ouvert sur gstatic ; un réseau qui bloque les CDN externes fera échouer le
+ * chargement (message `modelErrDraco`).
+ */
+const DRACO_DECODER_PATH = 'https://www.gstatic.com/draco/versioned/decoders/1.5.7/';
+
+/** Une seule paire de chargeurs : les workers Draco sont coûteux à recréer. */
+let sharedDraco: DRACOLoader | null = null;
+let sharedGltf: GLTFLoader | null = null;
+
+function getGLTFLoader(): GLTFLoader {
+  if (sharedGltf) return sharedGltf;
+  const draco = new DRACOLoader();
+  draco.setDecoderPath(DRACO_DECODER_PATH);
+  // Pas de `type` forcé : WASM si le navigateur le permet, sinon JS.
+  draco.preload();
   const loader = new GLTFLoader();
+  loader.setDRACOLoader(draco);
+  sharedDraco = draco;
+  sharedGltf = loader;
+  return loader;
+}
+
+/** Libère les workers Draco (tests / démontage explicite). */
+export function disposeModelLoaders(): void {
+  sharedDraco?.dispose();
+  sharedDraco = null;
+  sharedGltf = null;
+}
+
+function fetchGLTF(url: string): Promise<THREE.Group> {
+  const loader = getGLTFLoader();
   return new Promise<{ scene: THREE.Group; animations: THREE.AnimationClip[] }>((resolve, reject) =>
     loader.load(url, resolve as (g: unknown) => void, undefined, reject),
   ).then((gltf) => {

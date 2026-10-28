@@ -35,9 +35,17 @@ export type ModelErrorKey =
   | 'modelErrLoad'
   | 'modelErrNotFound'
   | 'modelErrDenied'
-  | 'modelErrServer';
+  | 'modelErrServer'
+  | 'modelErrDraco';
+
+/** Échec lié à la compression Draco (décodeur absent / CDN bloqué). */
+export function isDracoError(err: unknown): boolean {
+  const message = String((err as { message?: unknown })?.message ?? err ?? '');
+  return /DRACOLoader|draco/i.test(message);
+}
 
 export function modelErrorKey(err: unknown): ModelErrorKey {
+  if (isDracoError(err)) return 'modelErrDraco';
   const status = httpStatus(err);
   if (status === 404) return 'modelErrNotFound';
   if (status === 401 || status === 403) return 'modelErrDenied';
