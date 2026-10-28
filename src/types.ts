@@ -446,6 +446,8 @@ export interface OwlnestScene {
   cards: import('./cards/types').SceneCard[];
   rules: import('./rules/types').OwlnestRule[];
   parts?: OwlnestPart[];
+  /** Effets visuels (visibilité, etc.) — optionnel; conservé à l'export/import. */
+  effects?: unknown[];
   settings?: SceneSettings;
   /**
    * Logement dessiné dans la carte (voir plan/). Quand il a des pièces, c'est

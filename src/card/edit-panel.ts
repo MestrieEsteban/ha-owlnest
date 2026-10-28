@@ -12,9 +12,13 @@ import { EDITOR_STYLES, BAR_H, BAR_H_PHONE, PANEL_W } from '../ui/editor-styles'
 import { loadRegistry, cachedRegistry, areaOf } from '../entities/registry';
 import { onHass } from '../entities/live';
 import { openEntityPicker } from '../entities/picker';
-import { deleteScene, summarizeScenes } from '../scene';
+import { deleteScene, summarizeScenes, renameScene, readScene, saveScene, duplicateScene } from '../scene';
 import { PARTS_ENABLED } from '../parts';
 import type { SceneSummary } from '../scene';
+import {
+  parseSceneFile, serializeScene, sceneFileName, suggestSceneId, uniqueSceneId,
+  SceneFileParseError,
+} from '../scene-file';
 import { describeEntity, knownStates, stateLabel } from '../entities/descriptors';
 import { stateText } from '../entities/format';
 import { FACADE_COLORS, GROUND_COLORS } from '../plan/rooms';
@@ -931,6 +935,7 @@ export class EditPanel {
     this._livePartRows.clear();
     this._liveForm = null;
     this._closePartModal?.();
+    this._closeScenePrompt?.();
     this._closePopmenu();
     this._tour?.end();
     this._tour = null;
@@ -1765,6 +1770,11 @@ export class EditPanel {
       list.style.cssText = 'display:flex;flex-direction:column;gap:1px;margin-bottom:10px;background:var(--ow-line);border:1px solid var(--ow-line);border-radius:10px;overflow:hidden;';
       root.appendChild(list);
 
+      const note = document.createElement('div');
+      note.style.cssText = 'display:none;margin:0 0 8px;font-size:10px;color:#fbbf24;line-height:1.4;white-space:pre-wrap;';
+      root.appendChild(note);
+      const showNote = (msg: string) => { note.textContent = msg; note.style.display = msg ? '' : 'none'; };
+
       const loading = document.createElement('div');
       loading.style.cssText = 'padding:11px 12px;font-size:12.5px;color:var(--ow-muted);background:var(--ow-chrome);';
       loading.textContent = t('cfgScenesLoading');
@@ -1859,25 +1869,83 @@ export class EditPanel {
           text.appendChild(sub);
           row.appendChild(text);
 
+          const iconBtn = (glyph: string, title: string, color: string, onClick?: () => void) => {
+            const el = document.createElement('span');
+            el.setAttribute('role', 'button');
+            el.style.cssText = `flex-shrink:0;color:${color};cursor:pointer;font-size:13px;line-height:1;padding:3px 3px;`;
+            el.textContent = glyph;
+            el.title = title;
+            if (onClick) {
+              el.addEventListener('click', (e) => {
+                // Sans cela, le clic remonterait à la ligne et chargerait la scène.
+                e.stopPropagation();
+                onClick();
+              });
+            }
+            return el;
+          };
+
+          row.appendChild(iconBtn('✎', t('cfgSceneRename'), '#94a3b8', () => {
+            this._openScenePrompt({
+              title: t('cfgSceneRename'),
+              value: sum.id,
+              placeholder: t('cfgSceneIdPh'),
+              confirmLabel: t('cfgSceneRenameSave'),
+              onConfirm: async (value) => {
+                const id = value.trim();
+                if (!id) return t('cfgSceneEmptyName');
+                if (id === sum.id) return;
+                const hass = this.getHass();
+                if (!hass) return t('cfgSceneRenameError');
+                const ids = await this.listScenesFn?.() ?? [];
+                if (ids.includes(id)) return t('cfgSceneRenameExists').replace('{id}', id);
+                try {
+                  await renameScene(hass, sum.id, id);
+                } catch {
+                  return t('cfgSceneRenameError');
+                }
+                if (isActive) this.onSceneSettingsChange?.({ scene_id: id } as SceneSettings, true);
+                else refresh();
+              },
+            });
+          }));
+
+          row.appendChild(iconBtn('↓', t('cfgSceneExport'), '#94a3b8', () => {
+            const hass = this.getHass();
+            if (!hass) return;
+            readScene(hass, sum.id)
+              .then((scene) => {
+                const blob = new Blob([serializeScene(scene)], { type: 'application/json;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = sceneFileName(sum.id);
+                a.rel = 'noopener';
+                a.click();
+                URL.revokeObjectURL(url);
+                showNote('');
+              })
+              .catch(() => showNote(t('cfgSceneExportError')));
+          }));
+
+          row.appendChild(iconBtn('⧉', t('cfgSceneDuplicate'), '#94a3b8', () => {
+            const hass = this.getHass();
+            if (!hass) return;
+            duplicateScene(hass, sum.id)
+              .then(() => { showNote(''); refresh(); })
+              .catch(() => showNote(t('cfgSceneDuplicateError')));
+          }));
+
           // La scène ouverte se recharge : après un redémarrage de Home
           // Assistant, ou pour abandonner ce qui s'affiche et relire le serveur.
           if (isActive) {
-            const reload = document.createElement('span');
-            reload.setAttribute('role', 'button');
-            reload.style.cssText = 'flex-shrink:0;color:#7dd3fc;cursor:pointer;font-size:13px;line-height:1;padding:3px 4px;';
-            reload.textContent = '↻';
-            reload.title = t('cfgSceneReload');
-            reload.addEventListener('click', () => {
+            row.appendChild(iconBtn('↻', t('cfgSceneReload'), '#7dd3fc', () => {
               this.onSceneSettingsChange?.({ scene_id: sum.id } as SceneSettings, true);
-            });
-            row.appendChild(reload);
+            }));
           }
 
-          const del = document.createElement('span');
-          del.setAttribute('role', 'button');
-          del.style.cssText = 'flex-shrink:0;color:rgba(248,113,113,0.5);cursor:pointer;font-size:14px;line-height:1;padding:3px 4px;';
-          del.textContent = '×';
-          del.title = t('cfgSceneDelete');
+          const del = iconBtn('×', t('cfgSceneDelete'), 'rgba(248,113,113,0.5)');
+          del.style.fontSize = '14px';
           // La scène ouverte n'est pas supprimable : la carte se retrouverait
           // sans rien à afficher, et l'utilisateur sans moyen de revenir.
           if (isActive) {
@@ -1886,15 +1954,24 @@ export class EditPanel {
             del.title = t('cfgSceneDeleteActive');
           } else {
             del.addEventListener('click', (e) => {
-              // Sans cela, le clic remonterait à la ligne et chargerait la
-              // scène qu'on cherche à supprimer.
               e.stopPropagation();
-              if (!confirm(t('cfgSceneConfirm').replace('{id}', sum.id))) return;
-              const hass = this.getHass();
-              if (!hass) return;
-              deleteScene(hass, sum.id)
-                .then(() => refresh())
-                .catch((err) => console.error('[Owlnest] delete_scene failed:', err));
+              this._openScenePrompt({
+                title: t('cfgSceneDelete'),
+                message: t('cfgSceneConfirm').replace('{id}', sum.id),
+                confirmLabel: t('cfgSceneDeleteBtn'),
+                danger: true,
+                onConfirm: async () => {
+                  const hass = this.getHass();
+                  if (!hass) return;
+                  try {
+                    await deleteScene(hass, sum.id);
+                  } catch (err) {
+                    console.error('[Owlnest] delete_scene failed:', err);
+                    return t('cfgSceneDeleteError');
+                  }
+                  refresh();
+                },
+              });
             });
           }
           row.appendChild(del);
@@ -1940,6 +2017,66 @@ export class EditPanel {
       newLblRow.appendChild(helpBadge(t('helpSceneId')));
       newWrap.append(newLblRow, newRow);
       root.appendChild(newWrap);
+
+      const importBtn = document.createElement('button');
+      importBtn.textContent = t('cfgSceneImport');
+      importBtn.style.cssText = 'width:100%;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.12);border-radius:7px;color:#cbd5e1;padding:7px 10px;font-size:11px;font-family:inherit;cursor:pointer;margin-bottom:8px;';
+      importBtn.addEventListener('click', () => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'application/json,.json';
+        input.addEventListener('change', async () => {
+          const file = input.files?.[0];
+          if (!file) return;
+          let parsed;
+          try {
+            parsed = parseSceneFile(await file.text());
+          } catch (err) {
+            const code = err instanceof SceneFileParseError ? err.code : 'not_a_scene';
+            showNote(code === 'unsupported_version' ? t('cfgSceneImportVersion') : t('cfgSceneImportInvalid'));
+            return;
+          }
+          showNote('');
+          const hass = this.getHass();
+          if (!hass) return;
+          const ids = await this.listScenesFn?.() ?? [];
+          const suggested = uniqueSceneId(suggestSceneId(parsed, file.name), ids);
+          const modelHint = parsed.model_url
+            ? t('cfgSceneImportModel').replace('{url}', parsed.model_url)
+            : '';
+          this._openScenePrompt({
+            title: t('cfgSceneImport'),
+            value: suggested,
+            placeholder: t('cfgSceneImportName'),
+            hint: modelHint,
+            confirmLabel: t('cfgSceneImportBtn'),
+            hintFor: (value) => {
+              const id = value.trim();
+              const collide = !!(id && ids.includes(id));
+              const bits: string[] = [];
+              if (collide) bits.push(t('cfgSceneImportReplace').replace('{id}', id));
+              if (modelHint) bits.push(modelHint);
+              return { text: bits.join('\n'), warn: collide };
+            },
+            onConfirm: async (value) => {
+              const id = value.trim();
+              if (!id) return t('cfgSceneEmptyName');
+              try {
+                await saveScene(hass, id, { ...parsed, scene_id: id });
+              } catch {
+                return t('cfgSceneImportError');
+              }
+              if (id === activeId) {
+                this.onSceneSettingsChange?.({ scene_id: id } as SceneSettings, true);
+              } else {
+                refresh();
+              }
+            },
+          });
+        });
+        input.click();
+      });
+      root.appendChild(importBtn);
     }
 
     }
@@ -3928,11 +4065,153 @@ export class EditPanel {
     });
   }
 
+  /**
+   * Petite fenêtre sombre au-dessus de l'éditeur, sur le modèle des ouvrants :
+   * pas d'`alert`/`confirm` natifs, qui cassent le thème et le focus de la carte.
+   */
+  private _openScenePrompt(opts: {
+    title: string;
+    message?: string;
+    value?: string;
+    placeholder?: string;
+    hint?: string;
+    confirmLabel: string;
+    danger?: boolean;
+    hintFor?: (value: string) => { text: string; warn?: boolean };
+    onConfirm: (value: string) => Promise<string | void>;
+  }): void {
+    this._closeScenePrompt?.();
+    document.getElementById('owlnest-scene-prompt')?.remove();
+
+    const dialog = document.createElement('dialog');
+    dialog.id = 'owlnest-scene-prompt';
+    dialog.style.cssText = [
+      'position:fixed', 'inset:auto', 'margin:0', 'z-index:10000',
+      'top:50%', 'left:50%', 'transform:translate(-50%,-50%)',
+      'width:min(360px,92vw)',
+      'background:rgba(6,10,22,0.97)', 'backdrop-filter:blur(20px)',
+      'border:1px solid rgba(255,255,255,0.1)', 'border-radius:14px',
+      'box-shadow:0 20px 60px rgba(0,0,0,0.8)', 'padding:0',
+      'color:#e2e8f0', 'font-family:var(--primary-font-family,sans-serif)',
+      'display:flex', 'flex-direction:column', 'overflow:hidden',
+    ].join(';');
+
+    const close = () => {
+      if (this._closeScenePrompt === close) this._closeScenePrompt = null;
+      dialog.close();
+      dialog.remove();
+    };
+    this._closeScenePrompt = close;
+
+    dialog.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Escape') { e.preventDefault(); close(); }
+    });
+    dialog.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
+
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.08);font-size:12px;font-weight:700;';
+    hdr.textContent = opts.title;
+    dialog.appendChild(hdr);
+
+    const body = document.createElement('div');
+    body.style.cssText = 'padding:14px 16px;display:flex;flex-direction:column;gap:8px;';
+    dialog.appendChild(body);
+
+    if (opts.message) {
+      const msg = document.createElement('div');
+      msg.style.cssText = 'font-size:11px;color:#cbd5e1;line-height:1.45;';
+      msg.textContent = opts.message;
+      body.appendChild(msg);
+    }
+
+    let input: HTMLInputElement | null = null;
+    if (opts.value !== undefined) {
+      input = document.createElement('input');
+      input.value = opts.value;
+      input.placeholder = opts.placeholder ?? '';
+      input.style.cssText = 'width:100%;box-sizing:border-box;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#e2e8f0;padding:6px 8px;font-size:11px;outline:none;font-family:inherit;';
+      body.appendChild(input);
+    }
+
+    const hint = document.createElement('div');
+    hint.style.cssText = 'font-size:10px;color:#94a3b8;line-height:1.4;white-space:pre-wrap;';
+    const paintHint = (text: string, warn = false) => {
+      hint.textContent = text;
+      hint.style.display = text ? '' : 'none';
+      hint.style.color = warn ? '#fbbf24' : '#94a3b8';
+    };
+    paintHint(opts.hint ?? '');
+    body.appendChild(hint);
+
+    const err = document.createElement('div');
+    err.style.cssText = 'display:none;font-size:10px;color:#f87171;line-height:1.4;';
+    body.appendChild(err);
+    const showErr = (text: string) => {
+      err.textContent = text;
+      err.style.display = text ? '' : 'none';
+    };
+
+    const refreshHint = () => {
+      if (!opts.hintFor || !input) return;
+      const next = opts.hintFor(input.value);
+      paintHint(next.text, next.warn);
+    };
+    input?.addEventListener('input', () => { showErr(''); refreshHint(); });
+    refreshHint();
+
+    const foot = document.createElement('div');
+    foot.style.cssText = 'display:flex;gap:8px;padding:12px 16px;border-top:1px solid rgba(255,255,255,0.08);';
+    const mkBtn = (label: string, primary: boolean, danger = false) => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      b.style.cssText = [
+        'flex:1', 'padding:7px 10px', 'border-radius:7px', 'font-size:11px',
+        'font-weight:600', 'cursor:pointer', 'font-family:inherit',
+        danger ? 'background:rgba(239,68,68,0.85);color:#fff;border:none'
+          : primary ? 'background:#0ea5e9;color:#04121f;border:none'
+            : 'background:rgba(255,255,255,0.06);color:#cbd5e1;border:1px solid rgba(255,255,255,0.12)',
+      ].join(';');
+      return b;
+    };
+    const cancelBtn = mkBtn(t('btnCancel'), false);
+    cancelBtn.addEventListener('click', close);
+    const ok = mkBtn(opts.confirmLabel, true, opts.danger);
+    const submit = async () => {
+      ok.disabled = true;
+      cancelBtn.disabled = true;
+      showErr('');
+      try {
+        const fail = await opts.onConfirm(input?.value ?? '');
+        if (fail) { showErr(fail); return; }
+        close();
+      } catch {
+        showErr(t('cfgSceneImportError'));
+      } finally {
+        ok.disabled = false;
+        cancelBtn.disabled = false;
+      }
+    };
+    ok.addEventListener('click', () => { void submit(); });
+    input?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); void submit(); }
+    });
+    foot.append(cancelBtn, ok);
+    dialog.appendChild(foot);
+
+    document.body.appendChild(dialog);
+    dialog.showModal();
+    input?.focus();
+    input?.select();
+  }
+
   // ── Ouvrants ──────────────────────────────────────────────────────────────
 
   private _partsBody: HTMLElement | null = null;
   /** Ferme le formulaire d'ouvrant affiché, en conservant ses réglages. */
   private _closePartModal: (() => void) | null = null;
+  /** Ferme le dialogue de scène (renommer, supprimer, importer). */
+  private _closeScenePrompt: (() => void) | null = null;
   /** Ouvrant affiché dans le formulaire, et fermeture sans rien enregistrer. */
   private _partModalId: string | null = null;
   private _discardPartModal: (() => void) | null = null;

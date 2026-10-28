@@ -62,6 +62,7 @@ const ENTRIES = [
   'src/plan/stairs.ts',
   'src/plan/house.ts',
   'src/entities/format.ts',
+  'src/scene-file.ts',
 ];
 
 /**
