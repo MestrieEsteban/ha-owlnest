@@ -5,6 +5,19 @@ import type { AnchorEntry, AnchorConfig, CardConfig, EditableAnchor, LightStyle 
 import { qualityFromConfig } from './quality';
 import { lightScale } from './lights';
 import { bustCache, shouldRetryUncached } from './model-errors';
+import {
+  copyLightHostFields, hasLightHost, listLightStyles, setLightStyles, hasMeshStyle,
+  type LightHostFields, type LightStyleFields,
+} from './light-fields';
+import { resolveLightHosts, hostIsOpeningPiece } from './light-emissive';
+import {
+  disposeEntryLights, makeMeshAreaLights, meshLightsAnchorPos, poseMeshAreaLights,
+} from './light-mesh';
+
+/** Champs lumière optionnels, recopiés tels quels (lecture runtime). */
+function takeLightFields(src: LightHostFields & LightStyleFields): LightHostFields & LightStyleFields {
+  return copyLightHostFields(src);
+}
 
 /**
  * Décodeurs Draco (WASM + wrapper) hébergés par Google.
@@ -137,32 +150,144 @@ export function makeLight(
   return { light };
 }
 
+function usableHosts(root: THREE.Object3D | null | undefined, fields: LightHostFields): THREE.Object3D[] {
+  if (!root || !hasLightHost(fields)) return [];
+  return resolveLightHosts(root, fields).filter((h) => !hostIsOpeningPiece(h));
+}
+
+type BuiltLights = Pick<
+  AnchorEntry,
+  'light' | 'extraLights' | 'meshLights' | 'lightTarget' | 'extraLightTargets' | 'lightStyle' | 'lightStyles' | 'worldPos' | 'lightDirection'
+>;
+
+/** Crée toutes les lumières des styles demandés et les range sur l'entrée. */
+function assignBuiltLights(
+  entry: AnchorEntry,
+  built: BuiltLights,
+): void {
+  entry.light = built.light;
+  entry.extraLights = built.extraLights;
+  entry.meshLights = built.meshLights;
+  entry.lightTarget = built.lightTarget;
+  entry.extraLightTargets = built.extraLightTargets;
+  entry.lightStyle = built.lightStyle;
+  entry.lightStyles = built.lightStyles;
+  entry.worldPos.copy(built.worldPos);
+  entry.lightDirection = built.lightDirection;
+}
+
+function createLightsForStyles(
+  styles: LightStyle[],
+  worldPos: THREE.Vector3,
+  scene: THREE.Scene,
+  config: CardConfig,
+  direction: [number, number, number] | undefined,
+  span: number | undefined,
+  hosts: THREE.Object3D[],
+): BuiltLights {
+  let list = [...styles];
+  // Mesh sans hôte : on retire le style (repli point si plus rien).
+  if (list.includes('mesh') && !hosts.length) {
+    list = list.filter((s) => s !== 'mesh');
+  }
+  if (!list.length) list = ['point'];
+
+  const styleFields: LightStyleFields = {};
+  setLightStyles(styleFields, list);
+  list = listLightStyles(styleFields);
+
+  const nonMesh: Array<THREE.PointLight | THREE.SpotLight> = [];
+  const targets: THREE.Object3D[] = [];
+  let meshRects: THREE.RectAreaLight[] = [];
+
+  for (const style of list) {
+    if (style === 'mesh') {
+      meshRects = makeMeshAreaLights(hosts, scene);
+      continue;
+    }
+    const { light, target } = makeLight(worldPos, scene, config, style, direction, span);
+    nonMesh.push(light);
+    if (target) targets.push(target);
+  }
+
+  const pos = worldPos.clone();
+  if (list.length === 1 && list[0] === 'mesh' && hosts.length) {
+    pos.copy(meshLightsAnchorPos(hosts));
+  }
+
+  // Primaire = premier Point/Spot, sinon premier Rect ; meshLights = le reste des rects.
+  let light: BuiltLights['light'] = null;
+  let extraLights: BuiltLights['extraLights'];
+  let meshLights: BuiltLights['meshLights'];
+  if (nonMesh.length) {
+    light = nonMesh[0];
+    extraLights = nonMesh.length > 1 ? nonMesh.slice(1) : undefined;
+    meshLights = meshRects.length ? meshRects : undefined;
+  } else if (meshRects.length) {
+    light = meshRects[0];
+    meshLights = meshRects.length > 1 ? meshRects.slice(1) : undefined;
+  }
+
+  return {
+    light,
+    extraLights,
+    meshLights,
+    lightTarget: targets[0],
+    extraLightTargets: targets.length > 1 ? targets.slice(1) : undefined,
+    lightStyle: styleFields.lightStyle,
+    lightStyles: styleFields.lightStyles,
+    worldPos: pos,
+    lightDirection: list.some((s) => s === 'spot' || s === 'beam') ? direction : undefined,
+  };
+}
+
 /**
- * Rebuild the Three.js light for an existing AnchorEntry in-place.
- * Disposes the old light/target, creates a new one with the given style/direction.
+ * Rebuild the Three.js lights for an existing AnchorEntry in-place.
+ * `styles` : un style ou une liste (tous rendus ensemble).
  */
 export function rebuildAnchorLight(
   entry: AnchorEntry,
   scene: THREE.Scene,
   config: CardConfig,
-  style: LightStyle,
+  styles: LightStyle | LightStyle[],
   direction?: [number, number, number],
   span?: number,
+  hosts?: THREE.Object3D[],
 ): void {
-  if (entry.light) { scene.remove(entry.light); entry.light.dispose(); }
-  if (entry.lightTarget) scene.remove(entry.lightTarget);
+  disposeEntryLights(entry, scene);
 
-  if (entry.domain !== 'light') {
-    entry.light = null;
-    entry.lightTarget = undefined;
+  if (entry.domain !== 'light' || entry.castLight === false) {
     return;
   }
 
-  const { light, target } = makeLight(entry.worldPos, scene, config, style, direction, span);
-  entry.light = light;
-  entry.lightTarget = target;
-  entry.lightStyle = style;
-  entry.lightDirection = direction;
+  const list = Array.isArray(styles) ? styles : [styles];
+  const usable = (hosts ?? []).filter((h) => !hostIsOpeningPiece(h));
+  const built = createLightsForStyles(list, entry.worldPos, scene, config, direction, span, usable);
+  assignBuiltLights(entry, built);
+}
+
+/** Repose les RectAreaLights mesh sur les hôtes (sans reconstruire). */
+export function syncMeshLightPoses(entry: AnchorEntry, hosts: THREE.Object3D[]): void {
+  if (!hasMeshStyle(entry)) return;
+  const lights = [
+    ...(entry.light instanceof THREE.RectAreaLight ? [entry.light] : []),
+    ...(entry.meshLights ?? []),
+  ];
+  if (!lights.length) return;
+  poseMeshAreaLights(lights, hosts);
+}
+
+function buildLightForAnchor(
+  fields: LightHostFields & LightStyleFields & { lightDirection?: [number, number, number] },
+  worldPos: THREE.Vector3,
+  scene: THREE.Scene,
+  config: CardConfig,
+  span: number | undefined,
+  root: THREE.Object3D | null,
+): BuiltLights {
+  const styles = listLightStyles(fields);
+  const hosts = usableHosts(root, fields);
+  return createLightsForStyles(styles, worldPos, scene, config, fields.lightDirection, span, hosts);
 }
 
 export function detectAnchors(
@@ -180,22 +305,38 @@ export function detectAnchors(
       const key = `anchor_cfg_${idx}`;
       const domain = ac.entity.split('.')[0];
       const worldPos = new THREE.Vector3(...ac.position);
-      const { light, target } = domain === 'light'
-        ? makeLight(worldPos, scene, config, ac.lightStyle ?? 'point', ac.lightDirection, span)
-        : { light: null, target: undefined };
+      const cast = domain === 'light' && ac.castLight !== false;
+      const built = cast
+        ? buildLightForAnchor(ac, worldPos, scene, config, span, root)
+        : {
+          light: null as null,
+          extraLights: undefined,
+          meshLights: undefined,
+          lightTarget: undefined,
+          extraLightTargets: undefined,
+          lightStyle: ac.lightStyle,
+          lightStyles: ac.lightStyles,
+          worldPos: worldPos.clone(),
+          lightDirection: ac.lightDirection,
+        };
       anchors.set(key, {
-        light,
-        lightTarget: target,
-        worldPos,
+        ...takeLightFields(ac),
+        light: built.light,
+        extraLights: built.extraLights,
+        meshLights: built.meshLights,
+        lightTarget: built.lightTarget,
+        extraLightTargets: built.extraLightTargets,
+        worldPos: built.worldPos,
         entityId: ac.entity,
         domain,
         targetIntensity: 0,
         targetColor: new THREE.Color(0xffffff),
         label: ac.label ?? ac.entity.split('.')[1] ?? ac.entity,
         hidden: ac.hidden,
-        lightStyle: ac.lightStyle,
+        lightStyle: built.lightStyle,
+        lightStyles: built.lightStyles,
         lightIntensity: ac.lightIntensity,
-        lightDirection: ac.lightDirection,
+        lightDirection: built.lightDirection,
         visibleIf: ac.visibleIf,
         precision: ac.precision,
         icon: ac.icon,
@@ -242,27 +383,44 @@ export function buildAnchorsFromEditable(
   scene: THREE.Scene,
   config: CardConfig,
   span?: number,
+  root?: THREE.Object3D | null,
 ): Map<string, AnchorEntry> {
   const anchors = new Map<string, AnchorEntry>();
   editable.forEach((ea, key) => {
     const domain = ea.entity.split('.')[0];
     const worldPos = ea.position.clone();
-    const { light, target } = domain === 'light'
-      ? makeLight(worldPos, scene, config, ea.lightStyle ?? 'point', ea.lightDirection, span)
-      : { light: null, target: undefined };
+    const cast = domain === 'light' && ea.castLight !== false;
+    const built = cast
+      ? buildLightForAnchor(ea, worldPos, scene, config, span, root ?? null)
+      : {
+        light: null as null,
+        extraLights: undefined,
+        meshLights: undefined,
+        lightTarget: undefined,
+        extraLightTargets: undefined,
+        lightStyle: ea.lightStyle,
+        lightStyles: ea.lightStyles,
+        worldPos: worldPos.clone(),
+        lightDirection: ea.lightDirection,
+      };
     anchors.set(key, {
-      light,
-      lightTarget: target,
-      worldPos,
+      ...takeLightFields(ea),
+      light: built.light,
+      extraLights: built.extraLights,
+      meshLights: built.meshLights,
+      lightTarget: built.lightTarget,
+      extraLightTargets: built.extraLightTargets,
+      worldPos: built.worldPos,
       entityId: ea.entity,
       domain,
       targetIntensity: 0,
       targetColor: new THREE.Color(0xffffff),
       label: ea.label || ea.entity.split('.')[1] || ea.entity,
       hidden: ea.hidden,
-      lightStyle: ea.lightStyle,
+      lightStyle: built.lightStyle,
+      lightStyles: built.lightStyles,
       lightIntensity: ea.lightIntensity,
-      lightDirection: ea.lightDirection,
+      lightDirection: built.lightDirection,
       visibleIf: ea.visibleIf,
       precision: ea.precision,
       icon: ea.icon,

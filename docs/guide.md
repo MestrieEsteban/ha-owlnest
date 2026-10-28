@@ -143,8 +143,25 @@ For `light` entities, three styles are available:
 | `point` | Omnidirectional light (classic bulb) |
 | `spot` | Directed cone beam (recessed spotlight) |
 | `beam` | Narrow focused beam (projector) |
+| `mesh` | **Object shape** — one rectangular area light per selected GLB host (bounding-box approximation). Available only when at least one host object is selected. |
 
-Style and direction are configured in the anchor properties in edit mode.
+You can **enable several cast types at once** (e.g. point + mesh). Persist as `lightStyle` when only one type is selected, or `lightStyles: [...]` when several. Style, direction and the options below are configured in the **light floating panel** (edit mode: place a light, or click its marker / list row → **Edit light…**).
+
+### Light modes, object and emissive
+
+A light anchor can:
+
+| Mode | How |
+|---|---|
+| **3D light only** | Cast a Point/Spot (default). No GLB object required. |
+| **Emissive only** | Turn off “Cast 3D light” and pick mesh(es) on the model — the objects glow, no Point/Spot. |
+| **Both** | Cast light and pick host mesh(es) for emissive glow. |
+
+- **Object(s)**: optional unless you use emissive or the **object shape** cast style (then at least one). Pick on the model or in the object tree; **Ctrl+click** toggles meshes in/out of the selection (plain click replaces). Clear removes all (and falls back from `mesh` to `point`).
+- **Emissive**: glow on **every** selected host using the **same colour** as the 3D light; strength slider; optionally linked to HA brightness.
+- **Object shape (`mesh`)**: casts light as a rectangle fitted to each host’s bounding box (not a true arbitrary mesh light). Pose follows the hosts on rebuild; can be combined with point/spot/beam.
+- **Anchor light to object**: when host(s) are set and a positional cast type is on (point/spot/beam), those lights snap to the **combined bounding-box centre** (static lamps). Mesh rects stay on each host.
+- **Colour / intensity**: shared across **all** selected cast lights and the emissive; HA colour wins when present, else panel fallbacks.
 
 
 ### Interactions
@@ -168,6 +185,15 @@ Configure this in anchor properties → **Visible if** in the editor.
 | `icon` | Custom MDI icon (e.g. `mdi:thermometer`) |
 | `precision` | Decimal places for sensors (e.g. `0` → "18", `1` → "17.6") |
 | `lightIntensity` | Light intensity multiplier (default: 1) |
+| `castLight` | Emit a 3D Point/Spot (`false` = emissive only) |
+| `lightStyle` | Single cast type (`point` / `spot` / `beam` / `mesh`) |
+| `lightStyles` | Several cast types at once (stored when more than one) |
+| `lightMesh` / `lightMeshIndex` / `lightTriangle` | Single GLB host (legacy / when only one) |
+| `lightMeshes` | Several GLB hosts `{ mesh, meshIndex?, triangle? }[]` (stored when more than one) |
+| `emissiveLevel` | Max emissive intensity on the host(s) (default 0.8) |
+| `linkEmissiveBrightness` | Scale emissive by HA brightness (default true when a host is set) |
+| `attachLightToObject` | Place the 3D light at the combined host AABB centre |
+| `lightColor` / `lightColorTemp` | Fallback colour (`#rrggbb`) / mireds for the Point/Spot and the emissive |
 
 ---
 
