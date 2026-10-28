@@ -1071,14 +1071,28 @@ export class Ha3dFloorplan extends HTMLElement {
     hudViews.style.cssText = [
       'position:absolute', 'bottom:12px', 'left:50%', 'transform:translateX(-50%)',
       'z-index:10', 'display:none',
-      'align-items:center', 'gap:2px',
+      'align-items:center', 'gap:4px',
+      'max-width:min(92vw, 720px)',
+      'overflow-x:auto', 'overflow-y:hidden',
+      'flex-wrap:nowrap',
+      '-webkit-overflow-scrolling:touch',
+      'touch-action:pan-x',
+      'scrollbar-width:none',
+      'cursor:grab',
       'background:rgba(8,12,24,0.72)',
       'backdrop-filter:blur(12px)', '-webkit-backdrop-filter:blur(12px)',
       'border:1px solid rgba(255,255,255,0.1)',
-      'border-radius:20px', 'padding:5px 8px',
+      'border-radius:24px', 'padding:4px 6px',
       'pointer-events:auto',
       'opacity:0', 'transition:opacity .25s ease',
+      'user-select:none',
     ].join(';');
+    // Masquer la scrollbar WebKit tout en gardant le swipe
+    const hideScroll = document.createElement('style');
+    hideScroll.textContent = '.owlnest-hud-views::-webkit-scrollbar{display:none}';
+    card.appendChild(hideScroll);
+    hudViews.classList.add('owlnest-hud-views');
+    this._enableHudViewsDragScroll(hudViews);
     this._hudViews = hudViews;
     card.appendChild(hudViews);
 
@@ -3605,6 +3619,72 @@ export class Ha3dFloorplan extends HTMLElement {
     this._preFocusTarget = null;
   }
 
+  /** Scroll horizontal par glisser-souris (le overflow natif ne le fait pas). */
+  private _enableHudViewsDragScroll(el: HTMLElement) {
+    let dragging = false;
+    let moved = false;
+    let captured = false;
+    let startX = 0;
+    let startScroll = 0;
+    const DRAG_THRESHOLD = 5;
+
+    el.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.stopPropagation();
+      dragging = true;
+      moved = false;
+      captured = false;
+      startX = e.clientX;
+      startScroll = el.scrollLeft;
+    });
+
+    el.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      e.stopPropagation();
+      const dx = e.clientX - startX;
+      if (!moved && Math.abs(dx) >= DRAG_THRESHOLD) {
+        moved = true;
+        el.style.cursor = 'grabbing';
+        try {
+          el.setPointerCapture(e.pointerId);
+          captured = true;
+        } catch { /* ignore */ }
+      }
+      if (moved) el.scrollLeft = startScroll - dx;
+    });
+
+    const endDrag = (e: PointerEvent) => {
+      if (!dragging) return;
+      dragging = false;
+      el.style.cursor = 'grab';
+      if (captured) {
+        try { el.releasePointerCapture(e.pointerId); } catch { /* déjà libéré */ }
+        captured = false;
+      }
+    };
+    el.addEventListener('pointerup', endDrag);
+    el.addEventListener('pointercancel', endDrag);
+
+    // Après un drag, ne pas déclencher le fly-to du chip sous le pointeur
+    el.addEventListener('click', (e) => {
+      if (!moved) return;
+      e.stopPropagation();
+      e.preventDefault();
+      moved = false;
+    }, true);
+
+    el.addEventListener('wheel', (e) => {
+      e.stopPropagation();
+      // Molette verticale → scroll horizontal de la barre
+      if (Math.abs(e.deltaY) >= Math.abs(e.deltaX) && e.deltaY !== 0) {
+        el.scrollLeft += e.deltaY;
+        e.preventDefault();
+      }
+    }, { passive: false });
+
+    el.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
+  }
+
   // ── Rebuild normal HUD (called by EditPanel.hideToolbar) ───────────────
 
   private _rebuildNormalHUD() {
@@ -3730,6 +3810,10 @@ export class Ha3dFloorplan extends HTMLElement {
       this._camAnimTo = null;
     });
     this.controls.addEventListener('end', () => this._saveView());
+    // Orbit manuel : la puce active ne doit plus prétendre être la vue courante
+    this.controls.addEventListener('start', () => {
+      if (!this._camAnimTo) this._viewMgr?.clearActiveView();
+    });
 
     // Hemisphere — warm sky, dark ground so entity point lights stand out
     this._hemiLight = new THREE.HemisphereLight(0xfff4e0, 0x1a1a2e, rl.ambient_intensity ?? 0.7);
@@ -4729,6 +4813,7 @@ export class Ha3dFloorplan extends HTMLElement {
         this._camAnimTo = { pos, target };
       },
       () => this._hudRight,
+      () => this._hudViews,
     );
 
     this._rebuildNormalHUD();
@@ -5254,10 +5339,7 @@ export class Ha3dFloorplan extends HTMLElement {
         const view = views.find((v) => v.id === action.view_id);
         if (view) {
           console.debug('[Owlnest] go_to_view:', view.label);
-          this._camAnimTo = {
-            pos:    new THREE.Vector3(...view.position),
-            target: new THREE.Vector3(...view.target),
-          };
+          this._viewMgr?.flyTo(view);
         } else {
           console.warn('[Owlnest] go_to_view: view not found:', action.view_id, 'available:', views.map(v => v.id));
         }

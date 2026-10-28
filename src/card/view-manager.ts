@@ -8,6 +8,8 @@ import { icon } from '../ui/icons';
 export class ViewManager {
   private _panel: HTMLDivElement | null = null;
   private _saving = false;
+  /** Dernière vue atteinte par fly-to (HUD / nav / règles). */
+  private _activeViewId: string | null = null;
 
   constructor(
     private overlayContainer: HTMLElement,
@@ -23,6 +25,7 @@ export class ViewManager {
     private showToast: (msg: string, err?: boolean) => void,
     private setAnimTarget: (pos: THREE.Vector3, target: THREE.Vector3) => void,
     private getHudRight: () => HTMLDivElement | null,
+    private getHudViews: () => HTMLElement | null = () => null,
   ) {}
 
   toggle() {
@@ -289,34 +292,68 @@ export class ViewManager {
     await this.saveViews(views, listBody);
   }
 
-  private _renameInline(lbl: HTMLSpanElement, id: string, listBody: HTMLElement) {
+  private _renameInline(
+    lbl: HTMLSpanElement,
+    id: string,
+    listBody: HTMLElement,
+    onRebuild?: () => void,
+  ) {
     const current = lbl.textContent ?? '';
     const inp = document.createElement('input');
     inp.value = current;
     inp.style.cssText = 'flex:1;background:rgba(255,255,255,0.06);border:1px solid rgba(251,191,36,0.4);border-radius:4px;color:#e2e8f0;padding:1px 5px;font-size:12px;font-family:inherit;outline:none;width:100%;box-sizing:border-box;';
 
+    let done = false;
     const commit = async () => {
+      if (done) return;
+      done = true;
       const label = inp.value.trim() || current;
       const views = normalizeViews(this.getEffectiveConfig().camera_views ?? []).map((v) =>
         v.id === id ? { ...v, label } : v,
       );
-      await this.saveViews(views, listBody);
+      // Liste inline : rebuild dédié (évite _rebuildList du panneau flottant)
+      await this.saveViews(views, onRebuild ? undefined : listBody);
+      onRebuild?.();
+    };
+
+    const cancel = () => {
+      if (done) return;
+      done = true;
+      lbl.style.display = '';
+      inp.remove();
     };
 
     inp.addEventListener('keydown', (e) => {
       e.stopPropagation();
-      if (e.key === 'Enter') commit();
-      if (e.key === 'Escape') { lbl.style.display = ''; inp.remove(); }
+      if (e.key === 'Enter') { e.preventDefault(); commit(); }
+      if (e.key === 'Escape') cancel();
     });
-    inp.addEventListener('blur', commit);
+    inp.addEventListener('blur', () => { void commit(); });
 
     lbl.style.display = 'none';
     lbl.parentElement!.insertBefore(inp, lbl);
     setTimeout(() => { inp.focus(); inp.select(); }, 10);
   }
 
-  private async _deleteView(id: string, listBody: HTMLElement) {
+  private async _moveView(
+    id: string,
+    delta: -1 | 1,
+    listBody: HTMLElement,
+    container: HTMLElement,
+  ) {
+    const views = normalizeViews(this.getEffectiveConfig().camera_views ?? []);
+    const idx = views.findIndex((v) => v.id === id);
+    const next = idx + delta;
+    if (idx < 0 || next < 0 || next >= views.length) return;
+    const swapped = views.slice();
+    [swapped[idx], swapped[next]] = [swapped[next], swapped[idx]];
+    await this.saveViews(swapped, undefined);
+    this._rebuildInlineList(listBody, container);
+  }
+
+  private async _deleteView(id: string, listBody?: HTMLElement) {
     const views = normalizeViews(this.getEffectiveConfig().camera_views ?? []).filter((v) => v.id !== id);
+    if (this._activeViewId === id) this._activeViewId = null;
     await this.saveViews(views, listBody);
   }
 
@@ -355,52 +392,126 @@ export class ViewManager {
   }
 
   highlightBtn(id?: string) {
+    if (id) this.setActiveView(id);
+  }
+
+  setActiveView(id: string | null) {
+    this._activeViewId = id;
+    this._applyActiveChipStyles();
     if (!id) return;
-    const views = normalizeViews(this.getEffectiveConfig().camera_views ?? []);
-    const idx = views.findIndex((v) => v.id === id);
-    const btn = this.hudLeft.children[idx] as HTMLButtonElement | undefined;
-    if (!btn) return;
-    const prev = btn.style.background;
-    btn.style.background = 'rgba(125,211,252,0.25)';
-    btn.style.color = '#fff';
-    setTimeout(() => { btn.style.background = prev; btn.style.color = 'rgba(255,255,255,0.72)'; }, 600);
+    requestAnimationFrame(() => {
+      this._findHudBtn(id)?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    });
+  }
+
+  /** Efface la sélection (ex. après orbit manuel). */
+  clearActiveView() {
+    if (!this._activeViewId) return;
+    this._activeViewId = null;
+    this._applyActiveChipStyles();
+  }
+
+  private _hudRoots(): HTMLElement[] {
+    const roots: HTMLElement[] = [this.hudLeft, this.hudSep];
+    const pill = this.getHudViews();
+    if (pill) roots.push(pill);
+    return roots;
+  }
+
+  private _findHudBtn(id: string): HTMLButtonElement | null {
+    const esc = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(id) : id.replace(/"/g, '\\"');
+    for (const root of this._hudRoots()) {
+      const btn = root.querySelector(`button[data-view-id="${esc}"]`);
+      if (btn) return btn as HTMLButtonElement;
+    }
+    return null;
+  }
+
+  /** En édition les chips vivent dans hudSep ; sinon dans hudLeft (puis _hudViews). */
+  private _viewsHost(): HTMLElement {
+    if (this.hudSep.style.flex === '1') {
+      // Première vue créée en édition : activer la rangée centrale
+      if (this.hudSep.style.display !== 'flex') {
+        this.hudSep.style.cssText = [
+          'flex:1', 'display:flex', 'align-items:center', 'justify-content:center',
+          'gap:4px', 'overflow-x:auto', 'max-width:100%', 'min-width:0',
+          '-webkit-overflow-scrolling:touch', 'touch-action:pan-x',
+        ].join(';');
+      }
+      return this.hudSep;
+    }
+    return this.hudLeft;
+  }
+
+  private _chipStyle(active: boolean): string {
+    return [
+      `background:${active ? 'rgba(125,211,252,0.25)' : 'transparent'}`,
+      'border:none',
+      `color:${active ? '#fff' : 'rgba(255,255,255,0.72)'}`,
+      'cursor:pointer',
+      'padding:10px 16px',
+      'font-size:14px',
+      'font-family:var(--primary-font-family,sans-serif)',
+      'border-radius:18px',
+      'transition:background .15s, color .15s',
+      'white-space:nowrap',
+      'min-height:40px',
+      'box-sizing:border-box',
+      'flex-shrink:0',
+      'line-height:1.2',
+    ].join(';');
+  }
+
+  private _applyActiveChipStyles() {
+    for (const root of this._hudRoots()) {
+      root.querySelectorAll<HTMLButtonElement>('button[data-view-id]').forEach((btn) => {
+        const active = btn.dataset.viewId === this._activeViewId;
+        btn.style.background = active ? 'rgba(125,211,252,0.25)' : 'transparent';
+        btn.style.color = active ? '#fff' : 'rgba(255,255,255,0.72)';
+      });
+    }
   }
 
   buildHUDBar() {
-    this.hudLeft.innerHTML = '';
+    // Ne pas vider hudLeft entier (détruit la toolbar d'édition) — seulement les chips
+    for (const root of this._hudRoots()) {
+      root.querySelectorAll('button[data-view-id]').forEach((el) => el.remove());
+    }
 
     const views = this.getEffectiveConfig().camera_views;
-    const hasViews = !!(views?.length);
+    const visible = (views ?? []).filter((v) => !v.hidden);
+    const hasViews = visible.length > 0;
     const hudRight = this.getHudRight();
     const hasActions = !!(hudRight && hudRight.children.length > 0);
-    this.hudSep.style.display = (hasViews && hasActions) ? 'block' : 'none';
+    const inEditHost = this.hudSep.style.flex === '1';
+    if (!inEditHost) {
+      this.hudSep.style.display = (hasViews && hasActions) ? 'block' : 'none';
+    }
     if (!hasViews) return;
 
-    views!.filter(v => !v.hidden).forEach((v) => {
+    const host = this._viewsHost();
+    visible.forEach((v) => {
+      const active = !!v.id && v.id === this._activeViewId;
       const btn = document.createElement('button');
+      btn.type = 'button';
+      if (v.id) btn.dataset.viewId = v.id;
       btn.textContent = v.label;
-      btn.style.cssText = [
-        'background:transparent', 'border:none',
-        'color:rgba(255,255,255,0.72)', 'cursor:pointer',
-        'padding:3px 9px', 'font-size:12px',
-        'font-family:var(--primary-font-family,sans-serif)',
-        'border-radius:14px',
-        'transition:background .15s, color .15s',
-        'white-space:nowrap',
-      ].join(';');
+      btn.style.cssText = this._chipStyle(active);
       btn.addEventListener('mouseenter', () => {
+        if (btn.dataset.viewId === this._activeViewId) return;
         btn.style.background = 'rgba(255,255,255,0.12)';
         btn.style.color = '#fff';
       });
       btn.addEventListener('mouseleave', () => {
-        btn.style.background = 'transparent';
-        btn.style.color = 'rgba(255,255,255,0.72)';
+        const on = btn.dataset.viewId === this._activeViewId;
+        btn.style.background = on ? 'rgba(125,211,252,0.25)' : 'transparent';
+        btn.style.color = on ? '#fff' : 'rgba(255,255,255,0.72)';
       });
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         this.flyTo(v);
       });
-      this.hudLeft.appendChild(btn);
+      host.appendChild(btn);
     });
   }
 
@@ -568,46 +679,77 @@ export class ViewManager {
       listBody.appendChild(empty);
       return;
     }
-    views.forEach((v) => {
+    views.forEach((v, idx) => {
       const row = document.createElement('div');
-      row.style.cssText = 'display:flex;align-items:center;gap:4px;padding:4px 2px;';
+      row.style.cssText = 'display:flex;align-items:center;gap:2px;padding:4px 2px;';
 
       const lbl = document.createElement('span');
-      lbl.style.cssText = 'flex:1;font-size:11px;color:#e2e8f0;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+      lbl.style.cssText = 'flex:1;min-width:0;font-size:11px;color:#e2e8f0;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
       lbl.textContent = v.label;
       lbl.title = t('viewFlyTo');
-      lbl.addEventListener('click', () => { this.flyTo(v); this.highlightBtn(v.id); });
+      lbl.addEventListener('click', () => { this.flyTo(v); });
       row.appendChild(lbl);
 
-      const btnStyle = 'background:none;border:none;cursor:pointer;padding:2px 4px;font-size:11px;color:rgba(255,255,255,0.3);border-radius:3px;transition:color .12s;';
+      const btnStyle = 'background:none;border:none;cursor:pointer;padding:2px 4px;font-size:11px;color:rgba(255,255,255,0.3);border-radius:3px;transition:color .12s;flex-shrink:0;';
       const flyBtn = document.createElement('button');
+      flyBtn.type = 'button';
       flyBtn.style.cssText = btnStyle; flyBtn.textContent = '→'; flyBtn.title = t('viewFlyTo');
-      flyBtn.addEventListener('click', () => { this.flyTo(v); this.highlightBtn(v.id); });
+      flyBtn.addEventListener('click', () => { this.flyTo(v); });
       row.appendChild(flyBtn);
+
+      const upBtn = document.createElement('button');
+      upBtn.type = 'button';
+      upBtn.style.cssText = btnStyle;
+      upBtn.textContent = '↑';
+      upBtn.title = t('viewMoveUp');
+      upBtn.disabled = idx === 0;
+      if (upBtn.disabled) upBtn.style.opacity = '0.2';
+      upBtn.addEventListener('click', () => { void this._moveView(v.id!, -1, listBody, container); });
+      row.appendChild(upBtn);
+
+      const downBtn = document.createElement('button');
+      downBtn.type = 'button';
+      downBtn.style.cssText = btnStyle;
+      downBtn.textContent = '↓';
+      downBtn.title = t('viewMoveDown');
+      downBtn.disabled = idx === views.length - 1;
+      if (downBtn.disabled) downBtn.style.opacity = '0.2';
+      downBtn.addEventListener('click', () => { void this._moveView(v.id!, 1, listBody, container); });
+      row.appendChild(downBtn);
+
+      const renameBtn = document.createElement('button');
+      renameBtn.type = 'button';
+      renameBtn.style.cssText = btnStyle;
+      renameBtn.textContent = '✎';
+      renameBtn.title = t('viewRename');
+      renameBtn.addEventListener('click', () => {
+        this._renameInline(lbl, v.id!, listBody, () => this._rebuildInlineList(listBody, container));
+      });
+      row.appendChild(renameBtn);
 
       // Hidden toggle — hides from HUD bar but keeps for rules/fly-to
       const hideBtn = document.createElement('button');
+      hideBtn.type = 'button';
       hideBtn.style.cssText = btnStyle;
-      hideBtn.textContent = v.hidden ? '👁' : '👁';
+      hideBtn.textContent = '👁';
       hideBtn.style.opacity = v.hidden ? '0.3' : '1';
       hideBtn.title = v.hidden ? t('viewShowInMenu') : t('viewHideFromMenu');
       hideBtn.addEventListener('click', async () => {
-        const views = normalizeViews(this.getEffectiveConfig().camera_views ?? []).map(
+        const next = normalizeViews(this.getEffectiveConfig().camera_views ?? []).map(
           (x) => x.id === v.id ? { ...x, hidden: !x.hidden } : x,
         );
-        await this.saveViews(views, undefined);
+        await this.saveViews(next, undefined);
         this._rebuildInlineList(listBody, container);
-        this.buildHUDBar();
       });
       row.appendChild(hideBtn);
 
       const delBtn = document.createElement('button');
+      delBtn.type = 'button';
       delBtn.style.cssText = btnStyle; delBtn.textContent = '✕'; delBtn.title = t('viewDelete');
-      delBtn.addEventListener('click', () => {
+      delBtn.addEventListener('click', async () => {
         if (delBtn.dataset.confirm === '1') {
-          this._deleteView(v.id!, listBody);
+          await this._deleteView(v.id!);
           this._rebuildInlineList(listBody, container);
-          this.buildHUDBar();
         } else {
           delBtn.dataset.confirm = '1'; delBtn.textContent = '⚠'; delBtn.style.color = '#f87171';
           setTimeout(() => { delBtn.dataset.confirm = ''; delBtn.textContent = '✕'; delBtn.style.color = ''; }, 3000);
@@ -662,6 +804,7 @@ export class ViewManager {
   }
 
   flyTo(v: CameraView) {
+    if (v.id) this.setActiveView(v.id);
     this.setAnimTarget(
       new THREE.Vector3(...v.position),
       new THREE.Vector3(...(v.target ?? [0, 0, 0])),
