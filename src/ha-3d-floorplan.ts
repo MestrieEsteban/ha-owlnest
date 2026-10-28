@@ -2,6 +2,7 @@ import * as THREE from 'three';
 
 
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import type { Hass, CardConfig, AnchorEntry, SavedView, EditableAnchor, OwlnestScene, OwlnestPart } from './types';
 import { syncLights, stepTransitions } from './lights';
@@ -65,6 +66,10 @@ import { PlanEditor } from './plan/editor-ui';
 import { migratePlan } from './plan/migrate';
 import { placeFurniture, bulbPosition } from './plan/furniture';
 import { catalogItem } from './plan/catalog';
+import {
+  assignReflectionMap, createHdriEnvironment, createRoomEnvironment,
+  isReflectionHdr, reflectionHdriUrl, reflectionIntensity, reflectionMetalness, reflectionUpdate,
+} from './room-env';
 import { createUniforms, instrumentMaterials, updateXray, createGhost } from './cutaway';
 import type { CutawayUniforms } from './cutaway';
 import { evalCondition, RuleEngine } from './rules/engine';
@@ -248,6 +253,21 @@ export class Ha3dFloorplan extends HTMLElement {
   /** Éditeur de plan ouvert, et sauvegarde différée de ses retouches. */
   private _planEditor: PlanEditor | null = null;
   private _planSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Cible PMREM des reflets. Nulle tant que l'option n'a pas été activée. */
+  private _reflectionTarget: THREE.WebGLRenderTarget | null = null;
+  /**
+   * Adresse dont cette cible est issue.
+   * `''` : pièce procédurale. `null` : pas encore construite.
+   */
+  private _reflectionBuilt: string | null = null;
+  /** .hdr en cours de chargement. Les curseurs ne doivent pas le relancer. */
+  private _reflectionPending: string | null = null;
+  /** Pour ignorer un chargement devenu caduc (autre URL, carte démontée). */
+  private _reflectionToken = 0;
+  /** Adresse déjà abandonnée : on ne la retélécharge pas à chaque curseur. */
+  private _reflectionFailed: string | null = null;
+  /** Déjà signalée dans la console. Une par adresse, pas une par curseur. */
+  private _reflectionWarned: string | null = null;
   private _detachDrop: (() => void) | null = null;
   private _saveQueued = false;   // une modification est arrivee pendant l'envoi
 
@@ -4266,6 +4286,8 @@ export class Ha3dFloorplan extends HTMLElement {
     if (orb.max_distance !== undefined) this.controls.maxDistance = orb.max_distance;
     if (orb.max_polar_angle !== undefined) this.controls.maxPolarAngle = orb.max_polar_angle * Math.PI;
 
+    this._syncReflections();
+
     // Re-apply environment: sun mode, orientation, intensities via applySunLight
     if (this._env) {
       // If simulation is active, re-apply it (it calls applySunLight internally)
@@ -4277,6 +4299,209 @@ export class Ha3dFloorplan extends HTMLElement {
     }
 
     this._requestShadowUpdate();
+  }
+
+  /**
+   * Donne aux métaux l'image à refléter, ou la retire.
+   *
+   * Champ vide : la pièce procédurale, sans téléchargement. Une URL .hdr
+   * remplace cette pièce. L'intensité et le seuil ne refont pas le PMREM.
+   * Décocher ne le libère pas : c'est le démontage de la carte, comme avant.
+   */
+  private _syncReflections() {
+    const root = this._modelRoot;
+    const renderer = this.renderer;
+    if (!root || !renderer) return;
+    const rendering = this._effectiveConfig.rendering;
+    const intensity = reflectionIntensity(rendering?.reflection_intensity);
+    const metalness = reflectionMetalness(rendering?.reflection_metalness);
+    const url = reflectionHdriUrl(rendering?.reflection_hdri);
+
+    if (this._reflectionWarned !== null && this._reflectionWarned !== url) {
+      this._reflectionWarned = null;
+    }
+    // Une autre adresse peut être réessayée. La même, déjà en échec, non.
+    if (this._reflectionFailed !== null && this._reflectionFailed !== url) {
+      this._reflectionFailed = null;
+    }
+    if (url === null && this._reflectionPending !== null) {
+      this._cancelReflectionLoad();
+    }
+
+    if (rendering?.reflections !== true) {
+      this._hideReflections(root, url, intensity, metalness);
+      return;
+    }
+
+    // Un autre suffixe n'est pas un RGBE : on n'essaie pas de le lire.
+    if (url && !isReflectionHdr(url) && this._reflectionFailed !== url) {
+      this._warnReflectionHdri(url, 'format');
+      this._reflectionFailed = url;
+      this._cancelReflectionLoad();
+    }
+
+    const action = reflectionUpdate(
+      this._reflectionBuilt,
+      this._reflectionPending,
+      this._reflectionFailed,
+      rendering?.reflection_hdri,
+    );
+    if (action === 'load' && url) {
+      this._loadReflectionHdri(url, renderer, root, intensity, metalness);
+      return;
+    }
+    if (action === 'keep' && this._reflectionTarget) {
+      const map = this._reflectionTarget.texture;
+      assignReflectionMap(root, map, map, intensity, metalness);
+      return;
+    }
+    if (url === null || (this._reflectionPending !== null && this._reflectionPending !== url)) {
+      this._cancelReflectionLoad();
+    }
+    this._useProceduralReflection(renderer, root, intensity, metalness);
+  }
+
+  /**
+   * Décoche : on retire l'image des métaux, on garde le PMREM.
+   *
+   * Il ne part que si l'adresse a changé. L'extinction définitive est le
+   * démontage de la carte, le même chemin qu'avant.
+   */
+  private _hideReflections(root: THREE.Object3D, url: string | null, intensity: number, metalness: number) {
+    const previous = this._reflectionTarget?.texture ?? null;
+    assignReflectionMap(root, null, previous, intensity, metalness);
+    if (this._reflectionPending !== null && this._reflectionPending !== url) {
+      this._cancelReflectionLoad();
+    }
+    // Le chargement en cours a une pièce en attente : ce n'est pas une image périmée.
+    if (this._reflectionPending === url && url !== null) return;
+    const wanted = url ?? '';
+    if (this._reflectionBuilt !== null && this._reflectionBuilt !== wanted) {
+      this._releaseReflectionTarget();
+    }
+  }
+
+  /** Pièce procédurale. Déjà en place : on ne refait que l'affectation. */
+  private _useProceduralReflection(
+    renderer: THREE.WebGLRenderer,
+    root: THREE.Object3D,
+    intensity: number,
+    metalness: number,
+  ) {
+    if (this._reflectionBuilt === '' && this._reflectionTarget) {
+      const map = this._reflectionTarget.texture;
+      assignReflectionMap(root, map, map, intensity, metalness);
+      return;
+    }
+    const previous = this._reflectionTarget;
+    const target = createRoomEnvironment(renderer);
+    this._reflectionTarget = target;
+    this._reflectionBuilt = '';
+    assignReflectionMap(root, target.texture, previous?.texture ?? null, intensity, metalness);
+    previous?.dispose();
+  }
+
+  private _loadReflectionHdri(
+    url: string,
+    renderer: THREE.WebGLRenderer,
+    root: THREE.Object3D,
+    intensity: number,
+    metalness: number,
+  ) {
+    // L'ancien fichier part tout de suite. La pièce tient les métaux
+    // le temps du téléchargement, pour qu'ils ne passent pas au noir.
+    if (!this._reflectionTarget || this._reflectionBuilt !== '') {
+      this._useProceduralReflection(renderer, root, intensity, metalness);
+    } else {
+      const map = this._reflectionTarget.texture;
+      assignReflectionMap(root, map, map, intensity, metalness);
+    }
+    const token = ++this._reflectionToken;
+    this._reflectionPending = url;
+    this._reflectionFailed = null;
+    new RGBELoader().load(
+      url,
+      (texture) => this._onReflectionHdriLoaded(token, url, texture),
+      undefined,
+      (err) => this._onReflectionHdriError(token, url, err),
+    );
+  }
+
+  private _onReflectionHdriLoaded(token: number, url: string, texture: THREE.Texture) {
+    if (token !== this._reflectionToken) {
+      texture.dispose();
+      return;
+    }
+    const renderer = this.renderer;
+    const rendering = this._effectiveConfig.rendering;
+    if (!renderer || reflectionHdriUrl(rendering?.reflection_hdri) !== url) {
+      if (this._reflectionPending === url) this._reflectionPending = null;
+      texture.dispose();
+      return;
+    }
+    let target: THREE.WebGLRenderTarget;
+    try {
+      target = createHdriEnvironment(renderer, texture);
+    } catch (err) {
+      this._onReflectionHdriError(token, url, err);
+      return;
+    }
+    const previous = this._reflectionTarget;
+    this._reflectionTarget = target;
+    this._reflectionBuilt = url;
+    this._reflectionPending = null;
+    this._reflectionFailed = null;
+    const root = this._modelRoot;
+    if (rendering?.reflections === true && root) {
+      assignReflectionMap(
+        root,
+        target.texture,
+        previous?.texture ?? null,
+        reflectionIntensity(rendering.reflection_intensity),
+        reflectionMetalness(rendering.reflection_metalness),
+      );
+      this._requestRender();
+    }
+    if (previous && previous !== target) previous.dispose();
+  }
+
+  private _onReflectionHdriError(token: number, url: string, detail?: unknown) {
+    if (token !== this._reflectionToken) return;
+    this._reflectionPending = null;
+    this._reflectionFailed = url;
+    this._warnReflectionHdri(url, 'load', detail);
+    const root = this._modelRoot;
+    const renderer = this.renderer;
+    const rendering = this._effectiveConfig.rendering;
+    if (!root || !renderer || rendering?.reflections !== true) return;
+    this._useProceduralReflection(
+      renderer,
+      root,
+      reflectionIntensity(rendering.reflection_intensity),
+      reflectionMetalness(rendering.reflection_metalness),
+    );
+    this._requestRender();
+  }
+
+  private _warnReflectionHdri(url: string, reason: 'format' | 'load', detail?: unknown) {
+    if (this._reflectionWarned === url) return;
+    this._reflectionWarned = url;
+    const message = reason === 'format'
+      ? `[Owlnest] Reflection HDRI ignored (${url}): only an equirectangular .hdr is supported; using the procedural room.`
+      : `[Owlnest] Reflection HDRI failed to load (${url}); using the procedural room.`;
+    if (detail === undefined) console.warn(message);
+    else console.warn(message, detail);
+  }
+
+  private _cancelReflectionLoad() {
+    this._reflectionToken++;
+    this._reflectionPending = null;
+  }
+
+  private _releaseReflectionTarget() {
+    this._reflectionTarget?.dispose();
+    this._reflectionTarget = null;
+    this._reflectionBuilt = null;
   }
 
   /**
@@ -5502,6 +5727,10 @@ export class Ha3dFloorplan extends HTMLElement {
     window.removeEventListener('resize', this._onWindowResize);
     if (this._editMode) this._editor?.deactivate();
     this.controls?.dispose();
+    // La cible du PMREM appartient au contexte : on la libère avant lui.
+    // Un .hdr encore en vol ne doit plus toucher ce renderer.
+    this._cancelReflectionLoad();
+    this._releaseReflectionTarget();
     this.renderer?.dispose();
     this._env?.removeWeatherParticles();
     this._env = null;

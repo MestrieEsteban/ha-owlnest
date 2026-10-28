@@ -28,6 +28,7 @@ const ENTRIES = [
   'src/model-outline.ts',
   'src/part-highlight.ts',
   'src/part-tint.ts',
+  'src/room-env.ts',
   'src/part-carry.ts',
   'src/coplanar.ts',
   'src/lights.ts',

@@ -14,6 +14,7 @@ import { onHass } from '../entities/live';
 import { openEntityPicker } from '../entities/picker';
 import { deleteScene, summarizeScenes, renameScene, readScene, saveScene, duplicateScene } from '../scene';
 import { PARTS_ENABLED } from '../parts';
+import { DEFAULT_REFLECTION_INTENSITY, REFLECTION_METALNESS } from '../room-env';
 import type { SceneSummary } from '../scene';
 import {
   parseSceneFile, serializeScene, sceneFileName, suggestSceneId, uniqueSceneId,
@@ -1497,6 +1498,12 @@ export class EditPanel {
   private _buildConfigTab(container: HTMLElement, look = false) {
     const settings = this.getSceneSettings?.() ?? {};
     const rendering = settings.rendering ?? {};
+    // L'objet lu ici ne suit pas les curseurs. Sans relecture, le suivant
+    // réécrit le rendu sans le réglage que le précédent vient de poser.
+    const patchRendering = (partial: NonNullable<SceneSettings['rendering']>) => {
+      const current = this.getSceneSettings?.().rendering ?? {};
+      this.onSceneSettingsChange?.({ rendering: { ...current, ...partial } });
+    };
 
     const inputStyle = [
       'width:100%', 'box-sizing:border-box',
@@ -2312,6 +2319,36 @@ export class EditPanel {
     switchField(t('cfgShadows'), t('helpShadows'), rendering.shadows !== false, (v) => {
       this.onSceneSettingsChange?.({ rendering: { shadows: v } });
     });
+
+    // Les reflets : un interrupteur, et leurs réglages fins seulement quand il est allumé.
+    {
+      const fine = document.createElement('div');
+      fine.style.display = rendering.reflections === true ? '' : 'none';
+      switchField(t('cfgReflections'), t('helpReflections'), rendering.reflections === true, (v) => {
+        fine.style.display = v ? '' : 'none';
+        this.onSceneSettingsChange?.({ rendering: { reflections: v } });
+      });
+      root.appendChild(fine);
+      const host = root;
+      root = fine;
+      // L'intégration n'accepte qu'un GLB : le .hdr est un fichier déjà servi sous /local/, pas un envoi.
+      const lbl = document.createElement('div');
+      lbl.style.cssText = 'font-size:9px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;';
+      lbl.textContent = t('cfgReflectionHdri');
+      lbl.appendChild(helpBadge(t('helpReflectionHdri')));
+      fine.appendChild(lbl);
+      const hdri = textInput(rendering.reflection_hdri ?? '', '/local/studio.hdr',
+        (v) => this.onSceneSettingsChange?.({ rendering: { reflection_hdri: v } }));
+      hdri.style.marginBottom = '8px';
+      fine.appendChild(hdri);
+      sliderWithHelp(t('cfgReflectionIntensity'), t('helpReflectionIntensity'), 0, 2, 0.05,
+        rendering.reflection_intensity ?? DEFAULT_REFLECTION_INTENSITY,
+        (v) => `${Math.round(v * 100)} %`, (v) => this.onSceneSettingsChange?.({ rendering: { reflection_intensity: v } }));
+      sliderWithHelp(t('cfgReflectionMetalness'), t('helpReflectionMetalness'), 0, 1, 0.05,
+        rendering.reflection_metalness ?? REFLECTION_METALNESS,
+        (v) => v.toFixed(2), (v) => this.onSceneSettingsChange?.({ rendering: { reflection_metalness: v } }));
+      root = host;
+    }
 
     switchField(t('cfgLightOcclusion'), t('helpLightOcclusion'), rendering.light_occlusion === 'top', (v) => {
       this.onSceneSettingsChange?.({ rendering: { light_occlusion: v ? 'top' : 'none' } });
