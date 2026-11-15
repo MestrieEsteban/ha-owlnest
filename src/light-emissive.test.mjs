@@ -62,6 +62,27 @@ test('resolveLightHosts + lightHostsCenter : AABB combinée', () => {
   assert.ok(Math.abs(c.x) < 0.01);
 });
 
+test('lightHostsCenter : centre correct après recentrage sans updateMatrixWorld global', () => {
+  // Repro du bug v2.0.0 : model.position change, matrixWorld reste périmé,
+  // Box3.setFromObject lit encore l'ancienne pose → ancre attachée déplacée.
+  const scene = new THREE.Scene();
+  const root = new THREE.Group();
+  const shade = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
+  shade.name = 'abatjour';
+  shade.position.set(10, 2, 0);
+  root.add(shade);
+  scene.add(root);
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(root);
+  root.position.sub(box.getCenter(new THREE.Vector3()));
+  // Pas de root.updateMatrixWorld ici — comme au chargement avant le correctif.
+  const stale = new THREE.Box3().setFromObject(shade).getCenter(new THREE.Vector3());
+  assert.ok(Math.abs(stale.x - 10) < 0.01, 'setFromObject brut reste sur l’ancienne pose');
+  const c = lightHostsCenter([shade]);
+  assert.ok(Math.abs(c.x) < 0.01, `centre attendu ~0, obtenu ${c.x}`);
+  assert.ok(Math.abs(c.y) < 0.01, `centre Y attendu ~0, obtenu ${c.y}`);
+});
+
 test('LightEmissiveController : multi-hôtes', () => {
   const { root, shade, mat } = lampModel();
   const other = root.children[1];

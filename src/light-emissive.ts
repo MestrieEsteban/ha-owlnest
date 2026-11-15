@@ -113,6 +113,9 @@ class HostEmissive {
 
 /** Centre monde d'un hôte (boîte englobante). */
 export function lightHostCenter(host: THREE.Object3D, out = new THREE.Vector3()): THREE.Vector3 {
+  // setFromObject ne remonte pas toujours les parents : après un recentrage
+  // du modèle, matrixWorld peut encore refléter l'ancienne pose.
+  host.updateWorldMatrix(true, false);
   const box = new THREE.Box3().setFromObject(host);
   if (box.isEmpty()) {
     host.getWorldPosition(out);

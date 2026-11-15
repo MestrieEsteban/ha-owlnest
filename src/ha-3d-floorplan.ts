@@ -3248,6 +3248,7 @@ export class Ha3dFloorplan extends HTMLElement {
       editable, this.scene!, this._effectiveConfig, this._modelSpan, this._modelRoot,
     );
     this._applyAttachPositions();
+    this._applyFloorLights();
 
     if (this.controls) this.controls.enabled = !this._locked;
 
@@ -5344,11 +5345,19 @@ export class Ha3dFloorplan extends HTMLElement {
           parts: syncPlanParts(model, allOpenings(plan), this._scene.parts ?? [], this._planPartLabel),
         };
       }
+      // Après le recentrage, les matrixWorld sont périmées. Sans ce passage,
+      // lightHostsCenter (Box3.setFromObject) lit encore la pose d'avant le
+      // centrage : les ancres attachLightToObject se déplacent, et
+      // _applyFloorLights peut les éteindre (étage faux). Quitter l'édition
+      // « réparait » parce que la scène avait déjà rendu entre-temps.
+      model.updateMatrixWorld(true);
       // Ancres avant le merge : les hôtes émissifs doivent être marqués d'abord.
       this.anchors = detectAnchors(model, this.scene, ec, this._modelSpan);
       this._ovPosPool.clear();
       this._applyAttachPositions();
       this._buildParts();
+      // Les ouvrants peuvent avoir déplacé un hôte : recalcule attach / mesh.
+      this._applyAttachPositions();
       this._applyFloorLights();
       this._createOverlays();
 

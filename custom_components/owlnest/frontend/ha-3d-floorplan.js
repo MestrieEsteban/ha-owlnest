@@ -20927,6 +20927,7 @@ class Qb {
   }
 }
 function Tp(s, e = new F()) {
+  s.updateWorldMatrix(!0, !1);
   const t = new yt().setFromObject(s);
   return t.isEmpty() ? (s.getWorldPosition(e), e) : t.getCenter(e);
 }
@@ -43883,7 +43884,7 @@ const gE = "rules-engine-v2", i2 = "main", ma = class ma extends HTMLElement {
       this._effectiveConfig,
       this._modelSpan,
       this._modelRoot
-    ), this._applyAttachPositions(), this.controls && (this.controls.enabled = !this._locked), this._createOverlays(), this._hass && (qs(this.anchors, this._hass, this._config, this._modelSpan), this._lightEmissive.sync(this._modelRoot, this.anchors, this._hass), this._updateOverlayStates()), (h = this._editPanel) == null || h.hideToolbar(), this._editPanel = null, this.overlays.forEach((u) => {
+    ), this._applyAttachPositions(), this._applyFloorLights(), this.controls && (this.controls.enabled = !this._locked), this._createOverlays(), this._hass && (qs(this.anchors, this._hass, this._config, this._modelSpan), this._lightEmissive.sync(this._modelRoot, this.anchors, this._hass), this._updateOverlayStates()), (h = this._editPanel) == null || h.hideToolbar(), this._editPanel = null, this.overlays.forEach((u) => {
       u.el.style.display = this._overlaysVisible ? "" : "none";
     }), this._requestRender();
   }
@@ -44933,7 +44934,7 @@ const gE = "rules-engine-v2", i2 = "main", ma = class ma extends HTMLElement {
       E && this._viewFits(E) ? (this.camera.position.fromArray(E.pos), this.controls.target.fromArray(E.target), this._toggleLock(E.locked)) : (this._frameModel(), (d = this._ui) == null || d.refreshDock()), this._fitFog(), this.controls.update(), this.scene.add(o), this._modelRoot = o, t && (this._refreshFloorGroup(o), this._lowWalls.setPlan(this._activeDoc() ?? t, this._activeGroup ?? o), this._lowWalls.instrument(o)), this._paintLowWallsBtn(), ((h = e.rendering) == null ? void 0 : h.transparent_background) !== !0 && this._env && this._env.addGround(_, e), ((u = e.rendering) == null ? void 0 : u.light_occlusion) === "top" && this._env && this._env.addOcclusion(this._modelBox), this._batch = new QM(o), t && this._placeFurniture(o, t), t && this._syncPlanPartsAfterLoad && this._scene && (this._syncPlanPartsAfterLoad = !1, this._scene = {
         ...this._scene,
         parts: Xf(o, zf(t), this._scene.parts ?? [], this._planPartLabel)
-      }), this.anchors = Bp(o, this.scene, e, this._modelSpan), this._ovPosPool.clear(), this._applyAttachPositions(), this._buildParts(), this._applyFloorLights(), this._createOverlays(), this._overlaysVisible = !(e.tap_to_toggle ?? !1), this._applySettingsLive(), this.modelLoaded = !0, this._hass && (qs(this.anchors, this._hass, e, this._modelSpan), this._lightEmissive.sync(o, this.anchors, this._hass), this._updateOverlayStates(), this._evaluatePassiveConditions(), (p = this._env) == null || p.updateFromHass(this._hass), this._evaluateRules()), this._sim || (this._sim = new Bv(
+      }), o.updateMatrixWorld(!0), this.anchors = Bp(o, this.scene, e, this._modelSpan), this._ovPosPool.clear(), this._applyAttachPositions(), this._buildParts(), this._applyAttachPositions(), this._applyFloorLights(), this._createOverlays(), this._overlaysVisible = !(e.tap_to_toggle ?? !1), this._applySettingsLive(), this.modelLoaded = !0, this._hass && (qs(this.anchors, this._hass, e, this._modelSpan), this._lightEmissive.sync(o, this.anchors, this._hass), this._updateOverlayStates(), this._evaluatePassiveConditions(), (p = this._env) == null || p.updateFromHass(this._hass), this._evaluateRules()), this._sim || (this._sim = new Bv(
         null,
         null,
         this._env,
