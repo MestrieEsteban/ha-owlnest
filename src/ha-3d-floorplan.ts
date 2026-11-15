@@ -6,6 +6,7 @@ import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import type { Hass, CardConfig, AnchorEntry, SavedView, EditableAnchor, OwlnestScene, OwlnestPart } from './types';
 import { syncLights, stepTransitions } from './lights';
+import { rankLightBudgetEntries } from './light-budget';
 import {
   LightEmissiveController, resolveLightHosts, lightHostsCenter, hostIsOpeningPiece,
 } from './light-emissive';
@@ -653,6 +654,10 @@ export class Ha3dFloorplan extends HTMLElement {
     const next = [...all.filter((a) => !a.id.startsWith(prefix)), ...mine];
     if (JSON.stringify(next) === JSON.stringify(all)) return;
     this._scene = { ...this._scene, anchors: next };
+    // En édition l'éditeur a sa propre Map : rebuild depuis la scène effacerait
+    // une ancre neuve pas encore (ou tout juste) enregistrée — d'où « marche
+    // dans le flotante, disparaît après ». La sortie d'édition reconstruit.
+    if (this._editMode) return;
     this._rebuildAnchors();
   }
 
@@ -1013,9 +1018,11 @@ export class Ha3dFloorplan extends HTMLElement {
         );
         // Preserve scene settings (env, rendering, language configured from Config tab)
         sceneData.settings = this._scene?.settings;
+        // Avant l'await : un _syncLampAnchors (meubles async) qui lirait encore
+        // l'ancienne scène effacerait les ancres neuves au _rebuildAnchors.
+        this._scene = sceneData;
 
         await saveScene(this._hass, sceneId, sceneData);
-        this._scene = sceneData;
       } while (this._saveQueued);
 
       this._showToast(t('toastSceneSaved'));
@@ -2342,20 +2349,39 @@ export class Ha3dFloorplan extends HTMLElement {
    * Les lampes d'un étage masqué s'éteignent (par leur intensité, voir
    * stepTransitions) ; et seules les premières, dans la limite du profil
    * qualité, éclairent vraiment la scène. Leur nombre ne change plus jamais
-   * en cours de route : pas de recompilation des shaders.
+   * en cours de route hors édition : pas de recompilation des shaders.
+   *
+   * À appeler *après* syncLights : sinon targetIntensity est encore 0 et le
+   * classement traite tout comme éteint (les anciennes ancres, en tête de
+   * Map, monopolisent owlnestReal).
+   *
+   * En édition on ignore le budget : une ancre neuve doit s'éclairer tout de
+   * suite, sinon on croit à un bug (les anciennes monopolisaient les places).
    */
   private _applyFloorLights() {
     const k = this._floorIndex();
-    // Les lampes de l'étage regardé d'abord : ce sont elles qu'on voit.
-    const lamps = [...this.anchors.values()].filter((a) => a.light);
-    lamps.sort((a, b) => Number(this._floorOfY(a.worldPos.y) !== k) - Number(this._floorOfY(b.worldPos.y) !== k));
-    const budget = this._quality.anchorLights;
-    lamps.forEach((a, i) => {
-      const light = a.light!;
-      light.userData.owlnestFloorOff = this._floorOfY(a.worldPos.y) > k;
-      light.userData.owlnestReal = i < budget;
-      light.visible = i < budget;
+    const lamps = [...this.anchors.values()].filter((a) => castLightsOf(a).length > 0);
+    const ranked = rankLightBudgetEntries(lamps, {
+      floorOf: (a) => this._floorOfY(a.worldPos.y),
+      activeFloor: k,
+      isOn: (a) => a.targetIntensity > 0.01,
     });
+    // Édition : tout prévisualiser. Sinon : plafond du profil qualité.
+    const budget = this._editMode ? ranked.length : this._quality.anchorLights;
+    ranked.forEach((a, i) => {
+      const real = i < budget;
+      const floorOff = this._floorOfY(a.worldPos.y) > k;
+      for (const light of castLightsOf(a)) {
+        light.userData.owlnestFloorOff = floorOff;
+        light.userData.owlnestReal = real;
+        light.visible = real;
+      }
+    });
+    if (!this._editMode && ranked.length > budget) {
+      console.debug(
+        `[Owlnest] ${ranked.length - budget} light anchor(s) beyond quality budget (${budget})`,
+      );
+    }
     this._dirty = true;
   }
 
@@ -2861,6 +2887,8 @@ export class Ha3dFloorplan extends HTMLElement {
     // Les marqueurs et gizmos de l'éditeur modifient la géométrie de la scène.
     this._requestShadowUpdate();
     this._editMode = true;
+    // Hors budget en vue normale : en édition on les montre toutes pour régler.
+    this._applyFloorLights();
     // L'éditeur clique, survole et désigne les objets d'origine.
     this._batch?.unmerge();
     this._closeWallMenu();
@@ -3211,7 +3239,7 @@ export class Ha3dFloorplan extends HTMLElement {
     this._previewingRule = false;
     this._requestShadowUpdate();
     this._editMode = false;
-    this._mergeStatic();
+    // Fusion après rebuild + markHosts (voir _refreshLightHosts plus bas).
     this._ui?.setHidden(false);
     this._setFullscreen('edit', false);
     const welcome = this.overlayContainer?.querySelector<HTMLElement>('#owlnest-demo-banner');
@@ -3229,14 +3257,21 @@ export class Ha3dFloorplan extends HTMLElement {
     this._panelGizmo?.setHover(null);
     if (this.controls) this.controls.enabled = !this._locked;
 
-    // Flush pending auto-save immediately
+    // Aligner _scene sur l'éditeur tout de suite (même sans timer pending) :
+    // un _syncLampAnchors async ne doit pas reconstruire depuis une scène périmée.
+    const editable = new Map<string, EditableAnchor>(this._editor!.anchors as Map<string, EditableAnchor>);
+    const sceneId = this._getActiveSceneId();
+    if (sceneId && this._scene) {
+      const sceneData = buildSceneFromEditor(sceneId, editable, this._scene, this._config!);
+      sceneData.settings = this._scene.settings;
+      this._scene = sceneData;
+    }
     if (this._editPanel?.hasPendingSave) {
       this._editPanel.cancelPendingSave();
       this._saveScene();
     }
     this._editPanel?.markSaved();
 
-    const editable = new Map<string, EditableAnchor>(this._editor!.anchors as Map<string, EditableAnchor>);
     this._editor!.deactivate();
     this._lampAnchorsToPlan(editable);
 
@@ -3248,16 +3283,18 @@ export class Ha3dFloorplan extends HTMLElement {
       editable, this.scene!, this._effectiveConfig, this._modelSpan, this._modelRoot,
     );
     this._applyAttachPositions();
-    this._applyFloorLights();
 
     if (this.controls) this.controls.enabled = !this._locked;
 
     this._createOverlays();
     if (this._hass) {
-      syncLights(this.anchors, this._hass, this._config, this._modelSpan);
-      this._lightEmissive.sync(this._modelRoot, this.anchors, this._hass);
+      // syncLights avant le budget : sinon isOn est toujours faux et les
+      // ancres neuves (en fin de Map) restent hors owlnestReal.
+      syncLights(this.anchors, this._hass, this._effectiveConfig, this._modelSpan);
       this._updateOverlayStates();
     }
+    this._applyFloorLights();
+    this._refreshLightHosts();
 
     this._editPanel?.hideToolbar();
     this._editPanel = null;
@@ -3428,6 +3465,8 @@ export class Ha3dFloorplan extends HTMLElement {
       syncLights(this.anchors, this._hass, this._effectiveConfig, this._modelSpan);
       this._lightEmissive.sync(this._modelRoot, this.anchors, this._hass);
     }
+    // Ancre créée / reconstruite : lui donner sa place (en édition = toutes).
+    this._applyFloorLights();
   }
 
   /** Remarque les hôtes émissifs et refusionne le batch (hors édition). */
@@ -5358,7 +5397,6 @@ export class Ha3dFloorplan extends HTMLElement {
       this._buildParts();
       // Les ouvrants peuvent avoir déplacé un hôte : recalcule attach / mesh.
       this._applyAttachPositions();
-      this._applyFloorLights();
       this._createOverlays();
 
       this._overlaysVisible = !(ec.tap_to_toggle ?? false);
@@ -5380,6 +5418,10 @@ export class Ha3dFloorplan extends HTMLElement {
         // chargement serait consommee par l'instantane initial.
         this._evaluateRules();
       }
+      // Après syncLights : le budget privilégie les lampes allumées. Avant, tout
+      // était « off » et seules les premières ancres (souvent les anciennes)
+      // gardaient owlnestReal.
+      this._applyFloorLights();
 
       // Instantiate SimulationPanel (embedded in Weather tab — no HUD button/expand needed)
       if (!this._sim) {
