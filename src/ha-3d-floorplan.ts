@@ -12,8 +12,15 @@ import {
 import { hasLightHost } from './light-fields';
 import {
   loadGLTF, detectAnchors, buildAnchorsFromEditable, rebuildAnchorLight, lightTargetPos,
-  syncMeshLightPoses,
+  syncMeshLightPoses, type LoadTiming,
 } from './model';
+import { RenderTweaks, tweaksKey, estimateGpuBytes } from './optimize/render-apply';
+import { protectFromScene, protectionMatcher } from './optimize/protected';
+import { BENCH_DURATION_MS, frameStats, orbitAngle, benchJson } from './optimize/bench';
+import type { BenchResult } from './optimize/types';
+import { OptimizerPanel, type OptimizerHost } from './card/optimizer-panel';
+import { backupModel, deleteModel, listModels, optimizedSlug } from './optimize/backups';
+import { uploadGlb } from './import/upload';
 import { modelErrorKey, httpStatus } from './model-errors';
 import { AnchorOverlay, SensorOverlay, ClusterOverlay, LabelOverlay, CameraOverlay, pulseOverlay, placeAt } from './overlay';
 import type { ClusterItem } from './overlay';
@@ -66,7 +73,7 @@ import { EffectController, effectTargetKey } from './effects-runtime';
 import { clipInfos } from './parts-clips';
 import { stampOrder, nodeOrder, resetOrder, rankOf, locatePart } from './model-outline';
 import { PartHighlight, type HighlightSource, type HighlightSlot } from './part-highlight';
-import { modelScale } from './scale';
+import { modelScale, unitsPerMeter } from './scale';
 import { partIndexOf, partFrame, guessPart, verticalAxis } from './parts';
 import { separateCoplanarSlabs } from './coplanar';
 import { StaticBatch } from './batching';
@@ -270,6 +277,23 @@ export class Ha3dFloorplan extends HTMLElement {
   private _backendRetryAt = 0;
   /** Objets immobiles fusionnés par matériau, hors édition : voir batching.ts. */
   private _batch: StaticBatch | null = null;
+  /** Optimisations de rendu (catégorie A) posées sur le modèle chargé : voir optimize/render-apply.ts. */
+  private _tweaks: RenderTweaks | null = null;
+  private _tweaksKey = '';
+  /** Modèle en aperçu dans l'optimiseur (URL blob), affiché à la place de celui de la scène. */
+  private _previewUrl: string | null = null;
+  /** Ce que la scène désigne et que le modèle chargé n'a pas (pièces, effets). */
+  private _missingRefs: { parts: string[]; effects: string[] } = { parts: [], effects: [] };
+  /** Durées du dernier chargement, pour le compteur de performances. */
+  private _loadPhases: (LoadTiming & { start: number; mergeMs: number; firstFrameMs?: number; compileMs?: number }) | null = null;
+  /** Banc d'essai en cours : un tour de caméra, plafond d'images levé. */
+  private _bench: {
+    start: number; last: number; frames: number[]; calls: number; triangles: number;
+    target: THREE.Vector3; radius: number; phi: number; theta: number;
+    saved: { pos: THREE.Vector3; target: THREE.Vector3 };
+    label?: string; resolve: (r: BenchResult) => void;
+  } | null = null;
+  private _optimizer: OptimizerPanel | null = null;
   /** Éditeur de plan ouvert, et sauvegarde différée de ses retouches. */
   private _planEditor: PlanEditor | null = null;
   private _planSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1646,29 +1670,38 @@ export class Ha3dFloorplan extends HTMLElement {
 
     const progress = new ImportProgress(this.overlayContainer);
     try {
-      const { url, stats } = await importModel(
+      const wasDemo = this._isDemo;
+      const base = this._scene ?? emptyScene(sceneId);
+      const { url, stats, originalUrl, optimization, rendering, optimizeError } = await importModel(
         this._hass, source,
         (stage, f) => progress.stage(stage, f),
         (estimate) => progress.askLighten(estimate),
+        // Un GLB déposé peut partir optimisé ; la démo n'a rien à protéger.
+        { choose: (bytes) => progress.askOptimize(bytes), protect: protectFromScene(wasDemo ? null : base) },
       );
       progress.stage('loading');
 
-      const wasDemo = this._isDemo;
       const oldSpan = this.modelLoaded ? this._modelSpan : 0;
-      const base = this._scene ?? emptyScene(sceneId);
       // Les distances d'orbite sont absolues : réglées pour un modèle en
       // mètres, elles enfermeraient la caméra dans un modèle en centimètres.
       const orbit = base.settings?.orbit;
-      const settings = base.settings && {
+      const settings = (base.settings || rendering) && {
         ...base.settings,
         orbit: orbit?.max_polar_angle !== undefined ? { max_polar_angle: orbit.max_polar_angle } : undefined,
+        ...(rendering ? { rendering: { ...(base.settings?.rendering ?? {}), ...rendering } } : {}),
+      };
+      // Un modèle neuf : l'original et l'historique de l'ancien ne le concernent plus.
+      const models: Partial<OwlnestScene> = {
+        model_url: url,
+        model_original_url: originalUrl,
+        optimizations: optimization ? [optimization] : undefined,
       };
       // Démo : tout jeter (ancres / ouvrants / effets d'une maison étrangère).
       // Maison réelle : garder la config — cibles absentes sont signalées, pas
       // fatales ; un effet pourri ne doit plus empêcher le nouveau GLB de charger.
       let scene: OwlnestScene = wasDemo
-        ? { ...base, settings, model_url: url, anchors: [], camera_views: [], parts: [], effects: [] }
-        : { ...base, settings, model_url: url };
+        ? { ...base, settings, ...models, anchors: [], camera_views: [], parts: [], effects: [] }
+        : { ...base, settings, ...models };
       await saveScene(this._hass, sceneId, scene);
       this._scene = scene;
       // Le point de vue enregistré visait l'ancien modèle.
@@ -1685,7 +1718,9 @@ export class Ha3dFloorplan extends HTMLElement {
         await saveScene(this._hass, sceneId, scene);
       }
 
-      if (stats?.missingTextures.length) {
+      if (optimizeError) {
+        this._showToast(t('optError').replace('{msg}', optimizeError), true);
+      } else if (stats?.missingTextures.length) {
         this._showToast(`${t('importMissingTextures')} (${stats.missingTextures.length})`, true);
       } else {
         this._showToast(t('importDone'));
@@ -3080,6 +3115,9 @@ export class Ha3dFloorplan extends HTMLElement {
     this._editPanel.getSetupSteps = () => this._setupSteps();
     if (this._plan) this._editPanel.onAutoPlace = () => this._autoPlace();
     this._editPanel.onPerfHud = (on) => this._setPerfHud(on);
+    this._editPanel.onBenchmark = () => this.runBenchmark('settings');
+    this._editPanel.onBenchExport = (r) => this.downloadBench(r);
+    if (!this._plan && !this._isDemo && this._scene?.model_url) this._editPanel.onOptimize = () => this._openOptimizer();
     this._editPanel.onPreviewTilt = (id, on) => { this._parts.previewTilt(id, on); this._requestRender(); };
     if (this._plan) {
       // L'apparence de la façade : sur le plan, pour tous les étages.
@@ -4203,7 +4241,13 @@ export class Ha3dFloorplan extends HTMLElement {
       () => this._requestRender(),
     );
 
-    this._env.onSunMoved = () => { this._requestShadowUpdate(); this._updateWindowGlow(); };
+    this._env.onSunMoved = () => {
+      // Ombre du soleil figée (optimiseur, A4) : le ciel suit, l'ombre garde
+      // la position du chargement, et la tablette une passe de moins par pas.
+      if (this._effectiveConfig.rendering?.sun_shadow_static && this.modelLoaded) this._requestRender();
+      else this._requestShadowUpdate();
+      this._updateWindowGlow();
+    };
 
     // Set initial sky position
     if (useSky) {
@@ -4228,7 +4272,8 @@ export class Ha3dFloorplan extends HTMLElement {
     const now = performance.now();
     // Plafond d'images par seconde. La tolérance évite de rater une frame quand
     // le pas de l'écran ne divise pas exactement l'intervalle visé.
-    const minInterval = 1000 / this._quality.maxFps - 0.5;
+    // Le banc d'essai lève le plafond : il mesure ce que l'appareil peut donner.
+    const minInterval = this._bench ? 0 : 1000 / this._quality.maxFps - 0.5;
     if (now - this._lastTime < minInterval) return;
 
     const dt = Math.min((now - this._lastTime) / 1000, 0.1);
@@ -4264,6 +4309,7 @@ export class Ha3dFloorplan extends HTMLElement {
 
     const moved = this.controls?.update() ?? false;
     if (moved) this._dirty = true;
+    if (this._bench) this._benchStep(now);
     // Murs bas : ceux devant le point visé descendent, en douceur.
     if (this._plan && this._modelRoot && this.camera && this.controls
       && this._lowWalls.update(this.camera, this.controls.target, this._activeGroup ?? this._modelRoot, dt)) {
@@ -4320,11 +4366,213 @@ export class Ha3dFloorplan extends HTMLElement {
       this.renderer.shadowMap.needsUpdate = true;
       this._shadowsDirty = false;
     }
-    const t0 = this._perfEl ? performance.now() : 0;
+    const firstFrame = this._loadPhases && this._loadPhases.firstFrameMs === undefined && this.modelLoaded;
+    const t0 = this._perfEl || firstFrame ? performance.now() : 0;
     this.renderer?.render(this.scene!, this.camera!);
+    if (this._bench && this.renderer) {
+      this._bench.calls += this.renderer.info.render.calls;
+      this._bench.triangles += this.renderer.info.render.triangles;
+    }
+    if (firstFrame && this._loadPhases) {
+      // La première image compile les shaders du modèle : c'est l'essentiel de son temps.
+      const end = performance.now();
+      this._loadPhases.compileMs = end - t0;
+      this._loadPhases.firstFrameMs = end - this._loadPhases.start;
+    }
     if (this._stale.length) this._disposeStale();
     if (this._perfEl) { const end = performance.now(); this._perfTick(end - t0, end - loopT0, now); }
   };
+
+  // ── Banc d'essai ─────────────────────────────────────────────────────
+
+  /**
+   * Un tour complet autour de la maison, toujours le même : centre du modèle,
+   * distance d'une envergure, 55° sous la verticale. Rend la moyenne d'images
+   * par seconde et le 95e centile du temps d'image (voir optimize/bench.ts).
+   */
+  runBenchmark(label?: string): Promise<BenchResult> {
+    if (!this.camera || !this.controls || !this.modelLoaded) return Promise.reject(new Error('No model loaded'));
+    if (this._bench) return Promise.reject(new Error('Benchmark already running'));
+    this._camAnimTo = null;
+    return new Promise((resolve) => {
+      const now = performance.now();
+      this._bench = {
+        start: now, last: now, frames: [], calls: 0, triangles: 0,
+        target: this._modelBox.getCenter(new THREE.Vector3()),
+        radius: this._modelSpan, phi: (55 * Math.PI) / 180, theta: Math.PI / 4,
+        saved: { pos: this.camera!.position.clone(), target: this.controls!.target.clone() },
+        label, resolve,
+      };
+      this.controls!.enabled = false;
+      this._requestRender();
+    });
+  }
+
+  private _benchStep(now: number) {
+    const b = this._bench!, cam = this.camera!, controls = this.controls!;
+    const t = now - b.start;
+    if (t > 0) b.frames.push(now - b.last);
+    b.last = now;
+    if (t >= BENCH_DURATION_MS) { this._benchFinish(); return; }
+    const offset = new THREE.Vector3().setFromSphericalCoords(b.radius, b.phi, b.theta + orbitAngle(t));
+    cam.position.copy(b.target).add(offset);
+    controls.target.copy(b.target);
+    cam.lookAt(b.target);
+    this._dirty = true;
+  }
+
+  private _benchFinish() {
+    const b = this._bench!, r = this.renderer!;
+    this._bench = null;
+    // La première image du tour attendait encore l'ancienne : on l'écarte.
+    const frames = b.frames.slice(1);
+    const stats = frameStats(frames);
+    const size = r.getDrawingBufferSize(new THREE.Vector2());
+    const gpu = estimateGpuBytes(this.scene!);
+    const n = Math.max(1, b.frames.length);
+    this.camera!.position.copy(b.saved.pos);
+    this.controls!.target.copy(b.saved.target);
+    this.controls!.enabled = true;
+    this.controls!.update();
+    this._requestRender();
+    b.resolve({
+      durationMs: BENCH_DURATION_MS, frames: frames.length, ...stats,
+      calls: Math.round(b.calls / n), triangles: Math.round(b.triangles / n),
+      gpuMB: (gpu.geometry + gpu.textures) / (1024 * 1024),
+      pixelRatio: r.getPixelRatio(), width: size.x, height: size.y, uncapped: true,
+      label: b.label, date: new Date().toISOString(),
+      model: this._previewUrl ? 'preview' : this._effectiveConfig.model_url,
+      userAgent: navigator.userAgent,
+    });
+  }
+
+  // ── Optimiseur de modèle ─────────────────────────────────────────────
+
+  /** Ouvre l'optimiseur, hors de l'éditeur : un aperçu recharge la scène, ce qui fermerait celui-ci. */
+  private _openOptimizer() {
+    if (!this.overlayContainer) return;
+    if (this._editMode) this._exitEditMode();
+    void this._optimizer?.close();
+    this._optimizer = new OptimizerPanel(this.overlayContainer, this._optimizerHost(), () => { this._optimizer = null; });
+  }
+
+  private _optimizerHost(): OptimizerHost {
+    const hass = () => {
+      if (!this._hass) throw new Error('Home Assistant not connected');
+      return this._hass;
+    };
+    return {
+      hass: () => this._hass,
+      isAdmin: () => this._hass?.user?.is_admin !== false && !this._backendDown,
+      scene: () => this._scene,
+      modelUrl: () => (this._plan || this._isDemo || !this._scene?.model_url ? null : this._scene.model_url),
+      rendering: () => ({ ...(this._effectiveConfig.rendering ?? {}) }),
+      setRendering: (patch) => this._patchRendering(patch),
+      saveScene: async () => {
+        const id = this._getActiveSceneId();
+        if (!id || !this._scene) throw new Error(t('importNoScene'));
+        await saveScene(hass(), id, this._scene);
+      },
+      estimateContext: () => {
+        const base = profileFor(this._effectiveConfig.rendering?.quality);
+        return { dpr: devicePixelRatio, maxPixelRatio: base.maxPixelRatio, maxFps: base.maxFps };
+      },
+      fetchModel: async () => {
+        const url = this._scene?.model_url;
+        if (!url) throw new Error(t('optNoModel'));
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.arrayBuffer();
+      },
+      bench: (label) => this.runBenchmark(label),
+      downloadBench: (r) => this.downloadBench(r),
+      preview: (glb) => this._previewModel(glb),
+      saveModel: (glb, record, keepCopy, onProgress) => this._saveOptimizedModel(glb, record, keepCopy, onProgress),
+      restoreOriginal: () => this._restoreOriginalModel(),
+      listModels: () => listModels(hass()),
+      deleteModel: (url) => deleteModel(hass(), url),
+      toast: (msg, err) => this._showToast(msg, err),
+    };
+  }
+
+  /** Champs de rendu posés en direct, comme depuis le menu Réglages, sans enregistrer. */
+  private _patchRendering(patch: Partial<NonNullable<CardConfig['rendering']>>) {
+    if (!this._scene) return;
+    const cur = this._scene.settings ?? {};
+    this._scene = { ...this._scene, settings: { ...cur, rendering: { ...(cur.rendering ?? {}), ...patch } } };
+    this._applySettingsLive();
+    this._requestRender();
+  }
+
+  /** Affiche un modèle optimisé en mémoire, ou revient à celui de la scène. */
+  private async _previewModel(glb: ArrayBuffer | null) {
+    if (this._previewUrl) URL.revokeObjectURL(this._previewUrl);
+    this._previewUrl = glb ? URL.createObjectURL(new Blob([glb], { type: 'model/gltf-binary' })) : null;
+    await this._loadModel();
+    if (!this.modelLoaded) throw new Error(t('modelErrLoad'));
+    const lights: string[] = [];
+    const root = this._modelRoot;
+    for (const a of this._scene?.anchors ?? []) {
+      if (root && hasLightHost(a) && !resolveLightHosts(root, a).length) lights.push(a.label ?? a.entity);
+    }
+    return { parts: [...this._missingRefs.parts], effects: [...this._missingRefs.effects], lights };
+  }
+
+  /**
+   * Enregistre la version optimisée sous un nom neuf ; l'original reste où il
+   * est, et la scène retient son adresse (la première fois seulement : on
+   * revient toujours au vrai original, pas à une optimisation intermédiaire).
+   */
+  private async _saveOptimizedModel(
+    glb: ArrayBuffer,
+    record: Pick<import('./types').OptimizationRecord, 'ops' | 'stats_before' | 'stats_after' | 'bench_before' | 'bench_after'>,
+    keepCopy: boolean,
+    onProgress: (f: number) => void,
+  ): Promise<string> {
+    const hass = this._hass, id = this._getActiveSceneId(), scene = this._scene;
+    if (!hass || !id || !scene?.model_url) throw new Error(t('importNoScene'));
+    const from = scene.model_url;
+    const original = scene.model_original_url ?? (keepCopy ? (await backupModel(hass, from)).url : from);
+    const url = await uploadGlb(hass as unknown as UploadHass, optimizedSlug(from), new Uint8Array(glb), onProgress);
+    const next: OwlnestScene = {
+      ...scene,
+      model_url: url,
+      model_original_url: original,
+      optimizations: [...(scene.optimizations ?? []), { ...record, url, from, date: new Date().toISOString() }],
+    };
+    await saveScene(hass, id, next);
+    this._scene = next;
+    if (this._previewUrl) URL.revokeObjectURL(this._previewUrl);
+    this._previewUrl = null;
+    await this._loadModel();
+    return url;
+  }
+
+  /** Revient à l'original ; la version optimisée reste dans la liste des fichiers. */
+  private async _restoreOriginalModel() {
+    const hass = this._hass, id = this._getActiveSceneId(), scene = this._scene;
+    if (!hass || !id || !scene?.model_original_url) return;
+    const { model_original_url: original, ...rest } = scene;
+    const next: OwlnestScene = {
+      ...rest,
+      model_url: original,
+      optimizations: [...(scene.optimizations ?? []), { ops: [], url: original, from: scene.model_url ?? '', date: new Date().toISOString(), restored: true }],
+    };
+    await saveScene(hass, id, next);
+    this._scene = next;
+    if (this._previewUrl) URL.revokeObjectURL(this._previewUrl);
+    this._previewUrl = null;
+    await this._loadModel();
+  }
+
+  /** Télécharge des mesures du banc d'essai en JSON. */
+  downloadBench(results: BenchResult[]) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([benchJson(results)], { type: 'application/json' }));
+    a.download = `owlnest-bench-${new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 12)}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
 
   // ── Compteur de performances (diagnostic, sur l'appareil) ───────────────
 
@@ -4370,11 +4618,20 @@ export class Ha3dFloorplan extends HTMLElement {
     const total = s.frames ? s.total / s.frames : 0;
     const size = r.getDrawingBufferSize(new THREE.Vector2());
     const lights = [...this.anchors.values()].filter((a) => a.light?.visible).length;
+    const mem = r.info.memory;
+    const gpu = this.scene ? estimateGpuBytes(this.scene) : { geometry: 0, textures: 0 };
+    const mb = (b: number) => (b / (1024 * 1024)).toFixed(0);
+    const sec = (ms: number | undefined) => (ms === undefined ? '…' : (ms / 1000).toFixed(1));
+    const lp = this._loadPhases;
     el.textContent = [
       `${fps.toFixed(0)} img/s · image ${total.toFixed(1)} ms (pire ${s.worst.toFixed(1)}) · dont rendu ${avg.toFixed(1)}`,
       `${r.info.render.calls} appels · ${(r.info.render.triangles / 1000).toFixed(1)} k triangles`,
+      `GPU ~${mb(gpu.geometry + gpu.textures)} Mo (géom. ${mb(gpu.geometry)} · tex. ${mb(gpu.textures)}) · ${mem.geometries} géom. · ${mem.textures} tex. · ${r.info.programs?.length ?? 0} shaders`,
+      ...(lp ? [
+        `chargement ${sec(lp.firstFrameMs)} s : réseau ${sec(lp.fetchMs)} (${mb(lp.bytes)} Mo) · décodage ${sec(lp.decodeMs)} · fusion ${sec(lp.mergeMs)} · shaders + 1re image ${sec(lp.compileMs)}`,
+      ] : []),
       `${size.x}×${size.y} · DPR ${r.getPixelRatio()} · ${this.overlays.size} pastilles · ${lights} lumières`,
-      `qualité ${resolveLevel(this._effectiveConfig?.rendering?.quality)} · ombres ${r.shadowMap.enabled ? 'oui' : 'non'}`,
+      `qualité ${resolveLevel(this._effectiveConfig?.rendering?.quality)} · ombres ${r.shadowMap.enabled ? 'oui' : 'non'} · max ${this._quality.maxFps} img/s`,
       detectionLabel(),
     ].join('\n');
     // Au repos la carte ne dessine rien : on relit quand même une fois par seconde.
@@ -4504,15 +4761,21 @@ export class Ha3dFloorplan extends HTMLElement {
       this.renderer.shadowMap.enabled = rl.shadows;
       this.renderer.shadowMap.needsUpdate = true;
       // Propagate shadow cast/receive — skip glass/transparent materials
+      const noShadow = this._tweaks?.noShadow;
       this.scene.traverse((obj) => {
         if ((obj as THREE.Mesh).isMesh) {
-          const mat = (obj as THREE.Mesh).material as THREE.Material;
+          const mesh = obj as THREE.Mesh;
+          const mat = mesh.material as THREE.Material;
           const isGlass = mat.transparent && mat.opacity < 0.65;
-          (obj as THREE.Mesh).castShadow = rl.shadows! && !isGlass;
-          (obj as THREE.Mesh).receiveShadow = rl.shadows!;
+          // Un regroupement garde l'ombre de ses originaux ; l'optimiseur (A3)
+          // en a privé certains.
+          const allowed = mesh.userData.owlnestBatch ? mesh.userData.owlnestCast !== false : !noShadow?.has(mesh);
+          mesh.castShadow = rl.shadows! && !isGlass && allowed;
+          mesh.receiveShadow = rl.shadows!;
         }
       });
     }
+    this._applyRenderTweaks();
     // Qualité — tout s'applique à chaud sauf l'antialias, figé à la création du
     // contexte WebGL et donc effectif au prochain chargement de la page.
     const qKey = qualityKey(ec);
@@ -4556,6 +4819,18 @@ export class Ha3dFloorplan extends HTMLElement {
 
       this._cardRenderer?.setTextureWidth(q.cardTextureWidth);
       this._env?.rebuildWeather();
+    }
+    // Plafonds de l'optimiseur (A6) : hors du niveau de qualité, relus à chaque réglage.
+    {
+      const q = qualityFromConfig(ec);
+      this._quality = q;
+      const ratio = Math.min(devicePixelRatio, q.maxPixelRatio);
+      if (this.renderer.getPixelRatio() !== ratio) this.renderer.setPixelRatio(ratio);
+      // Lumières d'ancres sans ombre (A3, « soleil seul » ou « aucune »).
+      const policy = rl.shadow_policy ?? 'all';
+      const anchorShadows = q.anchorShadows && policy !== 'sun-only' && policy !== 'none';
+      this.anchors.forEach(({ light }) => { if (light && !(light instanceof THREE.RectAreaLight)) light.castShadow = anchorShadows; });
+      if (this._sunLight) this._sunLight.castShadow = rl.shadows !== false && policy !== 'none';
     }
 
     // Ground color
@@ -5052,9 +5327,39 @@ export class Ha3dFloorplan extends HTMLElement {
   /** Un glissé est en cours dans le plan : la maison est reconstruite souvent, on ne regroupe rien. */
   private _planPreviewing = false;
 
+  /**
+   * Pose les optimisations de rendu de la scène (catégorie A) quand elles
+   * changent. Elles touchent les ombres et la visibilité des originaux : on
+   * défait la fusion d'abord, on la refait ensuite.
+   */
+  private _applyRenderTweaks() {
+    const root = this._modelRoot;
+    if (!root || !this._batch || !this.renderer) return;
+    const r = this._effectiveConfig.rendering;
+    const key = `${tweaksKey(r)}|${r?.spatial_batching ?? 0}`;
+    if (key === this._tweaksKey) return;
+    this._tweaksKey = key;
+    this._tweaks ??= new RenderTweaks(root);
+    const merged = this._batch.merged;
+    this._batch.unmerge();
+    const match = protectionMatcher(protectFromScene(this._scene));
+    const n = this._tweaks.apply(r, {
+      span: this._modelSpan,
+      maxAnisotropy: this.renderer.capabilities.getMaxAnisotropy(),
+      isProtected: (o) => !!(o.userData.owlnestPartId || o.userData.owlnestAnimated || o.userData.owlnestLive || o.userData.owlnestHelper)
+        || match(o.userData.name as string | undefined, o.name) !== null,
+    });
+    this._batch.cell = (r?.spatial_batching ?? 0) * unitsPerMeter(this._modelSpan);
+    if (merged) this._mergeStatic();
+    if (n) console.debug(`[Owlnest] render optimizations: ${n} object(s) adjusted`);
+    this._requestShadowUpdate();
+  }
+
   private _mergeStatic() {
     if (!this._batch || this._editMode || this._planPreviewing) return;
+    const m0 = performance.now();
     const n = this._batch.merge();
+    if (this._loadPhases && !this._loadPhases.mergeMs) this._loadPhases.mergeMs = performance.now() - m0;
     // Les regroupements neufs portent les murs : leur matière et leur ombre suivent les murs bas.
     if (this._modelRoot) this._lowWalls.instrument(this._modelRoot);
     if (n) {
@@ -5093,11 +5398,13 @@ export class Ha3dFloorplan extends HTMLElement {
     // Les calques de surlignage ne doivent pas entrer dans une boîte d'ouvrant.
     this._highlight.clear();
     this._parts.dispose(root);
+    this._missingRefs.parts = [];
     if (configs.length === 0) { this._applyHighlight(); return; }
 
     // Déduite du modèle entier, pas de chaque pièce : voir verticalAxis().
     this._parts.setVertical(verticalAxis(this._modelBox));
     const { missing } = this._parts.build(root, configs);
+    this._missingRefs.parts = missing.map((m) => m.label || m.entity);
     if (missing.length) {
       console.warn(
         `[Owlnest] ${missing.length} opening(s) not found in the model:`,
@@ -5115,8 +5422,10 @@ export class Ha3dFloorplan extends HTMLElement {
     const configs = Array.isArray(this._scene?.effects) ? this._scene!.effects! : [];
     if (!this._modelRoot) return;
     this._effects.dispose();
+    this._missingRefs.effects = [];
     if (configs.length === 0) { this._applyHighlight(); return; }
     const { missing } = this._effects.build(this._modelRoot, configs);
+    this._missingRefs.effects = missing.map((m) => m.label || m.entity);
     if (missing.length) {
       console.warn(
         `[Owlnest] ${missing.length} effect(s) not found in the model:`,
@@ -5163,6 +5472,9 @@ export class Ha3dFloorplan extends HTMLElement {
     if (this._editMode) this._exitEditMode();
     this._batch?.unmerge();
     this._batch = null;
+    this._tweaks?.restore();
+    this._tweaks = null;
+    this._tweaksKey = '';
     this._highlight.clear();
     this._lightEmissive.dispose();
     this._parts.dispose(this._modelRoot ?? undefined);
@@ -5244,11 +5556,13 @@ export class Ha3dFloorplan extends HTMLElement {
     try {
       if (plan) {
         this._restoreFloor();
+        this._loadPhases = null;
         const house = buildHouse(plan, this._floorIndex());
         model = house.root;
         groundBox = house.groundBox;
       } else {
-        model = await loadGLTF(ec.model_url!);
+        this._loadPhases = { start: performance.now(), bytes: 0, fetchMs: 0, decodeMs: 0, mergeMs: 0 };
+        model = await loadGLTF(this._previewUrl ?? ec.model_url!, this._loadPhases);
       }
     } catch (err) {
       console.error('[Owlnest] model load failed:', err);
@@ -5336,6 +5650,10 @@ export class Ha3dFloorplan extends HTMLElement {
       }
 
       this._batch = new StaticBatch(model);
+      // Avant la première fusion : les ombres et objets cachés y entrent tels quels.
+      this._tweaks = new RenderTweaks(model);
+      this._tweaksKey = '';
+      this._applyRenderTweaks();
       if (plan) this._placeFurniture(model, plan);
       if (plan && this._syncPlanPartsAfterLoad && this._scene) {
         this._syncPlanPartsAfterLoad = false;

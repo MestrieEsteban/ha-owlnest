@@ -15,8 +15,13 @@ import {
 import type { SimplifyFn } from './obj-to-glb';
 import { planImport, modelSlug, type DroppedFile } from './plan';
 import { uploadGlb, type UploadHass } from './upload';
+import type { OptimizationRecord, RenderingConfig } from '../types';
+import { modelOps, presetSelection, renderingFromSelection, type PresetName } from '../optimize/catalog';
+import { OptimizerClient } from '../optimize/client';
+import { originalSlug } from '../optimize/backups';
+import type { ProtectSpec } from '../optimize/types';
 
-export type ImportStage = 'reading' | 'lightening' | 'converting' | 'uploading';
+export type ImportStage = 'reading' | 'lightening' | 'converting' | 'uploading' | 'optimizing';
 
 export class ImportError extends Error {
   constructor(readonly reason: 'empty' | 'gltf-text' | 'no-model') {
@@ -28,6 +33,19 @@ export interface ImportResult {
   url: string;
   /** Absent pour un GLB déposé tel quel. */
   stats?: ImportStats;
+  /** GLB optimisé à l'import : l'original envoyé tel quel, et ce qui a été fait. */
+  originalUrl?: string;
+  optimization?: OptimizationRecord;
+  /** Les réglages de rendu du préréglage choisi, à poser sur la scène. */
+  rendering?: Partial<RenderingConfig>;
+  /** L'optimisation a échoué : l'original est importé seul. */
+  optimizeError?: string;
+}
+
+/** Optimiser un GLB déposé : le préréglage choisi (ou `null`), et ce que la scène protège. */
+export interface ImportOptimize {
+  choose(fileBytes: number): Promise<PresetName | null>;
+  protect: ProtectSpec;
 }
 
 // ── Lecture ────────────────────────────────────────────────────────────────
@@ -106,6 +124,8 @@ export async function importModel(
    * choix de l'utilisateur ; absent, rien n'est réduit.
    */
   chooseLighten?: (offer: LightenOffer) => Promise<boolean>,
+  /** Propose d'optimiser un GLB déposé ; absent, il part tel quel. */
+  optimize?: ImportOptimize,
 ): Promise<ImportResult> {
   onStage('reading');
   await nextFrame();
@@ -115,6 +135,8 @@ export async function importModel(
   let glb: Uint8Array;
   let stats: ImportStats | undefined;
   if (plan.kind === 'glb') {
+    const preset = optimize ? await optimize.choose(plan.glb.byteLength) : null;
+    if (preset) return importOptimized(hass, plan.name, plan.glb, preset, optimize!.protect, onStage);
     glb = plan.glb;
   } else {
     const decoder = new TextDecoder();
@@ -158,4 +180,37 @@ export async function importModel(
   onStage('uploading', 0);
   const url = await uploadGlb(hass, modelSlug(plan.name), glb, (f) => onStage('uploading', f));
   return { url, stats };
+}
+
+/**
+ * Un GLB optimisé à l'import. L'original part d'abord, sous son propre nom :
+ * s'il arrive malheur ensuite, il est déjà sur le serveur, et c'est lui que
+ * la scène affichera.
+ */
+async function importOptimized(
+  hass: UploadHass, name: string, glb: Uint8Array, preset: PresetName, protect: ProtectSpec,
+  onStage: (stage: ImportStage, fraction?: number) => void,
+): Promise<ImportResult> {
+  onStage('uploading', 0);
+  const originalUrl = await uploadGlb(hass, originalSlug(name), glb, (f) => onStage('uploading', f));
+  const sel = presetSelection(preset);
+  const ops = modelOps(sel);
+  const client = new OptimizerClient();
+  try {
+    onStage('optimizing');
+    const before = await client.analyze(glb.slice().buffer, protect);
+    const out = await client.optimize(ops, protect);
+    onStage('uploading', 0);
+    const url = await uploadGlb(hass, modelSlug(`${name.slice(0, 36)}-opt`), new Uint8Array(out.glb), (f) => onStage('uploading', f));
+    return {
+      url, originalUrl,
+      optimization: { ops, url, from: originalUrl, date: new Date().toISOString(), stats_before: before.stats, stats_after: out.report.stats },
+      rendering: renderingFromSelection(sel),
+    };
+  } catch (err) {
+    console.warn('[Owlnest] import optimization failed, original kept:', err);
+    return { url: originalUrl, optimizeError: err instanceof Error ? err.message : String(err) };
+  } finally {
+    client.dispose();
+  }
 }

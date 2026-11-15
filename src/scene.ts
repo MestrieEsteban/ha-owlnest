@@ -350,5 +350,8 @@ export function buildSceneFromEditor(
     // Comme parts : l'éditeur d'ancres ne touche pas aux effets, il faut les
     // reporter sinon un déplacement d'ancre les efface de la scène.
     effects: current?.effects ?? [],
+    // L'original d'un modèle optimisé : le perdre ici, c'est ne plus pouvoir y revenir.
+    ...(current?.model_original_url ? { model_original_url: current.model_original_url } : {}),
+    ...(current?.optimizations?.length ? { optimizations: current.optimizations } : {}),
   };
 }

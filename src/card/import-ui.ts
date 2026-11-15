@@ -6,14 +6,17 @@
  * qu'une conversion de quelques secondes ne ressemble jamais à un plantage.
  */
 
-import { t } from '../i18n';
+import { t, type StringKey } from '../i18n';
 import { droppedEntries, type ImportStage } from '../import/drop';
 import { MAX_TEXTURE, HEAVY_PLAN, type LightenOffer } from '../import/lighten';
+import type { PresetName } from '../optimize/catalog';
 
 const FONT = 'font-family:var(--primary-font-family,sans-serif)';
 
 /** Dernier choix d'allègement, repris au prochain import. */
 const LIGHTEN_KEY = 'owlnest_lighten';
+/** Dernier choix d'optimisation d'un GLB déposé. */
+const OPTIMIZE_KEY = 'owlnest_import_optimize';
 
 /** Ce qu'accepte le sélecteur : l'export Sweet Home 3D en vrac, un zip ou un GLB. */
 const ACCEPT = '.sh3d,.glb,.obj,.mtl,.zip,.jpg,.jpeg,.png';
@@ -143,6 +146,7 @@ export class ImportProgress {
       lightening: 'importLightening',
       converting: 'importConverting',
       uploading: 'importUploading',
+      optimizing: 'importOptimizing',
       loading: 'importLoading',
     } as const;
     const pct = fraction === undefined ? '' : ` ${Math.round(fraction * 100)} %`;
@@ -218,6 +222,48 @@ export class ImportProgress {
         this.bar.parentElement!.style.display = '';
         resolve(check.checked);
       });
+    });
+  }
+
+  /**
+   * Propose d'optimiser un GLB déposé, et attend la réponse. Le bouton mis en
+   * avant reprend le dernier choix.
+   */
+  askOptimize(fileBytes: number): Promise<PresetName | null> {
+    let last: string | null = null;
+    try { last = localStorage.getItem(OPTIMIZE_KEY); } catch { /* stockage bloqué */ }
+    const box = document.createElement('div');
+    box.style.cssText = 'font-size:11.5px;color:#cbd5e1;line-height:1.5;';
+    const title = document.createElement('div');
+    title.style.cssText = 'font-size:12.5px;font-weight:700;color:#7dd3fc;margin-bottom:6px;';
+    title.textContent = `${t('importOptimizeTitle')} (${(fileBytes / 1048576).toFixed(0)} MB)`;
+    const why = document.createElement('div');
+    why.style.cssText = 'font-size:10.5px;color:#94a3b8;margin-bottom:12px;';
+    why.textContent = t('importOptimizeHint');
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;';
+    box.append(title, why, row);
+    this.label.style.display = 'none';
+    this.bar.parentElement!.style.display = 'none';
+    this.el.appendChild(box);
+    return new Promise((resolve) => {
+      const choices: [string, StringKey, PresetName | null][] = [
+        ['none', 'importOptimizeNone', null], ['safe', 'importOptimizeSafe', 'safe'], ['balanced', 'importOptimizeBalanced', 'balanced'],
+      ];
+      for (const [id, key, preset] of choices) {
+        const b = document.createElement('button');
+        b.textContent = t(key);
+        const on = (last ?? 'safe') === id;
+        b.style.cssText = `background:${on ? 'rgba(125,209,252,0.2)' : 'rgba(255,255,255,0.06)'};border:1px solid ${on ? 'rgba(125,209,252,0.45)' : 'rgba(255,255,255,0.14)'};border-radius:7px;color:${on ? '#7dd3fc' : '#cbd5e1'};padding:6px 10px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;`;
+        b.addEventListener('click', () => {
+          try { localStorage.setItem(OPTIMIZE_KEY, id); } catch { /* stockage bloqué */ }
+          box.remove();
+          this.label.style.display = '';
+          this.bar.parentElement!.style.display = '';
+          resolve(preset);
+        });
+        row.appendChild(b);
+      }
     });
   }
 

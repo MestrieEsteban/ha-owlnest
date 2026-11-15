@@ -29,3 +29,13 @@ export const REFERENCE_SPAN = 12;
 export function modelScale(span?: number): number {
   return span && span > 0 ? span / REFERENCE_SPAN : 1;
 }
+
+/**
+ * Unités par mètre, devinées à l'envergure : un réglage en mètres (taille des
+ * cellules de l'optimiseur) se convertit ainsi sur un modèle en centimètres.
+ */
+export function unitsPerMeter(span: number): number {
+  if (span > 30000) return 1000;
+  if (span > 300) return 100;
+  return 1;
+}

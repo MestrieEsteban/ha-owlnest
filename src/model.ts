@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import type { AnchorEntry, AnchorConfig, CardConfig, EditableAnchor, LightStyle } from './types';
 import { qualityFromConfig } from './quality';
 import { lightScale } from './lights';
@@ -43,6 +44,9 @@ function getGLTFLoader(): GLTFLoader {
   draco.preload();
   const loader = new GLTFLoader();
   loader.setDRACOLoader(draco);
+  // Meshopt : une vingtaine de Ko dans la carte, et un décodage bien plus
+  // rapide que Draco sur une tablette (voir l'optimiseur, B3).
+  loader.setMeshoptDecoder(MeshoptDecoder);
   sharedDraco = draco;
   sharedGltf = loader;
   return loader;
@@ -55,26 +59,43 @@ export function disposeModelLoaders(): void {
   sharedGltf = null;
 }
 
-function fetchGLTF(url: string): Promise<THREE.Group> {
-  const loader = getGLTFLoader();
-  return new Promise<{ scene: THREE.Group; animations: THREE.AnimationClip[] }>((resolve, reject) =>
-    loader.load(url, resolve as (g: unknown) => void, undefined, reject),
-  ).then((gltf) => {
-    // Les animations voyagent avec la scène : les ouvrants les y retrouvent.
-    gltf.scene.animations = gltf.animations;
-    return gltf.scene;
-  });
+/** Durées du dernier chargement, pour le HUD de performance. */
+export interface LoadTiming {
+  bytes: number;
+  /** Téléchargement (ou lecture du cache). */
+  fetchMs: number;
+  /** Analyse du glTF : décodage Draco/meshopt et images compris. */
+  decodeMs: number;
 }
 
-export async function loadGLTF(url: string): Promise<THREE.Group> {
+async function fetchGLTF(url: string, timing?: LoadTiming): Promise<THREE.Group> {
+  const loader = getGLTFLoader();
+  const t0 = performance.now();
+  // Le téléchargement à part du décodage : le HUD distingue les deux temps.
+  // FileLoader lève la même HttpError que GLTFLoader.load (voir model-errors).
+  const file = new THREE.FileLoader().setResponseType('arraybuffer');
+  const buf = await file.loadAsync(url) as ArrayBuffer;
+  const t1 = performance.now();
+  const gltf = await loader.parseAsync(buf, THREE.LoaderUtils.extractUrlBase(url));
+  if (timing) {
+    timing.bytes = buf.byteLength;
+    timing.fetchMs = t1 - t0;
+    timing.decodeMs = performance.now() - t1;
+  }
+  // Les animations voyagent avec la scène : les ouvrants les y retrouvent.
+  gltf.scene.animations = gltf.animations;
+  return gltf.scene;
+}
+
+export async function loadGLTF(url: string, timing?: LoadTiming): Promise<THREE.Group> {
   try {
-    return await fetchGLTF(url);
+    return await fetchGLTF(url, timing);
   } catch (err) {
     if (!shouldRetryUncached(err)) throw err;
 
     // Un 404 peut venir du cache du navigateur et non du serveur : voir
     // `shouldRetryUncached`. Une URL que le cache ne connaît pas tranche.
-    const model = await fetchGLTF(bustCache(url)).catch(() => {
+    const model = await fetchGLTF(bustCache(url), timing).catch(() => {
       // Le fichier est bien absent : c'est l'erreur d'origine qui décrit
       // l'échec, pas celle de la tentative anti-cache.
       throw err;
@@ -87,6 +108,12 @@ export async function loadGLTF(url: string): Promise<THREE.Group> {
     );
     return model;
   }
+}
+
+/** Une lumière d'ancre projette-t-elle une ombre : le profil, sauf si l'optimiseur (A3) la réserve au soleil. */
+function anchorCastsShadow(config: CardConfig): boolean {
+  const policy = config.rendering?.shadow_policy;
+  return qualityFromConfig(config).anchorShadows && policy !== 'sun-only' && policy !== 'none';
 }
 
 /** Compute light target position from anchor world pos and optional direction vector */
@@ -121,7 +148,7 @@ export function makeLight(
     const light = new THREE.SpotLight(0xffffff, 0, dist * 1.5, angle, penumbra, decay);
     light.position.copy(pos);
     light.visible = false;
-    light.castShadow = q.anchorShadows;
+    light.castShadow = anchorCastsShadow(config);
     light.shadow.mapSize.set(q.anchorShadowMap, q.anchorShadowMap);
     light.shadow.camera.near = Math.max(dist * 0.01, 0.01);
     light.shadow.camera.far = dist * 1.5;
@@ -140,7 +167,7 @@ export function makeLight(
   const light = new THREE.PointLight(0xffffff, 0, dist, decay);
   light.position.copy(pos);
   light.visible = false;
-  light.castShadow = q.anchorShadows;
+  light.castShadow = anchorCastsShadow(config);
   light.shadow.mapSize.set(q.anchorShadowMap, q.anchorShadowMap);
   light.shadow.camera.near = Math.max(dist * 0.01, 0.01);
   light.shadow.camera.far = dist;

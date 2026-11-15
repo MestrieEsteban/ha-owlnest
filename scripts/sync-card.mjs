@@ -9,13 +9,15 @@
  * lit le contenu du dépôt au tag, il doit l'y trouver.
  */
 import { copyFileSync, mkdirSync, statSync } from 'node:fs';
-import { dirname } from 'node:path';
 
-const SRC = 'dist/ha-3d-floorplan.js';
-const DEST = 'custom_components/owlnest/frontend/ha-3d-floorplan.js';
+const DIR = 'custom_components/owlnest/frontend';
 
-mkdirSync(dirname(DEST), { recursive: true });
-copyFileSync(SRC, DEST);
+// L'optimiseur (worker à part, chargé à la demande) voyage avec la carte.
+const FILES = ['ha-3d-floorplan.js', 'owlnest-optimizer.js'];
 
-const kb = (statSync(DEST).size / 1024).toFixed(0);
-console.log(`📦 Carte copiée dans l'intégration : ${DEST} (${kb} Ko)`);
+mkdirSync(DIR, { recursive: true });
+for (const file of FILES) {
+  copyFileSync(`dist/${file}`, `${DIR}/${file}`);
+  const kb = (statSync(`${DIR}/${file}`).size / 1024).toFixed(0);
+  console.log(`📦 Copié dans l'intégration : ${DIR}/${file} (${kb} Ko)`);
+}
