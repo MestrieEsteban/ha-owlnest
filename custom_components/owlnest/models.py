@@ -17,6 +17,8 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shutil
+from datetime import datetime
 from pathlib import Path
 
 from aiohttp import web
@@ -44,7 +46,80 @@ def models_dir(hass: HomeAssistant) -> Path:
 
 def valid_name(name: str) -> bool:
     """A bare slug: no path, no extension, nothing to escape the folder with."""
-    return bool(_NAME.match(name or ""))
+    return bool(_NAME.fullmatch(name or ""))
+
+
+def name_from_url(url: str) -> str | None:
+    """The slug behind ``/owlnest_models/<slug>.glb``, or None for any other URL.
+
+    Strict on purpose: the result names a file we may copy or delete.
+    """
+    path = re.split(r"[?#]", url or "", maxsplit=1)[0]
+    prefix, suffix = f"{URL_BASE}/", ".glb"
+    if not path.startswith(prefix) or not path.endswith(suffix):
+        return None
+    name = path[len(prefix):-len(suffix)]
+    return name if valid_name(name) else None
+
+
+def is_local_url(url: str) -> bool:
+    """A file in ``config/www``: the user's own, never copied, moved or deleted."""
+    return (url or "").startswith("/local/")
+
+
+def backup_name(name: str, now: datetime) -> str:
+    """``<name>-orig-<stamp>``, the name cut short so the result stays a valid slug."""
+    suffix = f"-orig-{now.strftime('%Y%m%d%H%M%S')}"
+    return name[: 64 - len(suffix)] + suffix
+
+
+def list_models(folder: Path) -> list[dict]:
+    """Published models in the folder, newest first; uploads in progress are skipped."""
+    models = []
+    for path in folder.glob("*.glb"):
+        if not path.is_file() or not valid_name(path.stem):
+            continue
+        st = path.stat()
+        models.append(
+            {
+                "name": path.stem,
+                "url": f"{URL_BASE}/{path.name}",
+                "size": st.st_size,
+                "modified": st.st_mtime,
+            }
+        )
+    models.sort(key=lambda m: m["modified"], reverse=True)
+    return models
+
+
+def copy_model(folder: Path, name: str, dest_name: str) -> int:
+    """Copy a model under a new name; never overwrites, never exposes a partial file."""
+    if not valid_name(name) or not valid_name(dest_name):
+        raise ValueError("Invalid model name")
+    src = folder / f"{name}.glb"
+    dest = folder / f"{dest_name}.glb"
+    if not src.is_file():
+        raise FileNotFoundError(src)
+    if dest.exists():
+        raise FileExistsError(dest)
+    part = folder / f"{dest_name}.glb.part"
+    try:
+        shutil.copyfile(src, part)
+        os.replace(part, dest)
+    except BaseException:
+        part.unlink(missing_ok=True)
+        raise
+    return dest.stat().st_size
+
+
+def delete_model(folder: Path, name: str) -> bool:
+    if not valid_name(name):
+        raise ValueError("Invalid model name")
+    try:
+        (folder / f"{name}.glb").unlink()
+    except FileNotFoundError:
+        return False
+    return True
 
 
 def _write_chunk(part: Path, offset: int, data: bytes) -> int:
@@ -99,13 +174,17 @@ class OwlnestUploadView(HomeAssistantView):
         if offset + len(data) > MAX_BYTES:
             return self.json_message("Model too large", 413)
 
+        final = self._folder / f"{name}.glb"
+        # A scene may point at the existing file: an upload never replaces it.
+        if offset == 0 and await hass.async_add_executor_job(final.exists):
+            return self.json_message("Model already exists", 409)
+
         part = self._folder / f"{name}.glb.part"
         size = await hass.async_add_executor_job(_write_chunk, part, offset, data)
 
         if request.query.get("final") != "1":
             return self.json({"received": size})
 
-        final = self._folder / f"{name}.glb"
         await hass.async_add_executor_job(_publish, part, final)
         _LOGGER.info("Owlnest: model %s imported (%.1f MB)", final.name, size / 1048576)
         return self.json({"url": f"{URL_BASE}/{final.name}", "size": size})

@@ -379,6 +379,11 @@ export class EditPanel {
   partFloor?: (part: OwlnestPart) => string | null;
   /** Montre ou cache le compteur de performances de la carte. */
   onPerfHud?: (on: boolean) => void;
+  /** Ouvre l'optimiseur de modèle (absent sans modèle importé). */
+  onOptimize?: () => void;
+  /** Lance le banc d'essai (un tour de caméra de 10 s), et en exporte le résultat. */
+  onBenchmark?: () => Promise<import('../optimize/types').BenchResult>;
+  onBenchExport?: (results: import('../optimize/types').BenchResult[]) => void;
 
   /** Bascule (ou redresse) un oscillo-battant, pour l'essayer depuis son formulaire. */
   onPreviewTilt?: (id: string, on: boolean) => void;
@@ -2503,6 +2508,55 @@ export class EditPanel {
         try { localStorage.setItem('owlnest_perf_hud', v ? '1' : '0'); } catch { /* stockage bloqué */ }
         this.onPerfHud?.(v);
       });
+
+      // Banc d'essai et optimiseur : de quoi mesurer, puis alléger.
+      const tools = document.createElement('div');
+      tools.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 6px;';
+      const result = document.createElement('div');
+      result.style.cssText = 'font-size:11.5px;color:var(--ow-muted);margin:0 0 8px;line-height:1.5;font-variant-numeric:tabular-nums;';
+      // Les rappels sont posés par la carte après la construction : lus au clic.
+      {
+        const bench = document.createElement('button');
+        bench.type = 'button';
+        bench.className = 'ow-btn ow-small';
+        bench.textContent = t('cfgBench');
+        bench.title = t('helpBench');
+        bench.addEventListener('click', async () => {
+          if (!this.onBenchmark) return;
+          bench.disabled = true;
+          result.textContent = t('optBenchRunning');
+          try {
+            const r = await this.onBenchmark!();
+            result.textContent = t('benchDone')
+              .replace('{fps}', r.avgFps.toFixed(1)).replace('{p95}', r.p95FrameMs.toFixed(1))
+              .replace('{calls}', String(r.calls)).replace('{gpu}', r.gpuMB.toFixed(0));
+            const exp = document.createElement('button');
+            exp.type = 'button';
+            exp.className = 'ow-btn ow-ghost ow-small';
+            exp.textContent = t('optBenchExport');
+            exp.addEventListener('click', () => this.onBenchExport?.([r]));
+            result.append(' ', exp);
+          } catch (err) {
+            result.textContent = String(err instanceof Error ? err.message : err);
+          } finally {
+            bench.disabled = false;
+          }
+        });
+        tools.appendChild(bench);
+      }
+      {
+        const opt = document.createElement('button');
+        opt.type = 'button';
+        opt.className = 'ow-btn ow-primary ow-small';
+        opt.textContent = t('cfgOptimize');
+        opt.title = t('helpOptimize');
+        opt.addEventListener('click', () => {
+          if (this.onOptimize) this.onOptimize();
+          else result.textContent = t('optNoModel');
+        });
+        tools.appendChild(opt);
+      }
+      root.append(tools, result);
     }
 
     // ── Language ──────────────────────────────────────────────────────

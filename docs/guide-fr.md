@@ -451,6 +451,10 @@ Tous les paramètres de rendu se configurent dans l'onglet **Config** de l'édit
 
 Le sol est configurable en couleur et en échelle via `ground_color` et `ground_scale`.
 
+### Performances
+
+L'affichage des performances, le banc d'essai et l'optimiseur de modèle (et ses réglages de rendu) sont décrits dans [Performance and model optimizer](performance.md) (en anglais).
+
 ---
 
 ## Raccourcis clavier (mode édition)

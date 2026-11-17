@@ -14,8 +14,67 @@ from homeassistant.components.websocket_api import (
     websocket_command,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
+from .models import (
+    URL_BASE,
+    backup_name,
+    copy_model,
+    delete_model,
+    is_local_url,
+    list_models,
+    models_dir,
+    name_from_url,
+)
 from .storage import OwlnestStorage
+
+_MODEL_KEYS = ("model_url", "model_original_url")
+
+
+def _used_by(storage: OwlnestStorage) -> dict[str, list[str]]:
+    """Map each model URL to the scene_ids that still point at it.
+
+    Looks at ``model_url`` and ``model_original_url`` on the scene and in its
+    settings. Scene ids are sorted; a URL appears once even if both keys match.
+    """
+    by_url: dict[str, list[str]] = {}
+    for scene_id in storage.list_scenes():
+        scene = storage.get_scene(scene_id) or {}
+        found: set[str] = set()
+        for holder in (scene, scene.get("settings")):
+            if not isinstance(holder, dict):
+                continue
+            for key in _MODEL_KEYS:
+                value = holder.get(key)
+                if isinstance(value, str) and value:
+                    found.add(value)
+        for url in found:
+            by_url.setdefault(url, []).append(scene_id)
+    for ids in by_url.values():
+        ids.sort()
+    return by_url
+
+
+def _urls_in_use(storage: OwlnestStorage) -> set[str]:
+    """Model URLs any stored scene still points at (top level or in its settings)."""
+    return set(_used_by(storage))
+
+
+def _same_model(url: str, used: set[str]) -> bool:
+    """Whether ``url`` names a model in ``used``, ignoring any ``?query`` on either side."""
+    name = name_from_url(url)
+    return url in used or (name is not None and any(name_from_url(u) == name for u in used))
+
+
+def _scenes_for_model(name: str, url: str, used_by: dict[str, list[str]]) -> list[str]:
+    """Scene ids that reference this model, matching bare path or slug (``name_from_url``)."""
+    scenes: set[str] = set()
+    bare = (url or "").split("?", 1)[0]
+    for u, ids in used_by.items():
+        u_bare = u.split("?", 1)[0]
+        if u_bare == bare or name_from_url(u) == name:
+            scenes.update(ids)
+    return sorted(scenes)
 
 
 def async_setup_websocket(hass: HomeAssistant, storage: OwlnestStorage) -> None:
@@ -78,7 +137,73 @@ def async_setup_websocket(hass: HomeAssistant, storage: OwlnestStorage) -> None:
             _LOGGER.exception("delete_scene failed")
             connection.send_error(msg["id"], "delete_failed", str(exc))
 
-    for handler in (handle_list_scenes, handle_load_scene, handle_save_scene, handle_delete_scene):
+    @websocket_command({vol.Required("type"): "owlnest/list_models"})
+    @async_response
+    async def handle_list_models(hass: HomeAssistant, connection: ActiveConnection, msg: dict) -> None:
+        try:
+            s = _get_storage()
+            if s is None:
+                connection.send_error(msg["id"], "not_ready", "Storage not initialized"); return
+            models = await hass.async_add_executor_job(list_models, models_dir(hass))
+            used = _used_by(s)
+            for m in models:
+                m["scenes"] = _scenes_for_model(m["name"], m["url"], used)
+            connection.send_result(
+                msg["id"],
+                {"models": models, "in_use": sorted(used), "used_by": used},
+            )
+        except Exception as exc:
+            _LOGGER.exception("list_models failed")
+            connection.send_error(msg["id"], "list_failed", str(exc))
+
+    @websocket_command({vol.Required("type"): "owlnest/backup_model", vol.Required("url"): str})
+    @async_response
+    async def handle_backup_model(hass: HomeAssistant, connection: ActiveConnection, msg: dict) -> None:
+        try:
+            if not connection.user.is_admin:
+                connection.send_error(msg["id"], "unauthorized", "Administrator rights are required"); return
+            url = msg["url"]
+            # The original under /local stays where the user put it; the card only records its URL.
+            if is_local_url(url):
+                connection.send_result(msg["id"], {"url": url, "copied": False}); return
+            name = name_from_url(url)
+            if name is None:
+                connection.send_error(msg["id"], "invalid_url", f"Not an Owlnest model URL: {url}"); return
+            dest = backup_name(name, dt_util.now())
+            try:
+                size = await hass.async_add_executor_job(copy_model, models_dir(hass), name, dest)
+            except FileNotFoundError:
+                connection.send_error(msg["id"], "not_found", f"Model '{name}' not found"); return
+            connection.send_result(msg["id"], {"url": f"{URL_BASE}/{dest}.glb", "copied": True, "size": size})
+        except Exception as exc:
+            _LOGGER.exception("backup_model failed")
+            connection.send_error(msg["id"], "backup_failed", str(exc))
+
+    @websocket_command({vol.Required("type"): "owlnest/delete_model", vol.Required("url"): str})
+    @async_response
+    async def handle_delete_model(hass: HomeAssistant, connection: ActiveConnection, msg: dict) -> None:
+        try:
+            if not connection.user.is_admin:
+                connection.send_error(msg["id"], "unauthorized", "Administrator rights are required"); return
+            s = _get_storage()
+            if s is None:
+                connection.send_error(msg["id"], "not_ready", "Storage not initialized"); return
+            url = msg["url"]
+            name = name_from_url(url)
+            if name is None:
+                connection.send_error(msg["id"], "invalid_url", f"Not an Owlnest model URL: {url}"); return
+            if _same_model(url, _urls_in_use(s)):
+                connection.send_error(msg["id"], "in_use", "A scene still uses this model"); return
+            deleted = await hass.async_add_executor_job(delete_model, models_dir(hass), name)
+            connection.send_result(msg["id"], {"deleted": deleted})
+        except Exception as exc:
+            _LOGGER.exception("delete_model failed")
+            connection.send_error(msg["id"], "delete_failed", str(exc))
+
+    for handler in (
+        handle_list_scenes, handle_load_scene, handle_save_scene, handle_delete_scene,
+        handle_list_models, handle_backup_model, handle_delete_model,
+    ):
         try:
             async_register_command(hass, handler)
         except ValueError:

@@ -70,6 +70,11 @@ const ENTRIES = [
   'src/plan/house.ts',
   'src/entities/format.ts',
   'src/scene-file.ts',
+  'src/optimize/protected.ts',
+  'src/optimize/catalog.ts',
+  'src/optimize/bench.ts',
+  'src/optimize/backups.ts',
+  'src/optimize/render-apply.ts',
 ];
 
 /**

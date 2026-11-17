@@ -325,6 +325,60 @@ export interface RenderingConfig {
    * est lu par le navigateur, par exemple `/local/….hdr` depuis `config/www`.
    */
   reflection_hdri?: string;
+
+  // ── Optimisations de rendu (voir optimize/render-apply.ts) ─────────────
+  // Toutes réversibles : le fichier n'est jamais touché, décocher rend
+  // l'apparence d'origine. Absentes : le comportement historique.
+
+  /** Faux : les matières physiques (vernis, velours, reflets fins) passent en standard. */
+  physical_materials?: boolean;
+  /** Faux : le verre réfractant devient un simple verre translucide, sans passe de rendu en plus. */
+  transmission?: boolean;
+  /**
+   * Qui projette une ombre. `selective` : ni les petits objets ni ceux de
+   * `shadow_exclude` ; `sun-only` : le soleil seul ; `none` : personne.
+   */
+  shadow_policy?: 'all' | 'selective' | 'sun-only' | 'none';
+  /** `selective` : taille sous laquelle un objet ne projette plus, en fraction de l'envergure. Absente : 0,04. */
+  shadow_min_size?: number;
+  /** `selective` : motifs (regex) de noms d'objets qui ne projettent jamais. */
+  shadow_exclude?: string[];
+  /** L'ombre du soleil est calculée au chargement, puis ne suit plus sa course. */
+  sun_shadow_static?: boolean;
+  /**
+   * Regroupement par cellule, en mètres : les objets immobiles se fusionnent
+   * par matière et par cellule, la caméra ne dessine plus que les cellules
+   * qu'elle voit. 0 ou absent : une fusion par matière, pour tout le modèle.
+   */
+  spatial_batching?: number;
+  /** Motifs (regex, sans casse) d'objets masqués à l'affichage, sans les retirer du fichier. */
+  hidden_patterns?: string[];
+  /** Plafond du devicePixelRatio, au-dessus du profil qualité. */
+  max_pixel_ratio?: number;
+  /** Plafond d'images par seconde, au-dessus du profil qualité. */
+  max_fps?: number;
+  /** Côté maximal des textures envoyées à la carte graphique, en pixels. */
+  max_texture_size?: number;
+  /** Filtrage anisotrope des textures (1 : aucun). */
+  texture_anisotropy?: number;
+}
+
+/** Une optimisation du modèle enregistrée dans la scène, pour l'historique. */
+export interface OptimizationRecord {
+  /** Identifiants du catalogue appliqués (`B1`, `C3`…), avec leurs paramètres. */
+  ops: { id: string; params?: Record<string, number | string | boolean> }[];
+  date: string;
+  /** Le modèle optimisé, et celui dont il est parti. */
+  url: string;
+  from: string;
+  stats_before?: import('./optimize/types').ModelStats;
+  stats_after?: import('./optimize/types').ModelStats;
+  bench_before?: import('./optimize/types').BenchResult;
+  bench_after?: import('./optimize/types').BenchResult;
+  /** Retour au modèle d'origine : `url` est alors l'original. */
+  restored?: boolean;
+  /** Choix manuel d'un autre fichier serveur (pas une optimisation). */
+  switched?: boolean;
 }
 
 /** A full Owlnest scene, persisted by the backend integration. */
@@ -618,6 +672,14 @@ export interface OwlnestScene {
   version: number;
   scene_id: string;
   model_url?: string;
+  /**
+   * Le modèle tel qu'importé, avant toute optimisation : une copie gardée sur
+   * le serveur (`/owlnest_models/…-orig-…`), ou l'adresse `/local/…` d'origine,
+   * jamais modifiée. Absent : le modèle n'a jamais été optimisé.
+   */
+  model_original_url?: string;
+  /** Historique des optimisations du modèle, la plus récente en dernier. */
+  optimizations?: OptimizationRecord[];
   anchors: OwlnestAnchor[];
   camera_views: CameraView[];
   cards: import('./cards/types').SceneCard[];

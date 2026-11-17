@@ -451,6 +451,10 @@ All rendering settings are configurable in the editor's **Config** tab.
 
 Ground color and scale are configurable via `ground_color` and `ground_scale`.
 
+### Performance
+
+The performance HUD, the benchmark and the model optimizer (with its rendering settings) are described in [Performance and model optimizer](performance.md).
+
 ---
 
 ## Keyboard shortcuts (edit mode)

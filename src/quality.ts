@@ -168,7 +168,15 @@ export function profileFor(level: QualityLevel | undefined): QualityProfile {
 
 /** Profil applicable à une config de carte (scène fusionnée comprise). */
 export function qualityFromConfig(config: CardConfig | null): QualityProfile {
-  return profileFor(config?.rendering?.quality);
+  const base = profileFor(config?.rendering?.quality);
+  const r = config?.rendering;
+  // Les plafonds de l'optimiseur (A6) priment sur le profil, dans les deux sens.
+  if (!r?.max_pixel_ratio && !r?.max_fps) return base;
+  return {
+    ...base,
+    maxPixelRatio: r.max_pixel_ratio ? Math.max(0.5, r.max_pixel_ratio) : base.maxPixelRatio,
+    maxFps: r.max_fps ? Math.max(10, r.max_fps) : base.maxFps,
+  };
 }
 
 /**

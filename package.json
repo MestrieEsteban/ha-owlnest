@@ -16,13 +16,14 @@
     "dev:ha:restore": "node --env-file=.env --experimental-websocket scripts/ha-dev.mjs --restore",
     "dev:ha:status": "node --env-file=.env --experimental-websocket scripts/ha-dev.mjs --status",
     "dev:ha:clean": "node --env-file=.env --experimental-websocket scripts/ha-dev.mjs --clean",
-    "build": "vite build && node scripts/sync-card.mjs",
+    "build": "vite build && vite build --config vite.optimizer.config.js && node scripts/sync-card.mjs",
     "typecheck": "tsc --noEmit",
     "release": "node scripts/release.mjs",
     "preview": "vite preview",
     "demo": "vite --config vite.demo.config.js",
     "build:demo": "vite build --config vite.demo.config.js",
-    "test": "node scripts/test.mjs"
+    "test": "node scripts/test.mjs",
+    "optimize-glb": "node scripts/optimize-glb.mjs"
   },
   "dependencies": {
     "fflate": "^0.8.3",
@@ -30,7 +31,13 @@
     "three": "^0.169.0"
   },
   "devDependencies": {
+    "@gltf-transform/core": "^4.5.1",
+    "@gltf-transform/extensions": "^4.5.1",
+    "@gltf-transform/functions": "^4.5.1",
+    "@types/node": "^22.20.5",
     "@types/three": "^0.183.1",
+    "draco3dgltf": "^1.5.9",
+    "sharp": "^0.35.5",
     "typescript": "^5.6.0",
     "vite": "^5.4.0"
   }

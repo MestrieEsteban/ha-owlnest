@@ -63,11 +63,43 @@ function look(m: THREE.Material): string {
   ].join('|');
 }
 
-/** Les attributs d'une géométrie, pour ne fusionner que des géométries compatibles. */
+/**
+ * Les attributs d'une géométrie, pour ne fusionner que des géométries
+ * compatibles. Le type n'y entre pas : tout repasse en flottants (`toFloat`).
+ */
 function signature(g: THREE.BufferGeometry): string {
-  const attrs = Object.keys(g.attributes).sort()
-    .map((k) => `${k}:${g.attributes[k].itemSize}:${(g.attributes[k] as THREE.BufferAttribute).normalized ? 'n' : ''}`);
+  const attrs = Object.keys(g.attributes).sort().map((k) => `${k}:${g.attributes[k].itemSize}`);
   return `${attrs.join(',')}|${g.index ? 'i' : 'n'}`;
+}
+
+const COMPONENT = ['getX', 'getY', 'getZ', 'getW'] as const;
+
+/**
+ * Repasse les attributs quantifiés (KHR_mesh_quantization, voir l'optimiseur)
+ * en flottants. Un entier normalisé ne sort pas de [-1, 1] : déplacé dans le
+ * repère de la scène, il serait écrêté, et l'objet écrasé.
+ */
+function toFloat(g: THREE.BufferGeometry): void {
+  for (const [name, attr] of Object.entries(g.attributes)) {
+    const a = attr as THREE.BufferAttribute | THREE.InterleavedBufferAttribute;
+    if (a.array instanceof Float32Array && !a.normalized && !(a as THREE.InterleavedBufferAttribute).isInterleavedBufferAttribute) continue;
+    const size = a.itemSize;
+    const out = new Float32Array(a.count * size);
+    for (let i = 0; i < a.count; i++) {
+      for (let c = 0; c < size; c++) out[i * size + c] = a[COMPONENT[c]](i);
+    }
+    g.setAttribute(name, new THREE.BufferAttribute(out, size));
+  }
+}
+
+const _box = new THREE.Box3();
+const _center = new THREE.Vector3();
+
+/** La cellule d'une maille, au sol : le regroupement spatial (optimiseur, A5). */
+function cellOf(mesh: THREE.Mesh, cell: number): string {
+  if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+  _box.copy(mesh.geometry.boundingBox!).applyMatrix4(mesh.matrixWorld).getCenter(_center);
+  return `|c${Math.floor(_center.x / cell)},${Math.floor(_center.z / cell)}`;
 }
 
 /** Le mur auquel un meuble est adossé, pour les murs bas (voir plan/low-walls.ts). */
@@ -81,6 +113,13 @@ function wallItemOf(o: THREE.Object3D, root: THREE.Object3D): number | undefined
 export class StaticBatch {
   private batches: THREE.Mesh[] = [];
   private hidden: THREE.Mesh[] = [];
+
+  /**
+   * Taille des cellules en unités du modèle, ou 0 : une fusion par matériau et
+   * par cellule plutôt que par matériau pour toute la maison. Plus d'appels au
+   * total, mais la caméra n'en dessine que ce qu'elle voit.
+   */
+  cell = 0;
 
   constructor(private root: THREE.Object3D) {}
 
@@ -99,13 +138,16 @@ export class StaticBatch {
     root.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (!mesh.isMesh || !mesh.visible || (mesh as THREE.SkinnedMesh).isSkinnedMesh) return;
+      // Déjà dessiné d'un seul appel (EXT_mesh_gpu_instancing, voir l'optimiseur).
+      if ((mesh as THREE.InstancedMesh).isInstancedMesh) return;
       if (Array.isArray(mesh.material) || mesh.morphTargetInfluences?.length) return;
       if (isMoving(mesh, root)) return;
       const m = mesh.material as THREE.Material;
       // Un meuble adossé à un mur reçoit le numéro de son mur : il disparaît avec
       // lui dans le shader, sans quitter le regroupement.
       const wall = wallItemOf(mesh, root) !== undefined ? '|w' : '';
-      const key = `${look(m)}|${mesh.castShadow ? 1 : 0}${mesh.receiveShadow ? 1 : 0}|${signature(mesh.geometry)}${wall}`;
+      const cell = this.cell > 0 ? cellOf(mesh, this.cell) : '';
+      const key = `${look(m)}|${mesh.castShadow ? 1 : 0}${mesh.receiveShadow ? 1 : 0}|${signature(mesh.geometry)}${wall}${cell}`;
       const list = groups.get(key);
       if (list) list.push(mesh);
       else groups.set(key, [mesh]);
@@ -130,6 +172,7 @@ export class StaticBatch {
       if (meshes.length < MIN_GROUP) continue;
       const geoms = meshes.map((mesh) => {
         const g = mesh.geometry.clone();
+        toFloat(g);
         g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(toRoot, mesh.matrixWorld));
         const wall = wallItemOf(mesh, root);
         if (wall !== undefined) {
@@ -148,6 +191,8 @@ export class StaticBatch {
       batch.receiveShadow = first.receiveShadow;
       batch.renderOrder = first.renderOrder;
       batch.userData.owlnestBatch = true;
+      // L'ombre choisie pour ses originaux (réglages, optimiseur), rejouée à chaud.
+      batch.userData.owlnestCast = first.castShadow;
       root.add(batch);
       this.batches.push(batch);
       for (const mesh of meshes) {
