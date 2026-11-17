@@ -2347,41 +2347,36 @@ export class Ha3dFloorplan extends HTMLElement {
 
   /**
    * Les lampes d'un étage masqué s'éteignent (par leur intensité, voir
-   * stepTransitions) ; et seules les premières, dans la limite du profil
-   * qualité, éclairent vraiment la scène. Leur nombre ne change plus jamais
-   * en cours de route hors édition : pas de recompilation des shaders.
+   * stepTransitions). Le profil qualité ne garde « réelles » que quelques
+   * lampes, pour ne pas recompiler les shaders à chaque allumage.
    *
-   * À appeler *après* syncLights : sinon targetIntensity est encore 0 et le
-   * classement traite tout comme éteint (les anciennes ancres, en tête de
-   * Map, monopolisent owlnestReal).
-   *
-   * En édition on ignore le budget : une ancre neuve doit s'éclairer tout de
-   * suite, sinon on croit à un bug (les anciennes monopolisaient les places).
+   * Les places vont d'abord aux lampes allumées : sinon, au chargement, une
+   * lampe en fin de liste (souvent la dernière ajoutée) reçoit
+   * `owlnestReal = false` et ne s'allume plus jamais, même en la basculant.
+   * Celles hors budget ne sont pas marquées : si elles s'allument, elles
+   * peuvent quand même éclairer. Ne pas élargir le budget en édition, ça
+   * recompile tout et des objets disparaissent.
    */
   private _applyFloorLights() {
     const k = this._floorIndex();
-    const lamps = [...this.anchors.values()].filter((a) => castLightsOf(a).length > 0);
+    const lamps = [...this.anchors.values()].filter((a) => a.light);
     const ranked = rankLightBudgetEntries(lamps, {
       floorOf: (a) => this._floorOfY(a.worldPos.y),
       activeFloor: k,
       isOn: (a) => a.targetIntensity > 0.01,
     });
-    // Édition : tout prévisualiser. Sinon : plafond du profil qualité.
-    const budget = this._editMode ? ranked.length : this._quality.anchorLights;
+    const budget = this._quality.anchorLights;
     ranked.forEach((a, i) => {
-      const real = i < budget;
-      const floorOff = this._floorOfY(a.worldPos.y) > k;
-      for (const light of castLightsOf(a)) {
-        light.userData.owlnestFloorOff = floorOff;
-        light.userData.owlnestReal = real;
-        light.visible = real;
+      const light = a.light!;
+      light.userData.owlnestFloorOff = this._floorOfY(a.worldPos.y) > k;
+      if (i < budget) {
+        light.userData.owlnestReal = true;
+        light.visible = true;
+      } else {
+        delete light.userData.owlnestReal;
+        light.visible = false;
       }
     });
-    if (!this._editMode && ranked.length > budget) {
-      console.debug(
-        `[Owlnest] ${ranked.length - budget} light anchor(s) beyond quality budget (${budget})`,
-      );
-    }
     this._dirty = true;
   }
 
@@ -2887,8 +2882,6 @@ export class Ha3dFloorplan extends HTMLElement {
     // Les marqueurs et gizmos de l'éditeur modifient la géométrie de la scène.
     this._requestShadowUpdate();
     this._editMode = true;
-    // Hors budget en vue normale : en édition on les montre toutes pour régler.
-    this._applyFloorLights();
     // L'éditeur clique, survole et désigne les objets d'origine.
     this._batch?.unmerge();
     this._closeWallMenu();
@@ -3288,12 +3281,11 @@ export class Ha3dFloorplan extends HTMLElement {
 
     this._createOverlays();
     if (this._hass) {
-      // syncLights avant le budget : sinon isOn est toujours faux et les
-      // ancres neuves (en fin de Map) restent hors owlnestReal.
       syncLights(this.anchors, this._hass, this._effectiveConfig, this._modelSpan);
+      this._lightEmissive.sync(this._modelRoot, this.anchors, this._hass);
       this._updateOverlayStates();
     }
-    this._applyFloorLights();
+    // Pas de _applyFloorLights : les lumières neuves n'ont pas owlnestReal.
     this._refreshLightHosts();
 
     this._editPanel?.hideToolbar();
@@ -3465,8 +3457,6 @@ export class Ha3dFloorplan extends HTMLElement {
       syncLights(this.anchors, this._hass, this._effectiveConfig, this._modelSpan);
       this._lightEmissive.sync(this._modelRoot, this.anchors, this._hass);
     }
-    // Ancre créée / reconstruite : lui donner sa place (en édition = toutes).
-    this._applyFloorLights();
   }
 
   /** Remarque les hôtes émissifs et refusionne le batch (hors édition). */
@@ -5418,9 +5408,7 @@ export class Ha3dFloorplan extends HTMLElement {
         // chargement serait consommee par l'instantane initial.
         this._evaluateRules();
       }
-      // Après syncLights : le budget privilégie les lampes allumées. Avant, tout
-      // était « off » et seules les premières ancres (souvent les anciennes)
-      // gardaient owlnestReal.
+      // Après syncLights : les lampes allumées prennent les places du budget.
       this._applyFloorLights();
 
       // Instantiate SimulationPanel (embedded in Weather tab — no HUD button/expand needed)
