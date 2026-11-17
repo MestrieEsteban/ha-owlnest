@@ -7,7 +7,7 @@ import {
   sumGains, fitWithin, textureGpuBytes,
 } from './catalog.mjs';
 import { frameStats, orbitAngle, benchDelta, BENCH_DURATION_MS } from './bench.mjs';
-import { modelBaseName, optimizedSlug, originalSlug, isOptimizedUrl } from './backups.mjs';
+import { modelBaseName, optimizedSlug, originalSlug, isOptimizedUrl, scenesForModel, modelInUse } from './backups.mjs';
 import { RenderTweaks, tweaksKey, estimateGpuBytes } from './render-apply.mjs';
 import { StaticBatch } from '../batching.mjs';
 
@@ -147,6 +147,20 @@ test('les noms de version gardent le nom lisible du modèle', () => {
   assert.equal(modelBaseName('/local/models/Mi Casa.glb?v=2'), 'Mi Casa');
   assert.ok(isOptimizedUrl('/owlnest_models/casa-v3-opt-20261115102030.glb'));
   assert.ok(!isOptimizedUrl('/local/casa-v3-opt-20261115102030.glb'));
+});
+
+test('scenesForModel ignore ?query et lit used_by ou model.scenes', () => {
+  const url = '/owlnest_models/maison.glb';
+  const list = {
+    models: [{ name: 'maison', url, size: 1, modified: 0, scenes: ['fallback'] }],
+    in_use: [`${url}?v=1`],
+    used_by: { [`${url}?v=2`]: ['salon', 'etage'] },
+  };
+  assert.deepEqual(scenesForModel(list, url), ['etage', 'salon']);
+  assert.ok(modelInUse(list, `${url}?x=1`));
+  assert.deepEqual(scenesForModel({ models: list.models, in_use: [] }, url), ['fallback']);
+  assert.equal(scenesForModel({ models: [], in_use: [] }, url).length, 0);
+  assert.ok(!modelInUse({ models: [], in_use: [] }, url));
 });
 
 // ── Rendu (catégorie A) ────────────────────────────────────────────────────

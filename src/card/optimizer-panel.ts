@@ -24,7 +24,14 @@ import { protectFromScene } from '../optimize/protected';
 import { OptimizerClient, OptimizerUnavailable, lowMemoryRisk } from '../optimize/client';
 import { benchDelta } from '../optimize/bench';
 import type { BenchResult, Category, Gain, ModelReport, ModelStats, OpResult, ParamDef, QualityCost, Selection } from '../optimize/types';
-import type { ServerModel } from '../optimize/backups';
+import { modelInUse, scenesForModel, type ModelListResult } from '../optimize/backups';
+
+/** Options du toast partagé avec la carte (`sticky` = pas d’auto-fermeture). */
+export type ToastOptions = {
+  error?: boolean;
+  sticky?: boolean;
+  title?: string;
+};
 
 /** Ce que le panneau demande à la carte. */
 export interface OptimizerHost {
@@ -33,6 +40,8 @@ export interface OptimizerHost {
   scene(): OwlnestScene | null;
   /** Le modèle enregistré dans la scène (pas l'aperçu), ou `null` sans modèle importé. */
   modelUrl(): string | null;
+  /** Message d'échec du chargement GLB, si la scène est ouverte sans maillage. */
+  modelLoadError?(): string | null;
   rendering(): RenderingConfig;
   /** Pose des champs de rendu, en direct, sans enregistrer. */
   setRendering(patch: Partial<RenderingConfig>): void;
@@ -46,9 +55,12 @@ export interface OptimizerHost {
   saveModel(glb: ArrayBuffer, record: Pick<OptimizationRecord, 'ops' | 'stats_before' | 'stats_after' | 'bench_before' | 'bench_after'>,
     keepCopy: boolean, onProgress: (f: number) => void): Promise<string>;
   restoreOriginal(): Promise<void>;
-  listModels(): Promise<{ models: ServerModel[]; in_use: string[] }>;
+  /** Pose un fichier serveur comme `model_url` de la scène courante, enregistre et recharge. */
+  activateModel(url: string): Promise<void>;
+  listModels(): Promise<ModelListResult>;
   deleteModel(url: string): Promise<boolean>;
-  toast(msg: string, error?: boolean): void;
+  /** `true` = erreur ; objet = options (`sticky`, `title`, …). */
+  toast(msg: string, errorOrOpts?: boolean | ToastOptions): void;
 }
 
 const CSS = `
@@ -81,8 +93,10 @@ const CSS = `
 .ow-opt table { width:100%; border-collapse:collapse; font-size:11.5px; font-variant-numeric:tabular-nums; }
 .ow-opt td, .ow-opt th { padding:3px 4px; text-align:right; border-bottom:1px solid var(--ow-line); }
 .ow-opt td:first-child, .ow-opt th:first-child { text-align:left; color:var(--ow-muted); font-weight:400; }
-.ow-opt .ow-opt-file { display:flex; gap:8px; align-items:center; font-size:11.5px; padding:4px 0; border-bottom:1px solid var(--ow-line); }
-.ow-opt .ow-opt-file span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ow-opt .ow-opt-file { display:flex; gap:6px; align-items:center; flex-wrap:wrap; font-size:11.5px; padding:6px 0; border-bottom:1px solid var(--ow-line); }
+.ow-opt .ow-opt-file > span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ow-opt .ow-opt-file.ow-active > span { font-weight:700; color:var(--ow-acc); }
+.ow-opt .ow-opt-actions { display:flex; gap:4px; flex-wrap:wrap; align-items:center; }
 `;
 
 const COST_COLOR: Record<QualityCost, string> = { none: '#34d399', low: '#a3e635', medium: '#fbbf24', high: '#f87171' };
@@ -146,9 +160,17 @@ export class OptimizerPanel {
   private benches: BenchResult[] = [];
   private busy = '';
   private error = '';
-  private files: { models: ServerModel[]; in_use: string[] } | null = null;
+  private files: ModelListResult | null = null;
+  /** Ouvre la liste des fichiers serveur dès l'ouverture (récupération d'un GLB cassé). */
+  private focusFiles = false;
 
-  constructor(container: HTMLElement, private host: OptimizerHost, private onClose: () => void) {
+  constructor(
+    container: HTMLElement,
+    private host: OptimizerHost,
+    private onClose: () => void,
+    opts?: { focusFiles?: boolean },
+  ) {
+    this.focusFiles = !!opts?.focusFiles;
     this.snapshot = { ...host.rendering() };
     this.sel = selectionFromRendering(this.snapshot);
     this.root = el('div', 'ow-opt');
@@ -165,6 +187,7 @@ export class OptimizerPanel {
     this.root.append(style, head, this.body, this.foot);
     container.appendChild(this.root);
     this.render();
+    if (this.focusFiles) void this.loadFiles();
   }
 
   /** Ferme ; le rendu non enregistré et l'aperçu sont défaits. */
@@ -312,10 +335,26 @@ export class OptimizerPanel {
     const scroll = body.scrollTop;
     body.replaceChildren();
     const url = this.host.modelUrl();
+    const loadErr = this.host.modelLoadError?.() ?? null;
     const r = this.report;
+
+    // GLB cassé : on privilégie la liste Activer plutôt que l'analyse.
+    if (loadErr) {
+      body.append(el('div', 'ow-opt-err', `${loadErr}. ${t('modelErrRecover')}`));
+      if (url) {
+        body.append(el('div', 'ow-opt-muted', decodeURIComponent(url.split('/').pop() ?? url)));
+      } else {
+        body.append(el('div', 'ow-opt-muted', t('optNoModel')));
+      }
+      if (this.host.scene()) body.append(this.renderFiles());
+      this.renderFoot();
+      return;
+    }
 
     if (!url) {
       body.append(el('div', 'ow-opt-muted', t('optNoModel')));
+      // Sans URL active, la liste serveur reste le moyen d'en activer une.
+      if (this.host.scene()) body.append(this.renderFiles());
       this.renderFoot();
       return;
     }
@@ -376,7 +415,9 @@ export class OptimizerPanel {
     if (scene?.optimizations?.length) {
       body.append(el('h5', '', t('optHistory')));
       for (const o of [...scene.optimizations].reverse().slice(0, 6)) {
-        const what = o.restored ? t('optRestored') : o.ops.map((x) => x.id).join(', ');
+        const what = o.restored ? t('optRestored')
+          : o.switched ? t('optSwitched')
+          : o.ops.map((x) => x.id).join(', ');
         body.append(el('div', 'ow-opt-muted', `${o.date.slice(0, 16).replace('T', ' ')} · ${what}`));
       }
     }
@@ -520,15 +561,40 @@ export class OptimizerPanel {
     sum.style.cursor = 'pointer';
     box.append(sum);
     box.addEventListener('toggle', () => { if (box.open && !this.files && !this.busy) void this.loadFiles(); });
+    if (this.focusFiles || this.files) box.open = true;
+    if (this.focusFiles && !this.files && !this.busy) {
+      // Premier rendu : on ouvre tout de suite (récupération d'un modèle cassé).
+      queueMicrotask(() => { if (!this.files && !this.busy) void this.loadFiles(); });
+    }
     if (this.files) {
-      box.open = true;
-      const inUse = new Set(this.files.in_use.map((u) => u.split('?')[0]));
+      const activeBare = (this.host.modelUrl() ?? '').split(/[?#]/)[0];
+      const admin = this.host.isAdmin();
+      const hasScene = !!this.host.scene();
       for (const m of this.files.models) {
         const row = el('div', 'ow-opt-file');
+        const isActive = !!activeBare && m.url.split(/[?#]/)[0] === activeBare;
+        if (isActive) row.classList.add('ow-active');
+        const used = modelInUse(this.files, m.url);
         row.append(el('span', '', m.name), el('small', 'ow-opt-muted', `${fmtMB(m.size / 1048576)} Mo`));
-        if (inUse.has(m.url)) {
-          row.append(el('small', 'ow-opt-muted', t('optInUse')));
-        } else if (this.host.isAdmin()) {
+        if (isActive) row.append(el('small', 'ow-opt-muted', t('optActive')));
+        else if (used) row.append(el('small', 'ow-opt-muted', t('optInUse')));
+
+        const actions = el('div', 'ow-opt-actions');
+        const activate = btn(t('optActivate'), 'ow-btn ow-small');
+        activate.disabled = !!this.busy || isActive || !admin || !hasScene;
+        activate.title = isActive ? t('optActive') : t('optActivate');
+        activate.addEventListener('click', () => void this.activateFile(m.url));
+
+        const download = btn(t('optDownload'), 'ow-btn ow-small');
+        download.disabled = !!this.busy;
+        download.addEventListener('click', () => void this.downloadFile(m.url));
+
+        const info = btn(t('optInfo'), 'ow-btn ow-ghost ow-small');
+        info.disabled = !!this.busy;
+        info.addEventListener('click', () => this.showFileInfo(m.url));
+
+        actions.append(activate, download, info);
+        if (!used && admin) {
           const del = btn(t('optDelete'), 'ow-btn ow-danger ow-small');
           del.disabled = !!this.busy;
           del.addEventListener('click', () => {
@@ -538,12 +604,55 @@ export class OptimizerPanel {
               this.files = await this.host.listModels();
             });
           });
-          row.append(del);
+          actions.append(del);
         }
+        row.append(actions);
         box.append(row);
       }
     }
     return box;
+  }
+
+  private activateFile(url: string) {
+    if (this.preview && !confirm(t('optActivateConfirm'))) return Promise.resolve();
+    return this.run(t('optSaving'), async () => {
+      if (this.preview) { await this.host.preview(null); this.preview = null; }
+      await this.host.activateModel(url);
+      this.report = null;
+      this.client?.dispose();
+      this.client = null;
+      this.benchBefore = this.benchAfter = null;
+      this.files = await this.host.listModels();
+      this.host.toast(t('optActivated'));
+    });
+  }
+
+  private downloadFile(url: string) {
+    return this.run(t('optDownload'), async () => {
+      const name = decodeURIComponent(url.split(/[?#]/)[0].split('/').pop() ?? 'model.glb');
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    });
+  }
+
+  private showFileInfo(url: string) {
+    if (!this.files) return;
+    const bare = url.split(/[?#]/)[0];
+    const name = this.files.models.find((m) => m.url.split(/[?#]/)[0] === bare)?.name
+      ?? decodeURIComponent(bare.split('/').pop() ?? 'model.glb');
+    const scenes = scenesForModel(this.files, url);
+    this.host.toast(
+      scenes.length
+        ? t('optInfoScenes').replace('{list}', scenes.join(', '))
+        : t('optInfoUnused'),
+      { sticky: true, title: name },
+    );
   }
 
   private renderFoot() {
@@ -552,7 +661,8 @@ export class OptimizerPanel {
     if (this.busy) f.append(el('div', 'ow-opt-status ow-opt-muted', this.busy));
     if (this.error) f.append(el('div', 'ow-opt-err', this.error));
     const url = this.host.modelUrl();
-    if (!url) return;
+    // Sans modèle chargeable : la récupération passe par Activer dans la liste.
+    if (!url || this.host.modelLoadError?.()) return;
     const admin = this.host.isAdmin();
     const ops = modelOps(this.sel);
 

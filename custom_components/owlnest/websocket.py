@@ -31,25 +31,50 @@ from .storage import OwlnestStorage
 _MODEL_KEYS = ("model_url", "model_original_url")
 
 
-def _urls_in_use(storage: OwlnestStorage) -> set[str]:
-    """Model URLs any stored scene still points at (top level or in its settings)."""
-    urls: set[str] = set()
+def _used_by(storage: OwlnestStorage) -> dict[str, list[str]]:
+    """Map each model URL to the scene_ids that still point at it.
+
+    Looks at ``model_url`` and ``model_original_url`` on the scene and in its
+    settings. Scene ids are sorted; a URL appears once even if both keys match.
+    """
+    by_url: dict[str, list[str]] = {}
     for scene_id in storage.list_scenes():
         scene = storage.get_scene(scene_id) or {}
+        found: set[str] = set()
         for holder in (scene, scene.get("settings")):
             if not isinstance(holder, dict):
                 continue
             for key in _MODEL_KEYS:
                 value = holder.get(key)
                 if isinstance(value, str) and value:
-                    urls.add(value)
-    return urls
+                    found.add(value)
+        for url in found:
+            by_url.setdefault(url, []).append(scene_id)
+    for ids in by_url.values():
+        ids.sort()
+    return by_url
+
+
+def _urls_in_use(storage: OwlnestStorage) -> set[str]:
+    """Model URLs any stored scene still points at (top level or in its settings)."""
+    return set(_used_by(storage))
 
 
 def _same_model(url: str, used: set[str]) -> bool:
     """Whether ``url`` names a model in ``used``, ignoring any ``?query`` on either side."""
     name = name_from_url(url)
     return url in used or (name is not None and any(name_from_url(u) == name for u in used))
+
+
+def _scenes_for_model(name: str, url: str, used_by: dict[str, list[str]]) -> list[str]:
+    """Scene ids that reference this model, matching bare path or slug (``name_from_url``)."""
+    scenes: set[str] = set()
+    bare = (url or "").split("?", 1)[0]
+    for u, ids in used_by.items():
+        u_bare = u.split("?", 1)[0]
+        if u_bare == bare or name_from_url(u) == name:
+            scenes.update(ids)
+    return sorted(scenes)
 
 
 def async_setup_websocket(hass: HomeAssistant, storage: OwlnestStorage) -> None:
@@ -120,7 +145,13 @@ def async_setup_websocket(hass: HomeAssistant, storage: OwlnestStorage) -> None:
             if s is None:
                 connection.send_error(msg["id"], "not_ready", "Storage not initialized"); return
             models = await hass.async_add_executor_job(list_models, models_dir(hass))
-            connection.send_result(msg["id"], {"models": models, "in_use": sorted(_urls_in_use(s))})
+            used = _used_by(s)
+            for m in models:
+                m["scenes"] = _scenes_for_model(m["name"], m["url"], used)
+            connection.send_result(
+                msg["id"],
+                {"models": models, "in_use": sorted(used), "used_by": used},
+            )
         except Exception as exc:
             _LOGGER.exception("list_models failed")
             connection.send_error(msg["id"], "list_failed", str(exc))

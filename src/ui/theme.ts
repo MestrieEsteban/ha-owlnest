@@ -219,6 +219,14 @@ export const STYLES = `
 .ow-menu-item small { display: block; color: var(--ow-muted); font-size: 11px; line-height: 1.3; }
 .ow-toast { position: absolute; top: calc(var(--ow-bar-h, 0px) + 12px); left: calc(50% - var(--ow-dock, 0px) / 2); transform: translateX(-50%); z-index: 200; padding: 7px 16px; border-radius: 999px;
   font: 600 12px ${FONT}; color: #fff; pointer-events: none; transition: opacity .3s ease; backdrop-filter: blur(8px); white-space: nowrap; }
+.ow-toast.ow-sticky { pointer-events: auto; white-space: normal; max-width: min(440px, calc(100% - 24px));
+  border-radius: 12px; padding: 10px 10px 10px 14px; display: flex; align-items: flex-start; gap: 8px; }
+.ow-toast .ow-toast-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+.ow-toast .ow-toast-title { font-weight: 700; word-break: break-all; line-height: 1.35; }
+.ow-toast .ow-toast-msg { font-weight: 500; opacity: .95; line-height: 1.35; }
+.ow-toast .ow-toast-x { flex: none; width: 28px; height: 28px; margin: -2px -2px 0 0; border: 0; border-radius: 8px;
+  background: rgba(0,0,0,.18); color: #fff; font: 700 18px/1 ${FONT}; cursor: pointer; pointer-events: auto; }
+.ow-toast .ow-toast-x:hover { background: rgba(0,0,0,.28); }
 .ow-pill { position: absolute; left: 50%; transform: translateX(-50%); z-index: 40; display: flex; align-items: center; gap: 10px;
   padding: 6px 6px 6px 14px; border-radius: 999px; font-size: 12.5px; pointer-events: auto; max-width: calc(100% - 24px); }
 .ow-pill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

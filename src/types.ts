@@ -377,6 +377,8 @@ export interface OptimizationRecord {
   bench_after?: import('./optimize/types').BenchResult;
   /** Retour au modèle d'origine : `url` est alors l'original. */
   restored?: boolean;
+  /** Choix manuel d'un autre fichier serveur (pas une optimisation). */
+  switched?: boolean;
 }
 
 /** A full Owlnest scene, persisted by the backend integration. */

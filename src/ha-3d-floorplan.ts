@@ -18,8 +18,8 @@ import { RenderTweaks, tweaksKey, estimateGpuBytes } from './optimize/render-app
 import { protectFromScene, protectionMatcher } from './optimize/protected';
 import { BENCH_DURATION_MS, frameStats, orbitAngle, benchJson } from './optimize/bench';
 import type { BenchResult } from './optimize/types';
-import { OptimizerPanel, type OptimizerHost } from './card/optimizer-panel';
-import { backupModel, deleteModel, listModels, optimizedSlug } from './optimize/backups';
+import { OptimizerPanel, type OptimizerHost, type ToastOptions } from './card/optimizer-panel';
+import { backupModel, deleteModel, isOptimizedUrl, listModels, modelBaseName, optimizedSlug } from './optimize/backups';
 import { uploadGlb } from './import/upload';
 import { modelErrorKey, httpStatus } from './model-errors';
 import { AnchorOverlay, SensorOverlay, ClusterOverlay, LabelOverlay, CameraOverlay, pulseOverlay, placeAt } from './overlay';
@@ -186,6 +186,12 @@ export class Ha3dFloorplan extends HTMLElement {
   private ro: ResizeObserver | null = null;
   private readonly _onWindowResize = () => { if (this._config?.height === 'fill' || this._fullscreenHost) this._onResize(); };
   private modelLoaded = false;
+  /**
+   * Message d'échec du dernier chargement GLB/plan, ou `null` si le modèle
+   * courant est bien monté. Une scène peut rester « chargée » (édition,
+   * Settings, liste de modèles) sans maillage — seul ce texte le signale.
+   */
+  private _modelLoadError: string | null = null;
   private _locked = false;
   private _editMode = false;
 
@@ -1052,15 +1058,58 @@ export class Ha3dFloorplan extends HTMLElement {
     }
   }
 
-  private _showToast(message: string, isError = false) {
+  private _showToast(message: string, isErrorOrOpts: boolean | ToastOptions = false) {
+    const opts: ToastOptions = typeof isErrorOrOpts === 'boolean'
+      ? { error: isErrorOrOpts }
+      : (isErrorOrOpts ?? {});
+    const isError = !!opts.error;
+    const sticky = !!opts.sticky;
+
+    if (sticky) {
+      this.overlayContainer?.querySelectorAll('.ow-toast.ow-sticky').forEach((n) => n.remove());
+    }
+
     const toast = document.createElement('div');
-    toast.textContent = message;
-    toast.className = 'ow-toast';
-    toast.setAttribute('role', 'status');
+    toast.className = sticky ? 'ow-toast ow-sticky' : 'ow-toast';
+    toast.setAttribute('role', sticky ? 'alertdialog' : 'status');
     toast.style.background = isError ? 'rgba(220,38,38,0.92)' : 'rgba(22,163,74,0.92)';
+
+    if (opts.title || sticky) {
+      const body = document.createElement('div');
+      body.className = 'ow-toast-body';
+      if (opts.title) {
+        const title = document.createElement('div');
+        title.className = 'ow-toast-title';
+        title.textContent = opts.title;
+        body.append(title);
+      }
+      const msg = document.createElement('div');
+      msg.className = 'ow-toast-msg';
+      msg.textContent = message;
+      body.append(msg);
+      toast.append(body);
+    } else {
+      toast.textContent = message;
+    }
+
+    if (sticky) {
+      const close = document.createElement('button');
+      close.type = 'button';
+      close.className = 'ow-toast-x';
+      close.setAttribute('aria-label', t('toastClose'));
+      close.textContent = '×';
+      close.addEventListener('click', () => {
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 300);
+      });
+      toast.append(close);
+    }
+
     this.overlayContainer?.appendChild(toast);
-    setTimeout(() => { toast.style.opacity = '0'; }, 2000);
-    setTimeout(() => toast.remove(), 2400);
+    if (!sticky) {
+      setTimeout(() => { toast.style.opacity = '0'; }, 2000);
+      setTimeout(() => toast.remove(), 2400);
+    }
   }
 
   // ── Init ──────────────────────────────────────────────────────────────
@@ -2903,6 +2952,8 @@ export class Ha3dFloorplan extends HTMLElement {
     this._ui?.setHidden(true);
     const welcome = this.overlayContainer?.querySelector<HTMLElement>('#owlnest-demo-banner');
     if (welcome) welcome.style.display = 'none';
+    const modelErr = this.overlayContainer?.querySelector<HTMLElement>('#owlnest-model-error');
+    if (modelErr) modelErr.style.display = 'none';
     // Reposition HUD to center + restore bar glassmorphism for edit toolbar
     if (this._hud) {
       this._hud.style.bottom = '12px';
@@ -3117,7 +3168,11 @@ export class Ha3dFloorplan extends HTMLElement {
     this._editPanel.onPerfHud = (on) => this._setPerfHud(on);
     this._editPanel.onBenchmark = () => this.runBenchmark('settings');
     this._editPanel.onBenchExport = (r) => this.downloadBench(r);
-    if (!this._plan && !this._isDemo && this._scene?.model_url) this._editPanel.onOptimize = () => this._openOptimizer();
+    if (!this._plan && !this._isDemo && this._scene?.model_url) {
+      this._editPanel.onOptimize = () => this._openOptimizer(
+        this._modelLoadError ? { focusFiles: true } : undefined,
+      );
+    }
     this._editPanel.onPreviewTilt = (id, on) => { this._parts.previewTilt(id, on); this._requestRender(); };
     if (this._plan) {
       // L'apparence de la façade : sur le plan, pour tous les étages.
@@ -3254,6 +3309,8 @@ export class Ha3dFloorplan extends HTMLElement {
     this._setFullscreen('edit', false);
     const welcome = this.overlayContainer?.querySelector<HTMLElement>('#owlnest-demo-banner');
     if (welcome) welcome.style.display = 'flex';
+    const modelErr = this.overlayContainer?.querySelector<HTMLElement>('#owlnest-model-error');
+    if (modelErr) modelErr.style.display = 'flex';
 
     document.removeEventListener('keydown', this._onCardKeyDown);
     this._selectedCardId = null;
@@ -4449,11 +4506,16 @@ export class Ha3dFloorplan extends HTMLElement {
   // ── Optimiseur de modèle ─────────────────────────────────────────────
 
   /** Ouvre l'optimiseur, hors de l'éditeur : un aperçu recharge la scène, ce qui fermerait celui-ci. */
-  private _openOptimizer() {
+  private _openOptimizer(opts?: { focusFiles?: boolean }) {
     if (!this.overlayContainer) return;
     if (this._editMode) this._exitEditMode();
     void this._optimizer?.close();
-    this._optimizer = new OptimizerPanel(this.overlayContainer, this._optimizerHost(), () => { this._optimizer = null; });
+    this._optimizer = new OptimizerPanel(
+      this.overlayContainer,
+      this._optimizerHost(),
+      () => { this._optimizer = null; },
+      opts,
+    );
   }
 
   private _optimizerHost(): OptimizerHost {
@@ -4465,7 +4527,10 @@ export class Ha3dFloorplan extends HTMLElement {
       hass: () => this._hass,
       isAdmin: () => this._hass?.user?.is_admin !== false && !this._backendDown,
       scene: () => this._scene,
+      // Un `model_url` cassé reste exposé : la liste Activer / Info doit pouvoir
+      // le remplacer sans effacer l'historique ni masquer le fichier en défaut.
       modelUrl: () => (this._plan || this._isDemo || !this._scene?.model_url ? null : this._scene.model_url),
+      modelLoadError: () => this._modelLoadError,
       rendering: () => ({ ...(this._effectiveConfig.rendering ?? {}) }),
       setRendering: (patch) => this._patchRendering(patch),
       saveScene: async () => {
@@ -4489,6 +4554,7 @@ export class Ha3dFloorplan extends HTMLElement {
       preview: (glb) => this._previewModel(glb),
       saveModel: (glb, record, keepCopy, onProgress) => this._saveOptimizedModel(glb, record, keepCopy, onProgress),
       restoreOriginal: () => this._restoreOriginalModel(),
+      activateModel: (url) => this._activateServerModel(url),
       listModels: () => listModels(hass()),
       deleteModel: (url) => deleteModel(hass(), url),
       toast: (msg, err) => this._showToast(msg, err),
@@ -4557,6 +4623,58 @@ export class Ha3dFloorplan extends HTMLElement {
       ...rest,
       model_url: original,
       optimizations: [...(scene.optimizations ?? []), { ops: [], url: original, from: scene.model_url ?? '', date: new Date().toISOString(), restored: true }],
+    };
+    await saveScene(hass, id, next);
+    this._scene = next;
+    if (this._previewUrl) URL.revokeObjectURL(this._previewUrl);
+    this._previewUrl = null;
+    await this._loadModel();
+  }
+
+  /**
+   * Pose un fichier `/owlnest_models/…` déjà sur le serveur comme `model_url`
+   * de la scène courante (sans nouvel envoi). Garde `model_original_url` s'il
+   * reste cohérent (même lignée -opt- / original) ; sinon l'efface.
+   */
+  private async _activateServerModel(url: string) {
+    const hass = this._hass, id = this._getActiveSceneId(), scene = this._scene;
+    if (!hass || !id || !scene) throw new Error(t('importNoScene'));
+    const bare = (u: string) => u.split(/[?#]/)[0];
+    const from = scene.model_url ?? '';
+    if (from && bare(from) === bare(url)) return;
+
+    const original = scene.model_original_url;
+    let keepOriginal: string | undefined;
+    let restored = false;
+    let switched = false;
+    if (original && bare(url) === bare(original)) {
+      restored = true;
+    } else {
+      switched = true;
+      if (original) {
+        const sameLineage = modelBaseName(url) === modelBaseName(original);
+        if (sameLineage && (isOptimizedUrl(url) || bare(url) === bare(original))) {
+          keepOriginal = original;
+        }
+      }
+    }
+
+    const { model_original_url: _drop, ...rest } = scene;
+    const next: OwlnestScene = {
+      ...rest,
+      model_url: url,
+      ...(keepOriginal ? { model_original_url: keepOriginal } : {}),
+      optimizations: [
+        ...(scene.optimizations ?? []),
+        {
+          ops: [],
+          url,
+          from,
+          date: new Date().toISOString(),
+          ...(restored ? { restored: true } : {}),
+          ...(switched ? { switched: true } : {}),
+        },
+      ],
     };
     await saveScene(hass, id, next);
     this._scene = next;
@@ -5526,6 +5644,9 @@ export class Ha3dFloorplan extends HTMLElement {
   private async _loadModel() {
     // Clean up any previous scene content before loading new model
     this._clearSceneContent();
+    this._modelLoadError = null;
+    this.overlayContainer?.querySelector('#owlnest-model-error')?.remove();
+    this.overlayContainer?.querySelector('#owlnest-model-loading')?.remove();
     // Sans réponse de l'intégration, la démo laisserait croire la scène perdue.
     if (this._backendDown && !this._config?.model_url?.trim()) {
       this._showBackendDown();
@@ -5537,6 +5658,7 @@ export class Ha3dFloorplan extends HTMLElement {
 
     // Show loading indicator
     const loadingEl = document.createElement('div');
+    loadingEl.id = 'owlnest-model-loading';
     loadingEl.style.cssText = [
       'position:absolute', 'inset:0', 'display:flex', 'flex-direction:column',
       'align-items:center', 'justify-content:center', 'z-index:50',
@@ -5566,14 +5688,16 @@ export class Ha3dFloorplan extends HTMLElement {
       }
     } catch (err) {
       console.error('[Owlnest] model load failed:', err);
-      // Le code HTTP dit s'il faut corriger le chemin ou regarder le serveur ;
-      // on le garde à l'écran, c'est lui qu'on demandera dans un rapport de bug.
+      loadingEl.remove();
+      // Pas de maison démo ici : un `model_url` cassé doit rester visible pour
+      // Info / historique, et l'utilisateur choisit un autre fichier.
       const status = httpStatus(err);
       const reason = `${t(modelErrorKey(err))}${status !== null ? ` (${status})` : ''}`;
-      loadingEl.innerHTML = `<div style="font-size:11px;color:#f87171;font-family:var(--primary-font-family,sans-serif);text-align:center;padding:0 16px;">⚠ ${reason}</div>`;
+      this._mountEmptyModel(reason);
       return;
     }
     loadingEl.remove();
+    this._modelLoadError = null;
     if (this._isDemo) this._showDemoBanner();
 
     try {
@@ -5754,6 +5878,161 @@ export class Ha3dFloorplan extends HTMLElement {
       this.modelLoaded = !!this._modelRoot;
       this._requestRender();
     }
+  }
+
+  /**
+   * Scène utilisable sans maillage après un échec de chargement.
+   *
+   * On monte un `Group` vide pour que l'édition, Settings et la liste de
+   * modèles restent accessibles. Les ancres / vues de la scène ne sont pas
+   * effacées : seul le runtime 3D est reconstruit autour d'une racine vide.
+   */
+  private _mountEmptyModel(reason: string) {
+    if (!this.scene) return;
+    this._modelLoadError = reason;
+    this._loadPhases = null;
+
+    const model = new THREE.Group();
+    model.name = 'owlnest_empty_root';
+    this.scene.add(model);
+    this._modelRoot = model;
+    this._modelBox.makeEmpty();
+    this._modelSpan = 1;
+    this._fitOrbitLimits();
+    this._fitFog();
+    this._frameModel();
+    this.controls?.update();
+
+    const ec = this._effectiveConfig;
+    this.anchors = detectAnchors(model, this.scene, ec, this._modelSpan);
+    this._ovPosPool.clear();
+    this._applyAttachPositions();
+    this._buildParts();
+    this._createOverlays();
+    this._overlaysVisible = !(ec.tap_to_toggle ?? false);
+    this._applySettingsLive();
+    this._paintLowWallsBtn();
+
+    this.modelLoaded = true;
+
+    if (this._hass) {
+      syncLights(this.anchors, this._hass, ec, this._modelSpan);
+      this._lightEmissive.sync(model, this.anchors, this._hass);
+      this._updateOverlayStates();
+      this._evaluatePassiveConditions();
+      this._env?.updateFromHass(this._hass);
+      this._evaluateRules();
+    }
+
+    if (!this._sim) {
+      this._sim = new SimulationPanel(
+        null,
+        null,
+        this._env!,
+        () => this._requestRender(),
+        () => this._hass,
+        () => this.anchors,
+        () => this._effectiveConfig,
+        () => this._updateOverlayStates(),
+        () => this._modelSpan,
+      );
+    }
+
+    if (!this._viewMgr) {
+      this._viewMgr = new ViewManager(
+        this.overlayContainer!,
+        this._hudLeft!,
+        this._hudSep!,
+        () => this.camera,
+        () => this.controls,
+        () => this._effectiveConfig,
+        () => this._hass,
+        () => this._getActiveSceneId(),
+        () => this._scene,
+        (scene) => { this._scene = scene; this._ui?.refreshViews(); },
+        (msg, err) => this._showToast(msg, err),
+        (pos, target) => {
+          if (this._plan?.floors?.length && !this._editMode && !this._planEditor) {
+            const k = this._floorOfY(target.y);
+            if (k !== this._floorIndex()) this._setFloor(k);
+          }
+          this._camAnimTo = { pos, target };
+        },
+        () => this._hudRight,
+        () => this._hudViews,
+      );
+    }
+
+    this._rebuildNormalHUD();
+    this._ui?.refreshStatus();
+    this._ui?.refreshRooms();
+    this._showModelErrorBanner(reason);
+    this._showToast(reason, { error: true, title: t('modelErrTitle') });
+    this._requestRender();
+  }
+
+  /**
+   * Bandeau non bloquant : explique l'échec et ouvre la liste des modèles
+   * (ou l'édition) pour en activer un autre — sans remplacer le fichier cassé
+   * par la maison de démonstration.
+   */
+  private _showModelErrorBanner(reason: string) {
+    if (!this.overlayContainer) return;
+    this.overlayContainer.querySelector('#owlnest-model-error')?.remove();
+    const banner = document.createElement('div');
+    banner.id = 'owlnest-model-error';
+    banner.className = 'ow-ui ow-surface';
+    banner.setAttribute('role', 'alert');
+    banner.style.cssText = [
+      'position:absolute', 'top:12px', 'left:50%', 'transform:translateX(-50%)', 'z-index:40',
+      'width:min(520px, calc(100% - 24px))', 'padding:12px 14px', 'display:flex', 'flex-direction:column', 'gap:8px',
+      'pointer-events:auto',
+    ].join(';');
+    if (this._editMode) banner.style.display = 'none';
+
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:center;gap:8px;';
+    const title = document.createElement('strong');
+    title.style.cssText = 'flex:1;font-size:14px;color:#fca5a5;';
+    title.textContent = `⚠ ${t('modelErrTitle')}`;
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'ow-ib';
+    close.style.cssText = 'width:28px;height:28px;';
+    close.setAttribute('aria-label', t('tourClose'));
+    close.append(uiIcon('close', 15));
+    close.addEventListener('click', () => banner.remove());
+    head.append(title, close);
+
+    const text = document.createElement('div');
+    text.style.cssText = 'font-size:12.5px;color:var(--ow-muted);line-height:1.45;';
+    text.textContent = `${reason}. ${t('modelErrRecover')}`;
+
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;';
+    const btn = (iconName: string, label: string, onClick: () => void, primary = false) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = `ow-btn ow-small${primary ? ' ow-primary' : ''}`;
+      b.append(uiIcon(iconName, 15), document.createTextNode(label));
+      b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+      row.append(b);
+    };
+
+    const canModels = !this._plan && !this._isDemo && !!this._scene;
+    if (canModels) {
+      btn('cube', t('modelErrOpenModels'), () => {
+        banner.remove();
+        this._openOptimizer({ focusFiles: true });
+      }, true);
+    }
+    btn('pencil', t('editAnchorsTitle'), () => this._requestEdit());
+    if (this._canImport()) {
+      btn('plus', t('importButton'), () => pickFiles((files) => this._importModel(files)));
+    }
+
+    banner.append(head, text, row);
+    this.overlayContainer.appendChild(banner);
   }
 
   // ── Overlay positioning + clustering ──────────────────────────────────

@@ -16,10 +16,41 @@ export interface ServerModel {
   url: string;
   size: number;
   modified: number;
+  /** Scene ids that reference this file as ``model_url`` or ``model_original_url``. */
+  scenes?: string[];
 }
 
-export async function listModels(hass: Hass): Promise<{ models: ServerModel[]; in_use: string[] }> {
+export interface ModelListResult {
+  models: ServerModel[];
+  /** Distinct model URLs still referenced by any scene (compat / delete checks). */
+  in_use: string[];
+  /** URL → scene_ids; may omit query-string variants the UI normalizes. */
+  used_by?: Record<string, string[]>;
+}
+
+export async function listModels(hass: Hass): Promise<ModelListResult> {
   return hass.callWS({ type: 'owlnest/list_models' });
+}
+
+/** Scene ids for a model file, matching bare paths (ignore ``?query``). */
+export function scenesForModel(list: ModelListResult, url: string): string[] {
+  const bare = url.split(/[?#]/)[0];
+  if (list.used_by) {
+    const out = new Set<string>();
+    for (const [u, ids] of Object.entries(list.used_by)) {
+      if (u.split(/[?#]/)[0] === bare) for (const id of ids) out.add(id);
+    }
+    if (out.size) return [...out].sort();
+  }
+  const fromModel = list.models.find((m) => m.url.split(/[?#]/)[0] === bare)?.scenes;
+  return fromModel ? [...fromModel].sort() : [];
+}
+
+/** Whether any scene still points at this file (same bare URL). */
+export function modelInUse(list: ModelListResult, url: string): boolean {
+  if (scenesForModel(list, url).length) return true;
+  const bare = url.split(/[?#]/)[0];
+  return list.in_use.some((u) => u.split(/[?#]/)[0] === bare);
 }
 
 /** Copie de sûreté de l'original ; pour `/local`, l'adresse telle quelle. */
