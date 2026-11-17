@@ -35,6 +35,7 @@ const ENTRIES = [
   'src/scene.ts',
   'src/coplanar.ts',
   'src/lights.ts',
+  'src/light-budget.ts',
   'src/light-fields.ts',
   'src/light-emissive.ts',
   'src/light-mesh.ts',

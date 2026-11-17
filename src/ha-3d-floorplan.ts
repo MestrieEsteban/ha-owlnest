@@ -6,6 +6,7 @@ import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import type { Hass, CardConfig, AnchorEntry, SavedView, EditableAnchor, OwlnestScene, OwlnestPart } from './types';
 import { syncLights, stepTransitions } from './lights';
+import { rankLightBudgetEntries } from './light-budget';
 import {
   LightEmissiveController, resolveLightHosts, lightHostsCenter, hostIsOpeningPiece,
 } from './light-emissive';
@@ -653,6 +654,10 @@ export class Ha3dFloorplan extends HTMLElement {
     const next = [...all.filter((a) => !a.id.startsWith(prefix)), ...mine];
     if (JSON.stringify(next) === JSON.stringify(all)) return;
     this._scene = { ...this._scene, anchors: next };
+    // En édition l'éditeur a sa propre Map : rebuild depuis la scène effacerait
+    // une ancre neuve pas encore (ou tout juste) enregistrée — d'où « marche
+    // dans le flotante, disparaît après ». La sortie d'édition reconstruit.
+    if (this._editMode) return;
     this._rebuildAnchors();
   }
 
@@ -1013,9 +1018,11 @@ export class Ha3dFloorplan extends HTMLElement {
         );
         // Preserve scene settings (env, rendering, language configured from Config tab)
         sceneData.settings = this._scene?.settings;
+        // Avant l'await : un _syncLampAnchors (meubles async) qui lirait encore
+        // l'ancienne scène effacerait les ancres neuves au _rebuildAnchors.
+        this._scene = sceneData;
 
         await saveScene(this._hass, sceneId, sceneData);
-        this._scene = sceneData;
       } while (this._saveQueued);
 
       this._showToast(t('toastSceneSaved'));
@@ -2340,21 +2347,35 @@ export class Ha3dFloorplan extends HTMLElement {
 
   /**
    * Les lampes d'un étage masqué s'éteignent (par leur intensité, voir
-   * stepTransitions) ; et seules les premières, dans la limite du profil
-   * qualité, éclairent vraiment la scène. Leur nombre ne change plus jamais
-   * en cours de route : pas de recompilation des shaders.
+   * stepTransitions). Le profil qualité ne garde « réelles » que quelques
+   * lampes, pour ne pas recompiler les shaders à chaque allumage.
+   *
+   * Les places vont d'abord aux lampes allumées : sinon, au chargement, une
+   * lampe en fin de liste (souvent la dernière ajoutée) reçoit
+   * `owlnestReal = false` et ne s'allume plus jamais, même en la basculant.
+   * Celles hors budget ne sont pas marquées : si elles s'allument, elles
+   * peuvent quand même éclairer. Ne pas élargir le budget en édition, ça
+   * recompile tout et des objets disparaissent.
    */
   private _applyFloorLights() {
     const k = this._floorIndex();
-    // Les lampes de l'étage regardé d'abord : ce sont elles qu'on voit.
     const lamps = [...this.anchors.values()].filter((a) => a.light);
-    lamps.sort((a, b) => Number(this._floorOfY(a.worldPos.y) !== k) - Number(this._floorOfY(b.worldPos.y) !== k));
+    const ranked = rankLightBudgetEntries(lamps, {
+      floorOf: (a) => this._floorOfY(a.worldPos.y),
+      activeFloor: k,
+      isOn: (a) => a.targetIntensity > 0.01,
+    });
     const budget = this._quality.anchorLights;
-    lamps.forEach((a, i) => {
+    ranked.forEach((a, i) => {
       const light = a.light!;
       light.userData.owlnestFloorOff = this._floorOfY(a.worldPos.y) > k;
-      light.userData.owlnestReal = i < budget;
-      light.visible = i < budget;
+      if (i < budget) {
+        light.userData.owlnestReal = true;
+        light.visible = true;
+      } else {
+        delete light.userData.owlnestReal;
+        light.visible = false;
+      }
     });
     this._dirty = true;
   }
@@ -3211,7 +3232,7 @@ export class Ha3dFloorplan extends HTMLElement {
     this._previewingRule = false;
     this._requestShadowUpdate();
     this._editMode = false;
-    this._mergeStatic();
+    // Fusion après rebuild + markHosts (voir _refreshLightHosts plus bas).
     this._ui?.setHidden(false);
     this._setFullscreen('edit', false);
     const welcome = this.overlayContainer?.querySelector<HTMLElement>('#owlnest-demo-banner');
@@ -3229,14 +3250,21 @@ export class Ha3dFloorplan extends HTMLElement {
     this._panelGizmo?.setHover(null);
     if (this.controls) this.controls.enabled = !this._locked;
 
-    // Flush pending auto-save immediately
+    // Aligner _scene sur l'éditeur tout de suite (même sans timer pending) :
+    // un _syncLampAnchors async ne doit pas reconstruire depuis une scène périmée.
+    const editable = new Map<string, EditableAnchor>(this._editor!.anchors as Map<string, EditableAnchor>);
+    const sceneId = this._getActiveSceneId();
+    if (sceneId && this._scene) {
+      const sceneData = buildSceneFromEditor(sceneId, editable, this._scene, this._config!);
+      sceneData.settings = this._scene.settings;
+      this._scene = sceneData;
+    }
     if (this._editPanel?.hasPendingSave) {
       this._editPanel.cancelPendingSave();
       this._saveScene();
     }
     this._editPanel?.markSaved();
 
-    const editable = new Map<string, EditableAnchor>(this._editor!.anchors as Map<string, EditableAnchor>);
     this._editor!.deactivate();
     this._lampAnchorsToPlan(editable);
 
@@ -3253,10 +3281,12 @@ export class Ha3dFloorplan extends HTMLElement {
 
     this._createOverlays();
     if (this._hass) {
-      syncLights(this.anchors, this._hass, this._config, this._modelSpan);
+      syncLights(this.anchors, this._hass, this._effectiveConfig, this._modelSpan);
       this._lightEmissive.sync(this._modelRoot, this.anchors, this._hass);
       this._updateOverlayStates();
     }
+    // Pas de _applyFloorLights : les lumières neuves n'ont pas owlnestReal.
+    this._refreshLightHosts();
 
     this._editPanel?.hideToolbar();
     this._editPanel = null;
@@ -5344,12 +5374,19 @@ export class Ha3dFloorplan extends HTMLElement {
           parts: syncPlanParts(model, allOpenings(plan), this._scene.parts ?? [], this._planPartLabel),
         };
       }
+      // Après le recentrage, les matrixWorld sont périmées. Sans ce passage,
+      // lightHostsCenter (Box3.setFromObject) lit encore la pose d'avant le
+      // centrage : les ancres attachLightToObject se déplacent, et
+      // _applyFloorLights peut les éteindre (étage faux). Quitter l'édition
+      // « réparait » parce que la scène avait déjà rendu entre-temps.
+      model.updateMatrixWorld(true);
       // Ancres avant le merge : les hôtes émissifs doivent être marqués d'abord.
       this.anchors = detectAnchors(model, this.scene, ec, this._modelSpan);
       this._ovPosPool.clear();
       this._applyAttachPositions();
       this._buildParts();
-      this._applyFloorLights();
+      // Les ouvrants peuvent avoir déplacé un hôte : recalcule attach / mesh.
+      this._applyAttachPositions();
       this._createOverlays();
 
       this._overlaysVisible = !(ec.tap_to_toggle ?? false);
@@ -5371,6 +5408,8 @@ export class Ha3dFloorplan extends HTMLElement {
         // chargement serait consommee par l'instantane initial.
         this._evaluateRules();
       }
+      // Après syncLights : les lampes allumées prennent les places du budget.
+      this._applyFloorLights();
 
       // Instantiate SimulationPanel (embedded in Weather tab — no HUD button/expand needed)
       if (!this._sim) {
