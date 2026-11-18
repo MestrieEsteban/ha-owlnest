@@ -8,6 +8,7 @@
  * Three.js ni Home Assistant.
  */
 import { t, type StringKey } from '../i18n';
+import { enableMouseDragScroll } from '../ui/drag-scroll';
 import { icon, iconHtml } from '../ui/icons';
 import { deviceTint } from '../ui/device-tint';
 import {
@@ -414,6 +415,7 @@ export class CardHud {
     const track = document.createElement('div');
     track.className = 'ow-rooms-track';
     track.addEventListener('scroll', () => this.paintRoomsMore(), { passive: true });
+    enableMouseDragScroll(track);
     this.roomsEl.append(track);
     const chip = (id: string, label: string, lit: number, temp?: string) => {
       const b = document.createElement('button');
