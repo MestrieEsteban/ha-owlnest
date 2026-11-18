@@ -188,8 +188,10 @@ export const STYLES = `
 .ow-rp-nm span { font-size: 11.5px; color: var(--ow-muted); }
 .ow-rp-empty { font-size: 12.5px; color: var(--ow-muted); padding: 6px 4px; line-height: 1.45; }
 .ow-rooms { display: flex; align-items: center; padding: 4px; max-width: min(620px, 100%); min-width: 0; }
-.ow-rooms-track { display: flex; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.ow-rooms-track { display: flex; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; cursor: grab;
+  user-select: none; -webkit-user-select: none; }
 .ow-rooms-track::-webkit-scrollbar { display: none; }
+.ow-rooms-track.ow-dragging, .ow-rooms-track.ow-dragging * { cursor: grabbing; }
 .ow-floors { display: flex; gap: 2px; padding-right: 4px; margin-right: 4px; border-right: 1px solid var(--ow-line); flex: none; }
 .ow-rooms-track { --fl: 0px; --fr: 0px;
   -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--fl), #000 calc(100% - var(--fr)), transparent);
