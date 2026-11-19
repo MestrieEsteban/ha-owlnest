@@ -347,6 +347,8 @@ export function detectAnchors(
         navViewId: ac.navViewId,
         size: ac.size,
         display: ac.display,
+        throughWalls: ac.throughWalls,
+        opacity: ac.opacity,
         planId: ac.planId,
       });
     });
@@ -431,6 +433,8 @@ export function buildAnchorsFromEditable(
       navViewId: ea.navViewId,
       size: ea.size,
       display: ea.display,
+      throughWalls: ea.throughWalls,
+      opacity: ea.opacity,
       planId: ea.planId,
     });
   });

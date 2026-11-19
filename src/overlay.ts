@@ -22,6 +22,16 @@ export function placeAt(el: HTMLElement, x: number, y: number) {
 
 const projScratch = new THREE.Vector3();
 
+/**
+ * Couleur qui s'efface avec `--ow-pin-alpha`.
+ *
+ * À 1, le mélange vaut la couleur d'origine : une pastille opaque ne change pas.
+ * L'icône ne passe pas par ici, elle reste lisible quand le disque s'ouvre.
+ */
+export function pinFill(color: string): string {
+  return `color-mix(in srgb, ${color} calc(var(--ow-pin-alpha, 1) * 100%), transparent)`;
+}
+
 export interface ClusterItem {
   domain: EntityDomain;
   label: string;
@@ -96,10 +106,10 @@ export class AnchorOverlay {
       'cursor:pointer',
       'z-index:5',
       // Les couleurs suivent le thème de la carte (variables posées par CardHud).
-      'background:var(--ow-chrome, rgba(15,15,25,0.65))',
+      `background:${pinFill('var(--ow-chrome, rgba(15,15,25,0.65))')}`,
       // Pas de flou d'arrière-plan : recalculé sous chaque pastille à chaque
       // image, il coûtait cher aux tablettes pour un effet à peine visible.
-      'border:1.5px solid var(--ow-line, rgba(255,255,255,0.12))',
+      `border:1.5px solid ${pinFill('var(--ow-line, rgba(255,255,255,0.12))')}`,
       'box-shadow:0 2px 8px rgba(0,0,0,0.5)',
       'transition:transform .15s ease, box-shadow .3s ease, border-color .3s ease',
       'user-select:none',
@@ -271,7 +281,7 @@ export class AnchorOverlay {
       if (haIcon) haIcon.style.color = hex;
       else if (path) path.style.fill = hex;
       this.el.style.boxShadow = `0 0 14px 3px ${hex}99, 0 2px 8px rgba(0,0,0,0.5)`;
-      this.el.style.borderColor = `${hex}55`;
+      this.el.style.borderColor = pinFill(`${hex}55`);
     } else {
       const off = tint ? `color-mix(in srgb, ${tint} 75%, #555)` : '#555';
       if (haIcon) haIcon.style.color = off;
@@ -300,10 +310,10 @@ export class SensorOverlay {
       'transform:translate(-50%,-50%)',
       'padding:4px 10px',
       'border-radius:12px',
-      'background:var(--ow-chrome, rgba(15,15,25,0.72))',
+      `background:${pinFill('var(--ow-chrome, rgba(15,15,25,0.72))')}`,
       // Pas de flou d'arrière-plan : recalculé sous chaque pastille à chaque
       // image, il coûtait cher aux tablettes pour un effet à peine visible.
-      'border:1px solid rgba(0,204,136,0.3)',
+      `border:1px solid ${pinFill('rgba(0,204,136,0.3)')}`,
       'color:#00cc88',
       'font-size:12px',
       'font-weight:600',
@@ -389,6 +399,13 @@ export interface ClusterOptions {
   icon?: string;
   /** Libelle au survol du bouton central. */
   title?: string;
+  /**
+   * Centre invisible. Le bouton est déjà un sprite de la scène : le menu
+   * radial et le fond cliquable restent en HTML, par-dessus.
+   */
+  ghost?: boolean;
+  /** Ouvert ou refermé, pour que la carte raccroche le sprite. */
+  onMenu?: (open: boolean) => void;
 }
 
 /** Une pastille du menu radial et ce qu'elle affiche. */
@@ -420,9 +437,11 @@ export class ClusterOverlay {
   private _backdrop: HTMLDivElement | null = null;
   private _items: ClusterItem[] = [];
   private _container: HTMLElement;
+  private _opts: ClusterOptions;
 
   constructor(container: HTMLElement, opts: ClusterOptions = {}) {
     this._container = container;
+    this._opts = opts;
 
     this.el = document.createElement('div');
     this.el.style.cssText = [
@@ -432,9 +451,9 @@ export class ClusterOverlay {
       'border-radius:50%',
       'display:flex', 'align-items:center', 'justify-content:center',
       'cursor:pointer', 'z-index:5',
-      'background:rgba(15,15,25,0.75)',
+      `background:${pinFill('rgba(15,15,25,0.75)')}`,
       'backdrop-filter:blur(6px)', '-webkit-backdrop-filter:blur(6px)',
-      'border:1.5px solid rgba(255,255,255,0.18)',
+      `border:1.5px solid ${pinFill('rgba(255,255,255,0.18)')}`,
       'box-shadow:0 2px 8px rgba(0,0,0,0.5)',
       'transition:transform .15s ease, box-shadow .3s ease',
       'user-select:none', '-webkit-user-select:none', 'pointer-events:auto',
@@ -468,6 +487,28 @@ export class ClusterOverlay {
     this.el.addEventListener('contextmenu', (e) => e.preventDefault());
 
     container.appendChild(this.el);
+    if (opts.ghost) this._applyGhost();
+  }
+
+  /** Ouvre le menu radial. Sans effet s'il l'est déjà. */
+  openMenu() { if (!this._menu) this._openMenu(); }
+
+  closeMenu() { this._closeMenu(); }
+
+  /**
+   * Le centre ne se voit pas : un sprite occupe déjà cette place.
+   * Les entrées du menu, elles, restent des enfants positionnés sur ce nœud.
+   */
+  private _applyGhost() {
+    this.el.style.background = 'transparent';
+    this.el.style.border = 'none';
+    this.el.style.boxShadow = 'none';
+    this._badge.style.display = 'none';
+    for (let i = 0; i < this.el.children.length; i++) {
+      const child = this.el.children[i] as HTMLElement;
+      if (child === this._badge || child === this._menu) continue;
+      child.style.visibility = 'hidden';
+    }
   }
 
   update(items: ClusterItem[]) {
@@ -492,6 +533,7 @@ export class ClusterOverlay {
       if (items.length === this._entries.length) this._refreshMenu(items);
       else this._rebuildMenu();
     }
+    if (this._opts.ghost) this._applyGhost();
   }
 
   updatePosition(x: number, y: number) {
@@ -530,15 +572,18 @@ export class ClusterOverlay {
     this._container.appendChild(this._backdrop);
 
     this._rebuildMenu();
+    this._opts.onMenu?.(true);
   }
 
   private _closeMenu() {
+    const was = this._menu !== null || this._backdrop !== null;
     this.el.style.transform = 'translate(-50%,-50%) scale(1)';
     this._menu?.remove();
     this._menu = null;
     this._entries = [];
     this._backdrop?.remove();
     this._backdrop = null;
+    if (was) this._opts.onMenu?.(false);
   }
 
   private _rebuildMenu() {
@@ -629,7 +674,7 @@ export class ClusterOverlay {
       'width:38px', 'height:38px', 'border-radius:50%',
       'display:flex', 'align-items:center', 'justify-content:center',
       'cursor:pointer', 'pointer-events:auto',
-      'background:rgba(15,15,25,0.88)',
+      `background:${pinFill('rgba(15,15,25,0.88)')}`,
       'backdrop-filter:blur(6px)', '-webkit-backdrop-filter:blur(6px)',
       'user-select:none', '-webkit-user-select:none',
     ].join(';');
@@ -703,9 +748,9 @@ export class LabelOverlay {
       'transform:translate(-50%,-50%)',
       'display:flex', 'align-items:center', 'gap:5px',
       'padding:3px 9px', 'border-radius:11px',
-      'background:rgba(12,16,28,0.62)',
+      `background:${pinFill('rgba(12,16,28,0.62)')}`,
       'backdrop-filter:blur(5px)', '-webkit-backdrop-filter:blur(5px)',
-      'border:1px solid rgba(255,255,255,0.09)',
+      `border:1px solid ${pinFill('rgba(255,255,255,0.09)')}`,
       `color:${tint}`,
       'font-size:11px', 'font-weight:600', 'letter-spacing:.02em',
       'font-family:var(--primary-font-family,sans-serif)',
@@ -777,8 +822,8 @@ export class CameraOverlay {
       // La taille est recalculee a chaque image par setPixelWidth().
       'width:132px', 'height:74px',
       'border-radius:8px', 'overflow:hidden',
-      'background:rgba(10,14,24,0.85)',
-      'border:1.5px solid rgba(255,255,255,0.14)',
+      `background:${pinFill('rgba(10,14,24,0.85)')}`,
+      `border:1.5px solid ${pinFill('rgba(255,255,255,0.14)')}`,
       'box-shadow:0 3px 12px rgba(0,0,0,0.6)',
       'cursor:pointer', 'z-index:5',
       'display:flex', 'align-items:center', 'justify-content:center',
@@ -788,7 +833,7 @@ export class CameraOverlay {
     ].join(';');
 
     this._img = document.createElement('img');
-    this._img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:none;pointer-events:none;';
+    this._img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:none;pointer-events:none;opacity:var(--ow-pin-alpha, 1);';
     this._img.addEventListener('load', () => {
       this._failed = false;
       this._img.style.display = 'block';

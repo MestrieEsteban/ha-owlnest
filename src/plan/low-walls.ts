@@ -150,6 +150,17 @@ export class LowWalls {
   /** Une vue où des murs peuvent descendre (tout sauf « debout »). */
   get enabled(): boolean { return this.viewName !== 'up'; }
   get ghost(): boolean { return this.viewName === 'ghost'; }
+  /** Hauteur monde au-dessus de laquelle un mur coupé n'est plus dessiné. */
+  get cutWorldY(): number { return this.cut.value + this.rootY.value; }
+
+  /**
+   * Angle d'un mur baissé qui reste entier : son voisin est debout.
+   * `corner` 1 = départ du mur (canal vert), 2 = arrivée (canal bleu).
+   */
+  cornerKept(index: number, corner: 1 | 2): boolean {
+    if (index < 0 || index * 4 + corner >= this.data.length) return false;
+    return this.data[index * 4 + corner] > 127;
+  }
 
   /** Change de vue ; le voile n'est dessiné qu'en vue fantôme. */
   setView(view: WallView, root: THREE.Object3D | null) {

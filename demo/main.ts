@@ -118,7 +118,7 @@ langSelect.addEventListener('change', () => {
 const INSTALL_URL = 'https://github.com/MestrieEsteban/ha-owlnest#installation';
 type CardInternals = {
   anchors: Map<string, { entityId?: string }>;
-  overlays: Map<string, { el?: HTMLElement }>;
+  pinAnchorEl?: (entityId: string) => HTMLElement | null;
   _requestRender?: () => void;
 };
 
@@ -132,10 +132,7 @@ type CardInternals = {
 const anchorOf = (entityId: string) => {
   const c = card as unknown as CardInternals;
   c._requestRender?.();
-  for (const [key, entry] of c.anchors) {
-    if (entry.entityId === entityId) return c.overlays.get(key)?.el;
-  }
-  return null;
+  return c.pinAnchorEl?.(entityId) ?? null;
 };
 const buttonOf = (match: (b: HTMLButtonElement) => boolean) => Array.from(card.querySelectorAll('button')).find(match);
 

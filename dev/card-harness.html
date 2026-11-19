@@ -86,18 +86,23 @@
   // Laisse le chargement du modèle et la création des overlays se faire.
   await new Promise((r) => setTimeout(r, 1800));
 
+  const pins = card.scene?.getObjectByName('owlnest-pins');
   const rows = [];
   card.anchors?.forEach((entry, key) => {
-    const ov = card.overlays?.get(key);
+    const sprite = pins?.getObjectByName('pin:' + key);
+    const mat = sprite?.material;
     rows.push(
       String(entry.label).padEnd(24) +
       String(entry.entityId || '(sans entité)').padEnd(20) +
       ('display=' + (entry.display ?? '—')).padEnd(16) +
-      'overlay=' + (ov ? ov.constructor.name : 'AUCUN'),
+      (sprite
+        ? 'sprite depthTest=' + mat.depthTest + ' depthWrite=' + mat.depthWrite + ' order=' + sprite.renderOrder
+        : 'AUCUN'),
     );
   });
   document.getElementById('out').textContent =
     'modèle chargé : ' + !!card.modelLoaded + String.fromCharCode(10) +
-    'ancres : ' + (card.anchors?.size ?? 0) + String.fromCharCode(10, 10) +
+    'ancres : ' + (card.anchors?.size ?? 0) + String.fromCharCode(10) +
+    'groupe : ' + (pins ? pins.name + ' enfants=' + pins.children.length : 'absent') + String.fromCharCode(10, 10) +
     rows.join(String.fromCharCode(10));
 </script>

@@ -23,6 +23,8 @@ const ENTRIES = [
   'src/rules/types.ts',
   'src/types.ts',
   'src/parts.ts',
+  'src/pin-look.ts',
+  'src/pin-sprite.ts',
   'src/parts-clips.ts',
   'src/parts-runtime.ts',
   'src/model-outline.ts',
