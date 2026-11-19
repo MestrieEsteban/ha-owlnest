@@ -31,6 +31,7 @@ import { stateValueChipLabel } from '../state-value-label';
 import type { ClipInfo } from '../parts-clips';
 import { detectionLabel, resolveLevel } from '../quality';
 import type { TapAction } from '../entities/descriptors';
+import { PIN_DISC, pinDiscStep, type PinDiscStep } from '../pin-look';
 import type { QualityLevel } from '../quality';
 import type { AnchorKind, OwlnestPart, OwlnestEffect, EffectKind, EffectTarget, ExtendAxis } from '../types';
 import {
@@ -3173,6 +3174,27 @@ export class EditPanel {
       ], anchor.precision !== undefined ? String(Math.min(anchor.precision, 3)) : '', (v) =>
         update({ precision: v === '' ? undefined : Number(v) })), look.inner);
     }
+
+    // Traverser les murs et le disque : « comme la carte » tant qu'on n'a pas
+    // d'avis pour cette ancre-là. Le réglage de toutes les pastilles est dans
+    // Personnaliser la carte.
+    const through = anchor.throughWalls === true ? 'yes' : anchor.throughWalls === false ? 'no' : 'inherit';
+    const throughSeg = segmented([
+      ['inherit', t('anchorLookInherit')],
+      ['yes', t('anchorThroughYes')],
+      ['no', t('anchorThroughNo')],
+    ], through, (v) => update({ throughWalls: v === 'inherit' ? undefined : v === 'yes' }));
+    field(t('anchorThroughWalls'), throughSeg, look.inner);
+    const disc = anchor.opacity === undefined ? 'inherit' : pinDiscStep(anchor.opacity);
+    const discSeg = segmented([
+      ['inherit', t('anchorLookInherit')],
+      ...(Object.keys(PIN_DISC) as PinDiscStep[]).map((step) => [step, t(
+        step === 'solid' ? 'uiPinSolid' : step === 'soft' ? 'uiPinSoft' : 'uiPinGlass',
+      )] as const),
+    ], disc, (v) => update({ opacity: v === 'inherit' ? undefined : PIN_DISC[v as PinDiscStep] }));
+    discSeg.classList.add('ow-seg-wrap');
+    field(t('anchorPinOpacity'), discSeg, look.inner);
+    hintLine(look.inner, t('anchorPinHint'));
 
     // ── Lumière ───────────────────────────────────────────────────────
     if (isLight) {

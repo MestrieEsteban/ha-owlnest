@@ -15,7 +15,7 @@ import {
   syncMeshLightPoses,
 } from './model';
 import { modelErrorKey, httpStatus } from './model-errors';
-import { AnchorOverlay, SensorOverlay, ClusterOverlay, LabelOverlay, CameraOverlay, pulseOverlay, placeAt } from './overlay';
+import { ClusterOverlay, placeAt } from './overlay';
 import type { ClusterItem } from './overlay';
 import { AnchorEditor } from './editor';
 import { loadScene, saveScene, listScenes, sceneToEffectiveConfig, buildSceneFromEditor, normalizeViews, emptyScene, sceneUnreachable, forgetSceneFailure } from './scene';
@@ -74,6 +74,9 @@ import { buildPlan } from './plan/build';
 import { buildHouse, floorGroup, buildRoof, ROOF_NAME, ROOF_COLORS } from './plan/house';
 import { floorViews, floorDoc, withFloorDoc, addFloor, removeFloor, renameFloor, allOpenings, hasWalls, type FloorView } from './plan/floors';
 import { LowWalls, WALL_VIEWS, type WallView } from './plan/low-walls';
+import { cardPinLook, hostMargin, resolvePinLook } from './pin-look';
+import { htmlHoverNameShown, offsetTowardCamera, pinDepthFlags, pixelsForWorldSize, worldSizeForPixels } from './pin-sprite';
+import { iconOffColor, paintPin, pinFaceKey, refreshPinPicture, type PinFace } from './pin-canvas';
 import { syncPlanParts } from './plan/parts';
 import { emptyPlan, type PlanDoc, type OpeningKind } from './plan/types';
 import { PlanEditor } from './plan/editor-ui';
@@ -94,8 +97,6 @@ import { STYLES as UI_STYLES, type UiPrefs } from './ui/theme';
 import { icon as uiIcon } from './ui/icons';
 import { Tour, tourSeen, markTourSeen, type TourStep } from './ui/tour';
 import type { OwlnestRule, Action } from './rules/types';
-
-type AnyOverlay = AnchorOverlay | SensorOverlay | LabelOverlay | ClusterOverlay | CameraOverlay;
 
 /**
  * Largeur de reference d'une vignette, en fraction de la plus grande dimension
@@ -172,8 +173,39 @@ export class Ha3dFloorplan extends HTMLElement {
   private overlayContainer: HTMLDivElement | null = null;
 
   private anchors = new Map<string, AnchorEntry>();
-  private overlays = new Map<string, AnyOverlay>();
   private _clusters = new Map<string, ClusterOverlay>();
+  /**
+   * Pastilles WebGL, sœur du modèle. Pas sous `_modelRoot` : le fusionneur
+   * de mailles les avalerait, et un rechargement du GLB les effacerait.
+   */
+  private _pinGroup: THREE.Group | null = null;
+  private _pinSprites = new Map<string, THREE.Sprite>();
+  private _pinRay = new THREE.Raycaster();
+  private _pinNdc = new THREE.Vector2();
+  private _pinChrome: HTMLDivElement | null = null;
+  private _pinChromeLabel: HTMLDivElement | null = null;
+  /** Un nom HTML par pastille. Pas dans la texture : la toile resterait ovale. */
+  private _pinNameLabels = new Map<string, HTMLDivElement>();
+  private _pinChromeRing: SVGCircleElement | null = null;
+  private _pinHover: string | null = null;
+  private _pinGuide: string | null = null;
+  private _pinLabelUntil = 0;
+  private _pinLabelName: string | null = null;
+  private _pinPress: {
+    name: string;
+    x: number;
+    y: number;
+    pointerId: number;
+    timer: ReturnType<typeof setTimeout> | null;
+    ringTimer: ReturnType<typeof setTimeout> | null;
+    moved: boolean;
+    fired: boolean;
+  } | null = null;
+  private _menuPin: string | null = null;
+  private _pinMenu: ClusterOverlay | null = null;
+  private _pinPulse = new Map<string, number>();
+  private _pinSyncing = false;
+  private _pinSyncAgain = false;
 
   private rafId = 0;
   private ro: ResizeObserver | null = null;
@@ -1205,6 +1237,9 @@ export class Ha3dFloorplan extends HTMLElement {
       this._tapStartTime = e.timeStamp;
       this._tapStartPos = { x: e.clientX, y: e.clientY };
 
+      // Hors édition, un clic sur une pastille ne lance pas l'orbite.
+      if (!this._editMode && this._beginPinPointer(e)) return;
+
       // Edit mode: start panel drag directly on pointerdown (no G key needed)
       if (this._editMode && e.button === 0 && !this._cardPlacementMode && this.camera && this.canvas) {
         const rect = this.canvas!.getBoundingClientRect();
@@ -1276,10 +1311,15 @@ export class Ha3dFloorplan extends HTMLElement {
       }
     });
 
-    this.canvas!.addEventListener('pointerleave', () => { if (this._pickHoverKey) this._endPickHover(); });
+    this.canvas!.addEventListener('pointerleave', () => {
+      if (this._pickHoverKey) this._endPickHover();
+      this._cancelPinPress();
+      this._setPinHover(null);
+    });
 
     this.canvas!.addEventListener('pointermove', (e) => {
       if (!this.camera || !this.canvas) return;
+      if (!this._editMode) this._movePinPointer(e);
       const rect = this.canvas!.getBoundingClientRect();
       const ndc = new THREE.Vector2(
         ((e.clientX - rect.left) / rect.width) * 2 - 1,
@@ -1339,6 +1379,11 @@ export class Ha3dFloorplan extends HTMLElement {
     });
 
     this.canvas!.addEventListener('pointerup', (e) => {
+      if (this._pinPress && e.pointerId === this._pinPress.pointerId) {
+        e.stopImmediatePropagation();
+        this._endPinPress();
+        return;
+      }
       // Gizmo axis drag end — confirm position
       if (this._gizmoDragAxis && e.button === 0) {
         this._gizmoDragAxis = null;
@@ -2606,6 +2651,9 @@ export class Ha3dFloorplan extends HTMLElement {
 
   /** Les préférences d'affichage partent avec la scène, un peu après le dernier changement. */
   private _saveUiPrefs(prefs: UiPrefs) {
+    // Le rendu est à la demande : sans ceci, le disque attendrait le prochain geste.
+    this._requestRender();
+    this._syncPinFaces();
     const sceneId = this._getActiveSceneId();
     if (!this._scene && sceneId) this._scene = emptyScene(sceneId);
     if (!this._scene) return;
@@ -2630,7 +2678,7 @@ export class Ha3dFloorplan extends HTMLElement {
     const steps: TourStep[] = [
       { title: 'tourHomeTitle', text: 'tourHomeText', anim: 'orbit' },
     ];
-    if (this.overlays.size) steps.push({ target: () => [...this.overlays.values()].find((o) => o.el.offsetParent && o.el.style.display !== 'none')?.el, title: 'tourTapTitle', text: 'tourTapText', anim: 'tap' });
+    if (this._pinSprites.size) steps.push({ target: () => this._guidePinEl(), title: 'tourTapTitle', text: 'tourTapText', anim: 'tap' });
     if (this._ui?.roomsModule) steps.push({ target: () => this._ui?.roomsModule, title: 'tourRoomsTitle', text: 'tourRoomsText', anim: 'views' });
     if (this._plan) steps.push({ target: dock('walls'), title: 'tourWallsTitle', text: 'tourWallsText', anim: 'walls' });
     steps.push(
@@ -2749,12 +2797,13 @@ export class Ha3dFloorplan extends HTMLElement {
 
   private _toggleOverlays() {
     this._overlaysVisible = !this._overlaysVisible;
-    this.overlays.forEach((o) => {
-      o.el.style.display = this._overlaysVisible ? '' : 'none';
-    });
-    this._clusters.forEach((c) => {
-      if (!this._overlaysVisible) c.hide();
-    });
+    if (this._pinGroup) this._pinGroup.visible = this._pinsShown();
+    if (!this._overlaysVisible) {
+      this._clusters.forEach((c) => c.hide());
+      this._hidePinChrome();
+      this._closePinMenu();
+    }
+    this._requestRender();
     this._syncOverlayHideBadge();
   }
 
@@ -2891,7 +2940,10 @@ export class Ha3dFloorplan extends HTMLElement {
     }
     this._showControls();
 
-    this.overlays.forEach((o) => { o.el.style.display = 'none'; });
+    if (this._pinGroup) this._pinGroup.visible = false;
+    this._hidePinChrome();
+    this._closePinMenu();
+    this._cancelPinPress();
     this._clusters.forEach((c) => c.hide());
 
     const editable = new Map<string, EditableAnchor>();
@@ -2929,6 +2981,8 @@ export class Ha3dFloorplan extends HTMLElement {
         navViewId: entry.navViewId,
         size: entry.size,
         display: entry.display,
+        throughWalls: entry.throughWalls,
+        opacity: entry.opacity,
         planId: entry.planId,
       });
     });
@@ -3260,9 +3314,7 @@ export class Ha3dFloorplan extends HTMLElement {
 
     this._editPanel?.hideToolbar();
     this._editPanel = null;
-    this.overlays.forEach((o) => {
-      o.el.style.display = this._overlaysVisible ? '' : 'none';
-    });
+    if (this._pinGroup) this._pinGroup.visible = this._pinsShown();
     this._requestRender();
   }
 
@@ -4097,6 +4149,10 @@ export class Ha3dFloorplan extends HTMLElement {
     const bgHex = rl.background_color ? parseInt(rl.background_color.replace('#', ''), 16) : 0x0d1117;
 
     this.scene = new THREE.Scene();
+    this._pinGroup = new THREE.Group();
+    this._pinGroup.name = 'owlnest-pins';
+    this.scene.add(this._pinGroup);
+    this._mountPinChrome();
     this.scene.background = useSky ? null : (rl.transparent_background ? null : new THREE.Color(bgHex));
     this.scene.fog = rl.transparent_background ? null : new THREE.FogExp2(0x9fc8e8, rl.fog_density ?? 0.018);
 
@@ -4264,6 +4320,11 @@ export class Ha3dFloorplan extends HTMLElement {
 
     const moved = this.controls?.update() ?? false;
     if (moved) this._dirty = true;
+    if (this._pinPulse.size) {
+      const nowMs = performance.now();
+      for (const [key, until] of this._pinPulse) if (nowMs > until) this._pinPulse.delete(key);
+      if (this._pinPulse.size) this._dirty = true;
+    }
     // Murs bas : ceux devant le point visé descendent, en douceur.
     if (this._plan && this._modelRoot && this.camera && this.controls
       && this._lowWalls.update(this.camera, this.controls.target, this._activeGroup ?? this._modelRoot, dt)) {
@@ -4373,7 +4434,7 @@ export class Ha3dFloorplan extends HTMLElement {
     el.textContent = [
       `${fps.toFixed(0)} img/s · image ${total.toFixed(1)} ms (pire ${s.worst.toFixed(1)}) · dont rendu ${avg.toFixed(1)}`,
       `${r.info.render.calls} appels · ${(r.info.render.triangles / 1000).toFixed(1)} k triangles`,
-      `${size.x}×${size.y} · DPR ${r.getPixelRatio()} · ${this.overlays.size} pastilles · ${lights} lumières`,
+      `${size.x}×${size.y} · DPR ${r.getPixelRatio()} · ${this._pinSprites.size} pastilles · ${lights} lumières`,
       `qualité ${resolveLevel(this._effectiveConfig?.rendering?.quality)} · ombres ${r.shadowMap.enabled ? 'oui' : 'non'}`,
       detectionLabel(),
     ].join('\n');
@@ -4402,13 +4463,17 @@ export class Ha3dFloorplan extends HTMLElement {
     if (this._camAccum < interval) return;
     this._camAccum = 0;
 
+    let refresh = false;
     this.anchors.forEach((entry, name) => {
-      const ov = this.overlays.get(name);
-      if (!(ov instanceof CameraOverlay)) return;
-      if (ov.el.style.display === 'none' || ov.conditionHidden || entry.hidden) return;
+      const sprite = this._pinSprites.get(name);
+      if (!sprite || sprite.userData.kind !== 'thumb') return;
+      if (!sprite.visible || sprite.userData.concealed || entry.hidden) return;
       const pic = this._hass?.states[entry.entityId]?.attributes?.entity_picture;
-      ov.setPicture(typeof pic === 'string' ? pic : undefined, true);
+      if (typeof pic === 'string') refreshPinPicture(pic);
+      sprite.userData.sig = '';
+      refresh = true;
     });
+    if (refresh) this._syncPinFaces();
   }
 
   // ── Mise en pause hors écran ───────────────────────────────────────────
@@ -5176,8 +5241,7 @@ export class Ha3dFloorplan extends HTMLElement {
     // Remove overlays & clusters
     this._clusters.forEach((c) => c.destroy());
     this._clusters.clear();
-    this.overlays.forEach((o) => o.destroy());
-    this.overlays.clear();
+    this._disposePinSprites();
     // Remove lights created by anchors
     this.anchors.forEach((e) => {
       if (e.light) { this.scene?.remove(e.light); e.light.dispose(); }
@@ -5438,12 +5502,12 @@ export class Ha3dFloorplan extends HTMLElement {
     }
   }
 
-  // ── Overlay positioning + clustering ──────────────────────────────────
+  // ── Pastilles : sprites, regroupement, chrome HTML ────────────────────
 
   /**
-   * Collections de travail du placement des pastilles, vidées à chaque image
-   * plutôt que recréées : sur une tablette, cinq collections et un objet par
-   * pastille à chaque image finissaient en à-coups du ramasse-miettes.
+   * Collections de travail du placement, vidées à chaque image plutôt que
+   * recréées : sur une tablette, cinq collections par image finissaient en
+   * à-coups du ramasse-miettes.
    */
   private _ovPos = new Map<string, { x: number; y: number }>();
   private _ovPosPool = new Map<string, { x: number; y: number }>();
@@ -5452,12 +5516,24 @@ export class Ha3dFloorplan extends HTMLElement {
   private _ovInCluster = new Set<string>();
   private _ovActive = new Set<string>();
 
+  /** Visibles : pas en édition (sauf aperçu de règle), et pas masquées d'un tap. */
+  private _pinsShown(): boolean {
+    return this._overlaysVisible && (!this._editMode || this._previewingRule);
+  }
+
   private _updateOverlayPositions(w: number, h: number) {
-    if (this._editMode && !this._previewingRule) return;
-    // 1. Compute 2D screen positions
+    const show = this._pinsShown();
+    if (this._pinGroup && this._pinGroup.visible !== show) this._pinGroup.visible = show;
+    if (!show || !this.camera) {
+      this._clusters.forEach((c) => c.hide());
+      this._hidePinChrome();
+      this._hidePinNames();
+      if (!show) this._closePinMenu();
+      return;
+    }
+
     const pos2d = this._ovPos; pos2d.clear();
     const behind = this._ovBehind; behind.clear();
-    // Ancres exclues du regroupement automatique (natures non-entité).
     const noCluster = this._ovNoCluster; noCluster.clear();
     const at = (name: string, x: number, y: number) => {
       let q = this._ovPosPool.get(name);
@@ -5467,50 +5543,55 @@ export class Ha3dFloorplan extends HTMLElement {
     };
     const multiFloor = !!this._plan?.floors?.length;
     const activeFloor = this._floorIndex();
+    const pinCard = cardPinLook(this._ui?.prefs.pins ?? this._scene?.settings?.ui?.pins);
+    const margin = hostMargin(this._modelSpan);
+    const cam = this.camera.position;
+    const refDist = Math.max(cam.distanceTo(this.controls?.target ?? cam), 1e-4);
+    const fov = this.camera.fov;
+    let pulsing = false;
+    const nowMs = performance.now();
 
-    this.anchors.forEach((entry, name) => {
-      // Une pastille d'un autre étage est cachée, et n'entre dans aucun
-      // regroupement (sinon un « 2 » du rez-de-chaussée flotterait à l'étage).
-      if (multiFloor && this._floorOfY(entry.worldPos.y) !== activeFloor) { behind.add(name); return; }
-      // Vecteur de travail réutilisé : un clone par ancre et par image finissait
-      // par peser en collecte mémoire sur les scènes chargées.
-      const p = this._projScratch.copy(entry.worldPos).project(this.camera!);
-      if (p.z >= 1) { behind.add(name); return; }
-      // Seules les ancres d'entité entrent dans un regroupement : une étiquette
-      // ou une roue n'a rien à faire dans un menu radial de voisinage.
-      if ((entry.kind ?? 'entity') !== 'entity') { at(name, ((p.x + 1) / 2) * w, ((-p.y + 1) / 2) * h); noCluster.add(name); return; }
-      at(name, ((p.x + 1) / 2) * w, ((-p.y + 1) / 2) * h);
+    this._pinSprites.forEach((sprite, name) => {
+      const entry = this.anchors.get(name);
+      if (!entry) { sprite.visible = false; return; }
+      offsetTowardCamera(entry.worldPos, cam, margin, sprite.position);
+      const otherFloor = multiFloor && this._floorOfY(entry.worldPos.y) !== activeFloor;
+      const concealed = sprite.userData.concealed === true;
+      if (entry.hidden || concealed || otherFloor) {
+        sprite.visible = false;
+        behind.add(name);
+        return;
+      }
+      const p = this._projScratch.copy(sprite.position).project(this.camera!);
+      if (p.z >= 1) { sprite.visible = false; behind.add(name); return; }
+      const x = ((p.x + 1) / 2) * w;
+      const y = ((-p.y + 1) / 2) * h;
+      if ((entry.kind ?? 'entity') !== 'entity') { at(name, x, y); noCluster.add(name); return; }
+      at(name, x, y);
     });
 
-    // 2. Cluster visible anchors (opt-in via cluster_threshold)
     const threshold = this._effectiveConfig?.cluster_threshold ?? 0;
     const inCluster = this._ovInCluster; inCluster.clear();
     const activeIds = this._ovActive; activeIds.clear();
-
-    // Sans regroupement, inutile de construire un tableau par ancre à chaque
-    // image : aucun groupe ne peut dépasser un élément.
     const groups = threshold > 0
       ? this._computeClusters(
-          [...pos2d.entries()].filter(([k]) => !noCluster.has(k)),
+          [...pos2d.entries()].filter(([k]) => !noCluster.has(k) && !behind.has(k)),
           threshold,
         )
       : [];
 
-    groups.filter(g => g.length > 1).forEach(group => {
+    groups.filter((g) => g.length > 1).forEach((group) => {
       const id = [...group].sort().join('|');
       activeIds.add(id);
-      group.forEach(k => inCluster.add(k));
-
+      group.forEach((k) => inCluster.add(k));
       const cx = group.reduce((s, k) => s + pos2d.get(k)!.x, 0) / group.length;
       const cy = group.reduce((s, k) => s + pos2d.get(k)!.y, 0) / group.length;
-
       let clusterOv = this._clusters.get(id);
       if (!clusterOv) {
         clusterOv = new ClusterOverlay(this.overlayContainer!);
         this._clusters.set(id, clusterOv);
       }
-
-      const items: ClusterItem[] = group.map(k => {
+      const items: ClusterItem[] = group.map((k) => {
         const entry = this.anchors.get(k)!;
         const desc = describeEntity(entry.entityId);
         const st = this._hass?.states[entry.entityId];
@@ -5524,78 +5605,57 @@ export class Ha3dFloorplan extends HTMLElement {
           onLongPress: () => this._openMoreInfo(entry.entityId),
         };
       });
-
       clusterOv.update(items);
       clusterOv.updatePosition(cx, cy);
       clusterOv.show();
+      let alpha = 1;
+      for (const k of group) {
+        const entry = this.anchors.get(k);
+        if (entry) alpha = Math.min(alpha, resolvePinLook(pinCard, entry).opacity);
+      }
+      this._applyPinAlpha(clusterOv.el, alpha);
     });
 
-    // Remove stale clusters
     this._clusters.forEach((clusterOv, id) => {
       if (!activeIds.has(id)) { clusterOv.destroy(); this._clusters.delete(id); }
     });
 
-    // 3. Show/hide individual overlays
-    // Distance de référence : celle du point visé, où une pastille garde sa taille.
-    const refDist = Math.max(this.camera!.position.distanceTo(this.controls?.target ?? new THREE.Vector3()), 1e-4);
-    this.anchors.forEach((_entry, name) => {
-      const ov = this.overlays.get(name);
-      if (!ov) return;
-      const entryF = this.anchors.get(name);
-      const otherFloor = !!entryF && multiFloor && this._floorOfY(entryF.worldPos.y) !== activeFloor;
-      const hide = behind.has(name) || inCluster.has(name) || otherFloor
-        || entryF?.hidden || ov.conditionHidden;
-
-      // Une roue d'actions gère elle-même son positionnement et sa visibilité :
-      // son menu ouvert doit rester en place.
-      if (ov instanceof ClusterOverlay) {
-        if (hide) { ov.hide(); return; }
-        const p = pos2d.get(name)!;
-        ov.updatePosition(p.x, p.y);
-        ov.show();
-        return;
+    this._pinSprites.forEach((sprite, name) => {
+      const entry = this.anchors.get(name);
+      if (!entry || behind.has(name)) { sprite.visible = false; return; }
+      const clustered = inCluster.has(name);
+      sprite.visible = !clustered;
+      if (!sprite.visible) return;
+      const dist = Math.max(cam.distanceTo(sprite.position), 1e-4);
+      const pxW = (sprite.userData.pxW as number) || 38;
+      const pxH = (sprite.userData.pxH as number) || 38;
+      const worldBase = sprite.userData.worldW as number;
+      let worldH: number;
+      if (worldBase > 0) {
+        const px = THREE.MathUtils.clamp(pixelsForWorldSize(dist, fov, h, worldBase), 28, 640);
+        worldH = worldSizeForPixels(dist, fov, h, px * (pxH / Math.max(pxW, 1)));
+      } else {
+        const k = THREE.MathUtils.clamp(Math.sqrt(refDist / dist), 0.72, 1.15);
+        worldH = worldSizeForPixels(dist, fov, h, pxH * k);
       }
-
-      if (hide) { ov.el.style.display = 'none'; return; }
-      const p = pos2d.get(name)!;
-
-      // Une vignette de caméra est un objet de la scène, pas un badge : sa
-      // taille suit la perspective, sinon elle semble rapetisser quand on
-      // approche — la maison grandit, elle non.
-      if (ov instanceof CameraOverlay) {
-        const entry = this.anchors.get(name)!;
-        // Largeur exprimee dans les unites du modele, quelles qu'elles soient.
-        const units = this._modelSpan * CAMERA_WIDTH_RATIO * (entry.size ?? 1);
-        const dist = this.camera!.position.distanceTo(entry.worldPos);
-        // Projection : hauteur du viewport / hauteur visible a cette distance.
-        const fov = (this.camera!.fov * Math.PI) / 180;
-        const pxPerUnit = h / (2 * Math.max(dist, 1e-4) * Math.tan(fov / 2));
-        ov.setPixelWidth(THREE.MathUtils.clamp(units * pxPerUnit, 28, 640));
-      }
-
-      ov.el.style.display = ov instanceof SensorOverlay ? 'block' : 'flex';
-      placeAt(ov.el, p.x, p.y);
-
-      // La profondeur se lit sur la taille : une pastille au fond de la maison
-      // est un peu plus petite et plus pâle qu'une pastille au premier plan.
-      // Rien n'est caché, et ce n'est qu'une division (aucun lancer de rayon).
-      if (!(ov instanceof CameraOverlay)) {
-        const entry = this.anchors.get(name)!;
-        const d = Math.max(this.camera!.position.distanceTo(entry.worldPos), 1e-4);
-        const k = THREE.MathUtils.clamp(Math.sqrt(refDist / d), 0.72, 1.15);
-        const scale = k.toFixed(2);
-        if (ov.el.style.scale !== scale) {
-          ov.el.style.scale = scale;
-          ov.el.style.opacity = String(Math.round((k < 1 ? 0.62 + 0.38 * (k - 0.72) / 0.28 : 1) * 100) / 100);
-        }
+      sprite.scale.set(worldH * (pxW / Math.max(pxH, 1)), worldH, 1);
+      const until = this._pinPulse.get(name);
+      if (until && until > nowMs) {
+        pulsing = true;
+        const s = 1 + 0.16 * Math.sin(nowMs / 160);
+        sprite.scale.multiplyScalar(s);
       }
     });
+    if (pulsing) this._dirty = true;
+
+    this._placePinChrome(w, h);
+    this._placePinNames();
+    this._placePinMenu(w, h);
   }
 
   private _computeClusters(items: [string, { x: number; y: number }][], threshold: number): string[][] {
     const groups: string[][] = [];
     const assigned = new Set<string>();
-
     items.forEach(([key, pos]) => {
       if (assigned.has(key)) return;
       const group = [key];
@@ -5609,122 +5669,611 @@ export class Ha3dFloorplan extends HTMLElement {
       });
       groups.push(group);
     });
-
     return groups;
   }
 
-  // ── Overlays ──────────────────────────────────────────────────────────
+  /** Pose `--ow-pin-alpha` seulement s'il change : écrire le style à chaque image coûte. */
+  private _applyPinAlpha(el: HTMLElement, opacity: number) {
+    const next = String(opacity);
+    if (el.style.getPropertyValue('--ow-pin-alpha') !== next) el.style.setProperty('--ow-pin-alpha', next);
+  }
+
+  private _pinColors(): { disc: string; line: string } {
+    const themed = this.overlayContainer?.querySelector('.ow-ui') as HTMLElement | null;
+    const cs = themed ? getComputedStyle(themed) : null;
+    const disc = cs?.getPropertyValue('--ow-chrome').trim() ?? '';
+    const line = cs?.getPropertyValue('--ow-line').trim() ?? '';
+    return {
+      disc: disc && !disc.includes('var(') ? disc : 'rgba(15,15,25,0.65)',
+      line: line && !line.includes('var(') ? line : 'rgba(255,255,255,0.12)',
+    };
+  }
+
+  private _pinShowNames(): boolean {
+    return !!this._ui?.prefs.show.names;
+  }
+
+  /** Le texte du cachet HTML, au survol ou quand tous les noms restent affichés. */
+  private _pinHoverText(entry: AnchorEntry): string {
+    const kind = entry.kind ?? 'entity';
+    if (kind !== 'entity') return entry.label;
+    if (isPlaceholder({ entity: entry.entityId, kind })) return `${entry.label} · ${t('demoLinkHint')}`;
+    const desc = describeEntity(entry.entityId);
+    const stateObj = this._hass?.states[entry.entityId];
+    const wanted = entry.display && entry.display !== 'auto' ? entry.display : null;
+    const overlayKind = wanted ?? desc.overlay;
+    if (overlayKind === 'badge') {
+      const raw = stateObj?.state ?? '\u2014';
+      const unit = (stateObj?.attributes?.unit_of_measurement as string) ?? '';
+      const value = _formatSensorValue(raw, entry.precision, entry.entityId, this._hass);
+      return `${entry.label}: ${value}${unit}`;
+    }
+    if (overlayKind === 'thumbnail') return entry.label;
+    return `${entry.label} \u2022 ${desc.stateText(stateObj)}`;
+  }
+
+  private _pinFace(entry: AnchorEntry, opacity: number, colors: { disc: string; line: string }): PinFace {
+    const kind = entry.kind ?? 'entity';
+    const base = { opacity, disc: colors.disc, line: colors.line, iconColor: '#e2e8f0' };
+    if (kind === 'label') {
+      return {
+        ...base,
+        shape: 'label',
+        disc: 'rgba(12,16,28,0.62)',
+        line: 'rgba(255,255,255,0.09)',
+        text: entry.label,
+        textColor: entry.color || 'rgba(255,255,255,0.82)',
+        icon: entry.icon,
+        iconColor: entry.color || 'rgba(255,255,255,0.82)',
+      };
+    }
+    if (kind === 'menu') {
+      return {
+        ...base,
+        shape: 'disc',
+        icon: entry.icon ?? 'mdi:dots-horizontal-circle',
+        domain: 'default',
+        iconColor: entry.color || '#7dd3fc',
+        badge: String(entry.actions?.length ?? 0),
+      };
+    }
+    if (kind === 'nav') {
+      return {
+        ...base,
+        shape: 'disc',
+        icon: entry.icon ?? 'mdi:arrow-right-circle',
+        domain: 'default',
+        iconColor: '#7dd3fc',
+      };
+    }
+    if (isPlaceholder({ entity: entry.entityId, kind })) {
+      return {
+        ...base,
+        shape: 'disc',
+        glyph: '+',
+        iconColor: '#7dd3fc',
+        dashed: true,
+        line: 'rgba(125,211,252,0.7)',
+      };
+    }
+    const wanted = entry.display && entry.display !== 'auto' ? entry.display : null;
+    const desc = describeEntity(entry.entityId);
+    const overlayKind = wanted ?? desc.overlay;
+    const stateObj = this._hass?.states[entry.entityId];
+    if (overlayKind === 'thumbnail') {
+      const pic = stateObj?.attributes?.entity_picture;
+      return {
+        ...base,
+        shape: 'thumb',
+        disc: 'rgba(10,14,24,0.85)',
+        line: 'rgba(255,255,255,0.14)',
+        text: entry.label,
+        picture: typeof pic === 'string' ? pic : undefined,
+        offline: t('camOffline'),
+        active: desc.isOn(stateObj),
+      };
+    }
+    if (overlayKind === 'badge') {
+      const raw = stateObj?.state ?? '\u2014';
+      const unit = (stateObj?.attributes?.unit_of_measurement as string) ?? '';
+      const value = _formatSensorValue(raw, entry.precision, entry.entityId, this._hass);
+      return {
+        ...base,
+        shape: 'badge',
+        line: 'rgba(0,204,136,0.3)',
+        text: `${value}${unit}`,
+        textColor: deviceTint(entry.entityId, stateObj?.attributes ?? {}),
+      };
+    }
+    const on = desc.isOn(stateObj);
+    const tint = deviceTint(entry.entityId, stateObj?.attributes ?? {});
+    const hex = `#${entry.targetColor.getHexString()}`;
+    return {
+      ...base,
+      shape: 'disc',
+      icon: entry.icon ?? desc.icon(stateObj),
+      domain: entry.domain,
+      iconColor: on ? hex : iconOffColor(tint),
+      glow: on ? hex : undefined,
+    };
+  }
 
   private _createOverlays() {
-    this._clusters.forEach(c => c.destroy());
+    this._clusters.forEach((c) => c.destroy());
     this._clusters.clear();
-    this.overlays.forEach((o) => o.destroy());
-    this.overlays.clear();
+    this._closePinMenu();
+    this._syncPinFaces();
+  }
 
-    this.anchors.forEach((entry, name) => {
-      const kind = entry.kind ?? 'entity';
+  private _updateOverlayStates() {
+    this._syncPinFaces();
+    if (this._menuPin && this._pinMenu) {
+      const entry = this.anchors.get(this._menuPin);
+      if (entry) this._pinMenu.update(this._buildWheelItems(entry));
+    }
+  }
 
-      // Étiquette : texte seul, aucune entité.
-      if (kind === 'label') {
-        this.overlays.set(name, new LabelOverlay(
-          this.overlayContainer!, entry.label, entry.icon, entry.color,
-        ));
-        return;
-      }
-
-      // Ancre d'entité sans entité : un emplacement à relier. Un clic propose
-      // de choisir l'entité, plutôt que d'afficher l'état d'une entité vide.
-      if (isPlaceholder({ entity: entry.entityId, kind })) {
-        const slot = new AnchorOverlay(
-          this.overlayContainer!,
-          'default',
-          `${entry.label} · ${t('demoLinkHint')}`,
-          () => this._linkPlaceholder(name),
-          () => this._linkPlaceholder(name),
-          '',
-        );
-        slot.el.style.borderStyle = 'dashed';
-        slot.el.style.borderColor = 'rgba(125,211,252,0.7)';
-        slot.el.style.color = '#7dd3fc';
-        slot.el.style.fontSize = '20px';
-        slot.setGlyph('+');
-        slot.el.dataset.placeholder = '1';
-        this.overlays.set(name, slot);
-        return;
-      }
-
-      // Roue d'actions : le menu radial des regroupements, alimenté par les
-      // actions de l'ancre au lieu des ancres voisines.
-      if (kind === 'menu') {
-        const wheel = new ClusterOverlay(this.overlayContainer!, {
-          icon: entry.icon ?? 'mdi:dots-horizontal-circle',
-          title: entry.label,
+  private _syncPinFaces() {
+    if (!this._pinGroup) return;
+    if (this._pinSyncing) { this._pinSyncAgain = true; return; }
+    this._pinSyncing = true;
+    try {
+      const colors = this._pinColors();
+      const card = cardPinLook(this._ui?.prefs.pins ?? this._scene?.settings?.ui?.pins);
+      const keep = new Set<string>();
+      this.anchors.forEach((entry, name) => {
+        keep.add(name);
+        const sprite = this._ensurePinSprite(name);
+        const look = resolvePinLook(card, entry);
+        const flags = pinDepthFlags(look.throughWalls);
+        const mat = sprite.material as THREE.SpriteMaterial;
+        mat.depthTest = flags.depthTest;
+        mat.depthWrite = false;
+        mat.opacity = 1;
+        sprite.renderOrder = flags.renderOrder;
+        const face = this._pinFace(entry, look.opacity, colors);
+        const key = pinFaceKey(face);
+        sprite.userData.kind = face.shape;
+        sprite.userData.inert = face.shape === 'label';
+        sprite.userData.placeholder = face.dashed === true;
+        sprite.userData.worldW = face.shape === 'thumb'
+          ? this._modelSpan * CAMERA_WIDTH_RATIO * (entry.size ?? 1)
+          : 0;
+        sprite.raycast = face.shape === 'label' ? () => {} : THREE.Sprite.prototype.raycast;
+        if (sprite.userData.sig === key) return;
+        const painted = paintPin(sprite.userData.canvas as HTMLCanvasElement, face, () => {
+          sprite.userData.sig = '';
+          this._syncPinFaces();
+          this._requestRender();
         });
-        wheel.update(this._buildWheelItems(entry));
-        wheel.show();
-        this.overlays.set(name, wheel);
-        return;
+        sprite.userData.sig = key;
+        sprite.userData.pxW = painted.width;
+        sprite.userData.pxH = painted.height;
+        sprite.center.set(0.5, painted.anchorY);
+        const tex = mat.map as THREE.CanvasTexture | null;
+        if (tex) tex.needsUpdate = true;
+      });
+      for (const [name, sprite] of this._pinSprites) {
+        if (!keep.has(name)) this._disposePinSprite(sprite, name);
       }
+    } finally {
+      this._pinSyncing = false;
+      if (this._pinSyncAgain) { this._pinSyncAgain = false; this._syncPinFaces(); }
+    }
+  }
 
-      // Navigation : une pastille dont l'appui vole vers une vue.
-      if (kind === 'nav') {
-        this.overlays.set(name, new AnchorOverlay(
-          this.overlayContainer!,
-          'nav',
-          entry.label,
-          () => this._flyToViewId(entry.navViewId),
-          () => this._flyToViewId(entry.navViewId),
-          entry.icon ?? 'mdi:arrow-right-circle',
-        ));
-        return;
-      }
-
-      // La surcharge par ancre prime sur le descripteur : une camera peut etre
-      // ramenee a une simple pastille.
-      const wanted = entry.display && entry.display !== 'auto' ? entry.display : null;
-      const overlayKind = wanted ?? describeEntity(entry.entityId).overlay;
-
-      // Caméra : une vignette de l'image, à l'emplacement réel de l'appareil.
-      if (overlayKind === 'thumbnail') {
-        const cam = new CameraOverlay(
-          this.overlayContainer!,
-          entry.label,
-          () => this._openMoreInfo(entry.entityId),
-          t('camOffline'),
-        );
-        cam.setPicture(this._hass?.states[entry.entityId]?.attributes?.entity_picture as string | undefined);
-        this.overlays.set(name, cam);
-        return;
-      }
-
-      if (overlayKind === 'badge') {
-        const overlay = new SensorOverlay(
-          this.overlayContainer!,
-          () => this._openMoreInfo(entry.entityId),
-        );
-        this.overlays.set(name, overlay);
-        return;
-      }
-
-      const onShortClick = this._getShortClickHandler(entry);
-      const overlay = new AnchorOverlay(
-        this.overlayContainer!,
-        entry.domain,
-        entry.label,
-        onShortClick,
-        () => this._openMoreInfo(entry.entityId),
-        entry.icon,
-      );
-      this.overlays.set(name, overlay);
+  private _ensurePinSprite(name: string): THREE.Sprite {
+    const existing = this._pinSprites.get(name);
+    if (existing) return existing;
+    const canvas = document.createElement('canvas');
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false;
+    const mat = new THREE.SpriteMaterial({
+      map: tex,
+      transparent: true,
+      depthWrite: false,
+      depthTest: false,
+      opacity: 1,
+      sizeAttenuation: true,
+      fog: false,
     });
+    mat.toneMapped = false;
+    const sprite = new THREE.Sprite(mat);
+    sprite.name = `pin:${name}`;
+    sprite.userData.pin = name;
+    sprite.userData.canvas = canvas;
+    sprite.userData.sig = '';
+    this._pinGroup!.add(sprite);
+    this._pinSprites.set(name, sprite);
+    return sprite;
+  }
+
+  private _disposePinSprite(sprite: THREE.Sprite, name: string) {
+    const mat = sprite.material as THREE.SpriteMaterial;
+    mat.map?.dispose();
+    mat.dispose();
+    sprite.removeFromParent();
+    this._pinSprites.delete(name);
+    this._dropPinNameLabel(name);
+  }
+
+  private _disposePinSprites() {
+    this._cancelPinPress();
+    this._closePinMenu();
+    this._pinMenu?.destroy();
+    this._pinMenu = null;
+    for (const [name, sprite] of [...this._pinSprites]) this._disposePinSprite(sprite, name);
+    this._pinPulse.clear();
+    this._hidePinChrome();
+  }
+
+  private _mountPinChrome() {
+    if (this._pinChrome || !this.overlayContainer) return;
+    const el = document.createElement('div');
+    el.style.cssText = [
+      'position:absolute', 'width:40px', 'height:40px', 'z-index:6',
+      'transform:translate(-50%,-50%)', 'pointer-events:none', 'display:none',
+    ].join(';');
+    const label = document.createElement('div');
+    label.className = 'ow-pin-label';
+    label.style.cssText = [
+      'position:absolute', 'bottom:calc(100% + 8px)', 'left:50%', 'transform:translateX(-50%)',
+      'background:var(--ow-chrome, rgba(0,0,0,0.82))', 'color:var(--ow-text, #fff)',
+      'box-shadow:var(--ow-shadow, none)', 'font-size:11px',
+      'font-family:var(--primary-font-family,sans-serif)',
+      'padding:3px 8px', 'border-radius:4px', 'white-space:nowrap', 'pointer-events:none', 'display:none',
+    ].join(';');
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 36 36');
+    svg.setAttribute('width', '42');
+    svg.setAttribute('height', '42');
+    svg.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);display:none;overflow:visible;';
+    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circle.setAttribute('cx', '18');
+    circle.setAttribute('cy', '18');
+    circle.setAttribute('r', '16');
+    circle.setAttribute('fill', 'none');
+    circle.setAttribute('stroke', 'rgba(255,255,255,0.7)');
+    circle.setAttribute('stroke-width', '2');
+    circle.setAttribute('stroke-dasharray', '100.5');
+    circle.setAttribute('stroke-dashoffset', '100.5');
+    circle.setAttribute('stroke-linecap', 'round');
+    circle.style.cssText = 'transform-origin:18px 18px;transform:rotate(-90deg);';
+    svg.appendChild(circle);
+    el.append(label, svg);
+    this.overlayContainer.appendChild(el);
+    this._pinChrome = el;
+    this._pinChromeLabel = label;
+    this._pinChromeRing = circle;
+  }
+
+  private _placePinChrome(w: number, h: number) {
+    const el = this._pinChrome;
+    const label = this._pinChromeLabel;
+    if (!el || !label || !this.camera) return;
+    const labelHold = this._pinLabelUntil > performance.now() ? this._pinLabelName : null;
+    const name = this._pinPress?.name ?? this._pinHover ?? labelHold ?? this._pinGuide;
+    const sprite = name ? this._pinSprites.get(name) : undefined;
+    const entry = name ? this.anchors.get(name) : undefined;
+    if (!sprite?.visible || !entry) {
+      el.style.display = 'none';
+      this._setPinHoverLabel(label, false, '');
+      return;
+    }
+    const p = this._projScratch.copy(sprite.position).project(this.camera);
+    if (p.z >= 1) {
+      el.style.display = 'none';
+      this._setPinHoverLabel(label, false, '');
+      return;
+    }
+    el.style.display = 'block';
+    placeAt(el, ((p.x + 1) / 2) * w, ((-p.y + 1) / 2) * h);
+    // L'anneau seulement. Le nom est un cachet à part, sinon le survol le double.
+    this._setPinHoverLabel(label, false, '');
+  }
+
+  /** `display`, pas l'opacité : une règle CSS peut forcer celle-ci. */
+  private _setPinHoverLabel(label: HTMLElement, shown: boolean, text: string) {
+    label.style.display = shown ? 'block' : 'none';
+    label.textContent = text;
   }
 
   /**
-   * Entrees d'une roue d'actions.
-   *
-   * Reconstruites a chaque mise a jour d'etat : une valeur de capteur affichee
-   * dans la roue doit suivre l'entite, pas rester figee au chargement.
+   * Un cachet par pastille visible, 8 px au-dessus du cadre de 40 px.
+   * Un mur peut cacher le sprite sans ce nom : pas de lancer de rayon.
    */
+  private _placePinNames() {
+    const always = this._pinShowNames();
+    const hold = this._pinLabelUntil > performance.now() ? this._pinLabelName : null;
+    const pos = this._ovPos;
+    this._pinSprites.forEach((sprite, name) => {
+      const entry = this.anchors.get(name);
+      const q = pos.get(name);
+      const over = this._pinHover === name || hold === name;
+      const show = !!entry && sprite.visible && sprite.userData.inert !== true && !!q
+        && htmlHoverNameShown(always, over);
+      const existing = this._pinNameLabels.get(name);
+      if (!show || !entry || !q) {
+        if (existing) existing.style.display = 'none';
+        return;
+      }
+      const el = existing ?? this._mountPinNameLabel(name);
+      const text = this._pinHoverText(entry);
+      if (el.textContent !== text) el.textContent = text;
+      el.style.display = 'block';
+      placeAt(el, q.x, q.y);
+    });
+  }
+
+  private _mountPinNameLabel(name: string): HTMLDivElement {
+    const label = document.createElement('div');
+    label.className = 'ow-pin-label';
+    label.dataset.pin = name;
+    label.style.cssText = [
+      'position:absolute', 'z-index:6', 'left:0', 'top:0',
+      'transform:translate(-50%, calc(-100% - 28px))',
+      'background:var(--ow-chrome, rgba(0,0,0,0.82))', 'color:var(--ow-text, #fff)',
+      'box-shadow:var(--ow-shadow, none)', 'font-size:11px',
+      'font-family:var(--primary-font-family,sans-serif)',
+      'padding:3px 8px', 'border-radius:4px', 'white-space:nowrap',
+      'pointer-events:none', 'display:none',
+    ].join(';');
+    this.overlayContainer?.appendChild(label);
+    this._pinNameLabels.set(name, label);
+    return label;
+  }
+
+  private _hidePinNames() {
+    for (const el of this._pinNameLabels.values()) el.style.display = 'none';
+  }
+
+  private _dropPinNameLabel(name: string) {
+    const el = this._pinNameLabels.get(name);
+    if (!el) return;
+    el.remove();
+    this._pinNameLabels.delete(name);
+  }
+
+  private _hidePinChrome() {
+    this._pinHover = null;
+    this._pinGuide = null;
+    this._pinLabelUntil = 0;
+    this._pinLabelName = null;
+    this._hidePinRing();
+    if (this._pinChrome) this._pinChrome.style.display = 'none';
+    if (this._pinChromeLabel) this._setPinHoverLabel(this._pinChromeLabel, false, '');
+    if (this.canvas && !this._editMode) this.canvas.style.cursor = '';
+  }
+
+  private _showPinRing() {
+    const circle = this._pinChromeRing;
+    const svg = circle?.ownerSVGElement;
+    if (!circle || !svg) return;
+    svg.style.display = 'block';
+    circle.style.transition = 'none';
+    circle.setAttribute('stroke-dashoffset', '100.5');
+    requestAnimationFrame(() => {
+      circle.style.transition = 'stroke-dashoffset 450ms linear';
+      circle.setAttribute('stroke-dashoffset', '0');
+    });
+  }
+
+  private _hidePinRing() {
+    const circle = this._pinChromeRing;
+    const svg = circle?.ownerSVGElement;
+    if (!circle || !svg) return;
+    svg.style.display = 'none';
+    circle.style.transition = 'none';
+    circle.setAttribute('stroke-dashoffset', '100.5');
+  }
+
+  private _eventNdc(e: PointerEvent): THREE.Vector2 | null {
+    if (!this.canvas) return null;
+    const rect = this.canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    this._pinNdc.set(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    return this._pinNdc;
+  }
+
+  /** Rayon sur le groupe de pastilles seulement : pas le modèle. */
+  private _pickPin(ndc: THREE.Vector2): string | null {
+    if (!this.camera || !this._pinGroup?.visible) return null;
+    this._pinRay.setFromCamera(ndc, this.camera);
+    const hits = this._pinRay.intersectObjects(this._pinGroup.children, false);
+    for (const hit of hits) {
+      const sprite = hit.object as THREE.Sprite;
+      if (!sprite.visible || sprite.userData.inert) continue;
+      const name = sprite.userData.pin as string | undefined;
+      if (name) return name;
+    }
+    return null;
+  }
+
+  private _beginPinPointer(e: PointerEvent): boolean {
+    if (e.button !== 0) return false;
+    const ndc = this._eventNdc(e);
+    if (!ndc) return false;
+    const name = this._pickPin(ndc);
+    if (!name) return false;
+    e.stopImmediatePropagation();
+    e.preventDefault();
+    this._cancelPinPress();
+    const press = {
+      name,
+      x: e.clientX,
+      y: e.clientY,
+      pointerId: e.pointerId,
+      timer: null as ReturnType<typeof setTimeout> | null,
+      ringTimer: null as ReturnType<typeof setTimeout> | null,
+      moved: false,
+      fired: false,
+    };
+    this._pinPress = press;
+    press.ringTimer = setTimeout(() => {
+      if (this._pinPress !== press || press.moved) return;
+      this._showPinRing();
+      this._requestRender();
+    }, 200);
+    press.timer = setTimeout(() => {
+      if (this._pinPress !== press || press.moved) return;
+      press.fired = true;
+      this._hidePinRing();
+      this._pinAct(name, true);
+      this._pinPress = null;
+    }, 650);
+    if (e.pointerType !== 'mouse') {
+      this._pinLabelName = name;
+      this._pinLabelUntil = performance.now() + 2500;
+    }
+    this._requestRender();
+    return true;
+  }
+
+  private _movePinPointer(e: PointerEvent) {
+    const press = this._pinPress;
+    if (press && e.pointerId === press.pointerId) {
+      if (Math.hypot(e.clientX - press.x, e.clientY - press.y) > 12) {
+        press.moved = true;
+        this._hidePinRing();
+      }
+      return;
+    }
+    if (e.pointerType !== 'mouse' || e.buttons) return;
+    const ndc = this._eventNdc(e);
+    this._setPinHover(ndc ? this._pickPin(ndc) : null);
+  }
+
+  private _endPinPress() {
+    const press = this._pinPress;
+    if (!press) return;
+    this._pinPress = null;
+    if (press.timer) clearTimeout(press.timer);
+    if (press.ringTimer) clearTimeout(press.ringTimer);
+    this._hidePinRing();
+    if (!press.fired && !press.moved) this._pinAct(press.name, false);
+  }
+
+  private _cancelPinPress() {
+    const press = this._pinPress;
+    if (!press) return;
+    this._pinPress = null;
+    if (press.timer) clearTimeout(press.timer);
+    if (press.ringTimer) clearTimeout(press.ringTimer);
+    this._hidePinRing();
+  }
+
+  private _setPinHover(name: string | null) {
+    if (this._pinHover === name) return;
+    this._pinHover = name;
+    if (this.canvas && !this._editMode) this.canvas.style.cursor = name ? 'pointer' : '';
+    this._requestRender();
+  }
+
+  private _pinAct(name: string, long: boolean) {
+    const entry = this.anchors.get(name);
+    if (!entry) return;
+    const kind = entry.kind ?? 'entity';
+    if (kind === 'label') return;
+    if (kind === 'menu') { this._togglePinMenu(name); return; }
+    if (kind === 'nav') { this._flyToViewId(entry.navViewId); return; }
+    if (isPlaceholder({ entity: entry.entityId, kind })) { this._linkPlaceholder(name); return; }
+    if (long) {
+      if (entry.entityId) this._openMoreInfo(entry.entityId);
+      return;
+    }
+    const wanted = entry.display && entry.display !== 'auto' ? entry.display : null;
+    const overlayKind = wanted ?? describeEntity(entry.entityId).overlay;
+    if (overlayKind === 'thumbnail' || overlayKind === 'badge') {
+      this._openMoreInfo(entry.entityId);
+      return;
+    }
+    this._getShortClickHandler(entry)();
+  }
+
+  private _togglePinMenu(name: string) {
+    if (this._menuPin === name) { this._closePinMenu(); return; }
+    const entry = this.anchors.get(name);
+    if (!entry || !this.overlayContainer) return;
+    this._menuPin = name;
+    if (!this._pinMenu) {
+      this._pinMenu = new ClusterOverlay(this.overlayContainer, {
+        icon: entry.icon ?? 'mdi:dots-horizontal-circle',
+        title: entry.label,
+        ghost: true,
+        onMenu: (open) => {
+          if (open) return;
+          this._menuPin = null;
+          this._pinMenu?.hide();
+          this._requestRender();
+        },
+      });
+    }
+    this._pinMenu.update(this._buildWheelItems(entry));
+    this._pinMenu.show();
+    this._pinMenu.openMenu();
+    this._requestRender();
+  }
+
+  private _closePinMenu() {
+    this._menuPin = null;
+    this._pinMenu?.closeMenu();
+    this._pinMenu?.hide();
+  }
+
+  private _placePinMenu(w: number, h: number) {
+    if (!this._menuPin || !this._pinMenu || !this.camera) return;
+    const sprite = this._pinSprites.get(this._menuPin);
+    if (!sprite?.visible) { this._closePinMenu(); return; }
+    const p = this._projScratch.copy(sprite.position).project(this.camera);
+    if (p.z >= 1) { this._closePinMenu(); return; }
+    this._pinMenu.updatePosition(((p.x + 1) / 2) * w, ((-p.y + 1) / 2) * h);
+    this._pinMenu.show();
+  }
+
+  /** L'élément HTML posé sur une pastille, pour le guide de la démo. */
+  pinAnchorEl(entityId: string): HTMLElement | null {
+    let found: string | null = null;
+    this.anchors.forEach((entry, key) => {
+      if (!found && entry.entityId === entityId) found = key;
+    });
+    if (!found) return null;
+    this._pinGuide = found;
+    this._mountPinChrome();
+    if (this.canvas && this.camera) this._updateOverlayPositions(this.canvas.offsetWidth, this.canvas.offsetHeight);
+    return this._pinChrome;
+  }
+
+  private _guidePinEl(): HTMLElement | undefined {
+    for (const [name, sprite] of this._pinSprites) {
+      if (!sprite.visible || sprite.userData.inert) continue;
+      this._pinGuide = name;
+      this._mountPinChrome();
+      if (this.canvas && this.camera) this._updateOverlayPositions(this.canvas.offsetWidth, this.canvas.offsetHeight);
+      return this._pinChrome ?? undefined;
+    }
+    return undefined;
+  }
+
+  private _findPin(target: string): string | null {
+    let found: string | null = null;
+    this.anchors.forEach((entry, key) => {
+      if (found) return;
+      if (entry.entityId === target || entry.label === target) found = key;
+    });
+    return found;
+  }
+
+  private _pulsePin(name: string, durationMs: number) {
+    this._pinPulse.set(name, performance.now() + durationMs);
+    this._requestRender();
+  }
+
   private _buildWheelItems(entry: AnchorEntry): ClusterItem[] {
     return (entry.actions ?? []).map((a) => {
       const target = this._actionTarget(a);
@@ -5923,20 +6472,8 @@ export class Ha3dFloorplan extends HTMLElement {
       this._previewTimer = null;
       this._previewingRule = false;
       // Sorti de l'édition entre-temps : les overlays doivent rester visibles.
-      if (this._editMode) this.overlays.forEach((o) => { o.el.style.display = 'none'; });
+      if (this._editMode && this._pinGroup) this._pinGroup.visible = false;
     }, (seconds + 0.5) * 1000);
-  }
-
-  /** Ancre visee par une action, par entite puis par libelle. */
-  private _findOverlayFor(target: string): AnyOverlay | null {
-    let found: AnyOverlay | null = null;
-    this.anchors.forEach((entry, key) => {
-      if (found) return;
-      if (entry.entityId === target || entry.label === target) {
-        found = this.overlays.get(key) ?? null;
-      }
-    });
-    return found;
   }
 
   private _executeAction(action: Action) {
@@ -5954,8 +6491,8 @@ export class Ha3dFloorplan extends HTMLElement {
         break;
       }
       case 'highlight_anchor': {
-        const ov = this._findOverlayFor(action.anchor);
-        if (ov) pulseOverlay(ov.el, action.color ?? '#ef4444', (action.duration ?? 6) * 1000);
+        const name = this._findPin(action.anchor);
+        if (name) this._pulsePin(name, (action.duration ?? 6) * 1000);
         else console.warn('[Owlnest] highlight_anchor: anchor not found:', action.anchor);
         break;
       }
@@ -5989,66 +6526,12 @@ export class Ha3dFloorplan extends HTMLElement {
 
     // ── Anchors (only needs this.anchors) ────────────────────────────
     this.anchors.forEach((entry, key) => {
-      const overlay = this.overlays.get(key);
-      if (!overlay || !('conditionHidden' in overlay)) return;
-      if (!entry.visibleIf) {
-        overlay.conditionHidden = false;
-        return;
-      }
-      overlay.conditionHidden = !evalCondition(entry.visibleIf, this._hass!);
-    });
-  }
-
-  private _updateOverlayStates() {
-    this.anchors.forEach((entry, name) => {
-      const overlay = this.overlays.get(name);
-      if (!overlay) return;
-
-      // Étiquette, roue et navigation ne reflètent aucun état d'entité — sauf
-      // une roue dont les entrées ciblent des entités.
-      const kind = entry.kind ?? 'entity';
-      if (kind !== 'entity') {
-        if (overlay instanceof LabelOverlay) overlay.updateText(entry.label);
-        if (overlay instanceof ClusterOverlay && entry.actions?.length) {
-          overlay.update(this._buildWheelItems(entry));
-        }
-        return;
-      }
-
-      // Un emplacement à relier garde son invitation : il n'a pas d'état.
-      if (overlay.el.dataset.placeholder) return;
-
-      const stateObj = this._hass?.states[entry.entityId];
-
-      if (overlay instanceof CameraOverlay) {
-        const desc = describeEntity(entry.entityId);
-        overlay.updateState(desc.isOn(stateObj), entry.label);
-        // Le token de l'URL est renouvelé par HA : on suit sans forcer.
-        overlay.setPicture(stateObj?.attributes?.entity_picture as string | undefined);
-        return;
-      }
-
-      if (overlay instanceof SensorOverlay) {
-        const rawValue = stateObj?.state ?? '\u2014';
-        const unit = (stateObj?.attributes.unit_of_measurement as string) ?? '';
-        const value = _formatSensorValue(rawValue, entry.precision, entry.entityId, this._hass);
-        overlay.setTint(deviceTint(entry.entityId, stateObj?.attributes ?? {}));
-        overlay.updateValue(value, unit, `${entry.label}: ${value}${unit}`);
-        return;
-      }
-
-      if (overlay instanceof AnchorOverlay) {
-        // Le descripteur porte l'ic\u00F4ne, le texte d'\u00E9tat et la s\u00E9mantique du
-        // \u00AB allum\u00E9 \u00BB \u2014 un capteur d'ouverture affiche donc une porte ouverte,
-        // pas un cercle bleu.
-        const desc = describeEntity(entry.entityId);
-        overlay.setStateIcon(desc.icon(stateObj), entry.domain);
-        overlay.updateState(
-          desc.isOn(stateObj),
-          entry.targetColor,
-          `${entry.label} \u2022 ${desc.stateText(stateObj)}`,
-          deviceTint(entry.entityId, stateObj?.attributes ?? {}),
-        );
+      const sprite = this._pinSprites.get(key);
+      if (!sprite) return;
+      const next = !!entry.visibleIf && !evalCondition(entry.visibleIf, this._hass!);
+      if (sprite.userData.concealed !== next) {
+        sprite.userData.concealed = next;
+        this._requestRender();
       }
     });
   }
@@ -6126,8 +6609,7 @@ export class Ha3dFloorplan extends HTMLElement {
     this._panelGizmo = null;
     this._clusters.forEach((c) => c.destroy());
     this._clusters.clear();
-    this.overlays.forEach((o) => o.destroy());
-    this.overlays.clear();
+    this._disposePinSprites();
     this.anchors.forEach((e) => {
       if (e.light) { this.scene?.remove(e.light); e.light.dispose(); }
       if (e.lightTarget) this.scene?.remove(e.lightTarget);

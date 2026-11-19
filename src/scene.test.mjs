@@ -17,6 +17,21 @@ test('l’ancre d’une lampe posée garde son identifiant, les autres sont renu
   assert.deepEqual(out.anchors.map((a) => a.id), ['plan_lamp_i1', 'anchor_000']);
 });
 
+test('l’apparence d’une pastille survit à l’enregistrement et au retour vers la carte', () => {
+  const out = buildSceneFromEditor('s', new Map([['a', anchor({ throughWalls: false, opacity: 0.45 })]]), current, {});
+  assert.equal(out.anchors[0].throughWalls, false);
+  assert.equal(out.anchors[0].opacity, 0.45);
+  const cfg = sceneToEffectiveConfig(out, { type: 'custom:ha-3d-floorplan' });
+  assert.equal(cfg.anchors[0].throughWalls, false);
+  assert.equal(cfg.anchors[0].opacity, 0.45);
+});
+
+test('une pastille sans avis propre n’écrit pas d’apparence', () => {
+  const out = buildSceneFromEditor('s', new Map([['a', anchor()]]), current, {});
+  assert.equal(out.anchors[0].throughWalls, undefined);
+  assert.equal(out.anchors[0].opacity, undefined);
+});
+
 test('l’identifiant d’une ancre de lampe passe de la scène à la carte', () => {
   const scene = { ...current, anchors: [{ id: 'plan_lamp_i1', entity: 'light.salon', position: [1, 1.4, 1] }, { id: 'anchor_000', entity: 'light.x', position: [0, 0, 0] }] };
   const cfg = sceneToEffectiveConfig(scene, { type: 'custom:ha-3d-floorplan' });

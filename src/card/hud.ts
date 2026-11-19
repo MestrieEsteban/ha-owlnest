@@ -14,6 +14,7 @@ import {
   ACCENTS, MODULES, SKINS, SLOTS, applyTheme, uiPrefs,
   type ModuleId, type Skin, type Slot, type UiPrefs,
 } from '../ui/theme';
+import { PIN_DISC, pinDiscStep, type PinDiscStep } from '../pin-look';
 
 export interface DockButton {
   id: string;
@@ -56,6 +57,7 @@ export interface HudStatus {
 }
 
 const SKIN_LABEL: Record<Skin, StringKey> = { night: 'uiSkinNight', paper: 'uiSkinPaper', glass: 'uiSkinGlass', ha: 'uiSkinHa' };
+const PIN_STEP_LABEL: Record<PinDiscStep, StringKey> = { solid: 'uiPinSolid', soft: 'uiPinSoft', glass: 'uiPinGlass' };
 const SKIN_SWATCH: Record<Skin, string> = { night: '#0b1220', paper: '#fbfaf7', glass: 'rgba(10,16,30,0.42)', ha: '#ffffff' };
 const MODULE_LABEL: Record<ModuleId, StringKey> = { rooms: 'uiModRooms', status: 'uiModStatus', dock: 'uiModDock' };
 type Toggleable = 'rooms' | 'views' | 'status';
@@ -319,7 +321,6 @@ export class CardHud {
   // ── Rendu ────────────────────────────────────────────────────────────────
 
   private render() {
-    this.host.classList.toggle('ow-names', this.prefs.show.names);
     for (const [, el] of this.slots) el.innerHTML = '';
     this.roomPanel?.remove();
     this.roomPanel = null;
@@ -603,6 +604,13 @@ export class CardHud {
           ${sw(p.show.status, 'status', t('uiModStatus'))}
           ${sw(p.show.names, 'names', t('uiNames'))}
           ${sw(p.autohide, 'autohide', t('uiAutohide'))}</div>
+        <div><div class="ow-h5">${t('uiPins')}</div>
+          ${sw(p.pins.throughWalls, 'throughWalls', t('uiPinsThrough'))}
+          <div class="ow-hint" style="margin:0 0 10px">${t('uiPinsThroughHint')}</div>
+          <div class="ow-h5">${t('uiPinOpacity')}</div>
+          <div class="ow-steps">${(Object.keys(PIN_DISC) as PinDiscStep[]).map((step) =>
+            `<button type="button" class="${pinDiscStep(p.pins.opacity) === step ? 'ow-on' : ''}" data-pin="${step}">${t(PIN_STEP_LABEL[step])}</button>`).join('')}</div>
+          <div class="ow-hint" style="margin-top:8px">${t('uiPinOpacityHint')}</div></div>
       </div>
       <footer><button type="button" class="ow-btn ow-ghost" data-act="reset">${t('uiReset')}</button><button type="button" class="ow-btn ow-primary" data-act="close">${t('planDone')}</button></footer>`;
   }
@@ -619,10 +627,15 @@ export class CardHud {
     if (!b) return;
     if (b.dataset.skin) { this.prefs.skin = b.dataset.skin as Skin; this.save(); this.renderSheet(); return; }
     if (b.dataset.acc) { this.prefs.accent = b.dataset.acc; this.save(); this.renderSheet(); return; }
+    if (b.dataset.pin && b.dataset.pin in PIN_DISC) {
+      this.prefs.pins.opacity = PIN_DISC[b.dataset.pin as PinDiscStep];
+      this.save(); this.renderSheet(); return;
+    }
     if (b.dataset.opt) {
       const k = b.dataset.opt;
       if (k === 'autohide') this.prefs.autohide = !this.prefs.autohide;
       else if (k === 'names') this.prefs.show.names = !this.prefs.show.names;
+      else if (k === 'throughWalls') this.prefs.pins.throughWalls = !this.prefs.pins.throughWalls;
       else this.prefs.show[k as Toggleable] = !this.prefs.show[k as Toggleable];
       this.save(); this.render(); this.renderSheet(); return;
     }

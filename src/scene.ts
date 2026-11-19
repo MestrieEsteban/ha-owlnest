@@ -283,6 +283,8 @@ export function sceneToEffectiveConfig(scene: OwlnestScene, base: CardConfig): C
       navViewId: a.navViewId,
       size: a.size,
       display: a.display,
+      throughWalls: a.throughWalls,
+      opacity: a.opacity,
       planId: a.id?.startsWith('plan_') ? a.id : undefined,
     })),
     camera_views: scene.camera_views?.length
@@ -330,6 +332,8 @@ export function buildSceneFromEditor(
       navViewId: a.navViewId,
       size: a.size,
       display: a.display,
+      throughWalls: a.throughWalls,
+      opacity: a.opacity,
     });
   });
 

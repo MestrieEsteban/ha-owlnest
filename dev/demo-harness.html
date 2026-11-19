@@ -54,8 +54,10 @@
   const check = (label, ok, detail = '') => log.push(`${ok ? '✓' : '✗'} ${label}${detail ? ' — ' + detail : ''}`);
 
   check('le modèle de démonstration est chargé', !!card._modelRoot && card.modelLoaded, card._effectiveConfig.model_url);
-  const slots = [...card.overlays.values()].filter((o) => o.el?.dataset.placeholder === '1');
-  check('quatre emplacements à relier', slots.length === 4, `${slots.length}`);
+  const pins = card.scene?.getObjectByName('owlnest-pins');
+  let slots = 0;
+  pins?.traverse((o) => { if (o.userData?.placeholder) slots++; });
+  check('quatre emplacements à relier', slots === 4, `${slots}`);
   check('le bandeau de démonstration est affiché', !!card.querySelector('#owlnest-demo-banner'));
 
   document.getElementById('out').textContent = log.join('\n');

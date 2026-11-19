@@ -157,6 +157,16 @@ export interface AnchorConfig {
    */
   display?: 'auto' | 'icon' | 'thumbnail';
   /**
+   * `true` / `false` : cette ancre traverse les murs, ou non.
+   * Absent : le réglage de la carte.
+   */
+  throughWalls?: boolean;
+  /**
+   * Opacité du disque (1 opaque, 0.45 laisse voir le modèle).
+   * Absent : le réglage de la carte. L'icône reste opaque.
+   */
+  opacity?: number;
+  /**
    * Identifiant fixé par le plan dessiné (`plan_lamp_…` : l'ancre d'une lampe
    * posée). Il survit à l'éditeur d'ancres et à l'enregistrement, sinon la
    * carte ne reconnaîtrait plus l'ancre et en recréerait une seconde.
@@ -235,6 +245,16 @@ export interface OwlnestAnchor {
    * une simple pastille.
    */
   display?: 'auto' | 'icon' | 'thumbnail';
+  /**
+   * `true` / `false` : cette ancre traverse les murs, ou non.
+   * Absent : le réglage de la carte.
+   */
+  throughWalls?: boolean;
+  /**
+   * Opacité du disque (1 opaque, 0.45 laisse voir le modèle).
+   * Absent : le réglage de la carte. L'icône reste opaque.
+   */
+  opacity?: number;
 }
 
 /** Scene-level settings stored in the backend (configured from edit mode, not YAML). */
@@ -744,6 +764,16 @@ export interface AnchorEntry {
    */
   display?: 'auto' | 'icon' | 'thumbnail';
   /**
+   * `true` / `false` : cette ancre traverse les murs, ou non.
+   * Absent : le réglage de la carte.
+   */
+  throughWalls?: boolean;
+  /**
+   * Opacité du disque (1 opaque, 0.45 laisse voir le modèle).
+   * Absent : le réglage de la carte. L'icône reste opaque.
+   */
+  opacity?: number;
+  /**
    * Identifiant fixé par le plan dessiné (`plan_lamp_…` : l'ancre d'une lampe
    * posée). Il survit à l'éditeur d'ancres et à l'enregistrement, sinon la
    * carte ne reconnaîtrait plus l'ancre et en recréerait une seconde.
@@ -806,6 +836,16 @@ export interface EditableAnchor {
    * une simple pastille.
    */
   display?: 'auto' | 'icon' | 'thumbnail';
+  /**
+   * `true` / `false` : cette ancre traverse les murs, ou non.
+   * Absent : le réglage de la carte.
+   */
+  throughWalls?: boolean;
+  /**
+   * Opacité du disque (1 opaque, 0.45 laisse voir le modèle).
+   * Absent : le réglage de la carte. L'icône reste opaque.
+   */
+  opacity?: number;
   /**
    * Identifiant fixé par le plan dessiné (`plan_lamp_…` : l'ancre d'une lampe
    * posée). Il survit à l'éditeur d'ancres et à l'enregistrement, sinon la

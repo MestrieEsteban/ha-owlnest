@@ -7,6 +7,8 @@
  * changer de thème ne reconstruit rien, la feuille de styles suit.
  */
 
+import { clampPinOpacity } from '../pin-look';
+
 export type Skin = 'night' | 'paper' | 'glass' | 'ha';
 export const SKINS: Skin[] = ['night', 'paper', 'glass', 'ha'];
 
@@ -32,6 +34,11 @@ export interface UiPrefs {
   show: { rooms: boolean; views: boolean; status: boolean; names: boolean };
   /** Les outils s'effacent quand on ne touche pas la carte. */
   autohide: boolean;
+  /**
+   * Pastilles. `throughWalls` absent ou vrai : elles restent lisibles à travers
+   * la maison (comportement d'origine). `opacity` 1 : disque opaque.
+   */
+  pins: { throughWalls: boolean; opacity: number };
 }
 
 export const DEFAULT_UI: UiPrefs = {
@@ -40,6 +47,7 @@ export const DEFAULT_UI: UiPrefs = {
   slots: { rooms: 'tl', status: 'tr', dock: 'br' },
   show: { rooms: true, views: true, status: true, names: false },
   autohide: true,
+  pins: { throughWalls: true, opacity: 1 },
 };
 
 /** Les préférences enregistrées, complétées par les valeurs par défaut. */
@@ -55,6 +63,10 @@ export function uiPrefs(saved?: Partial<UiPrefs> | null): UiPrefs {
     slots,
     show: { ...DEFAULT_UI.show, ...(s.show ?? {}) },
     autohide: s.autohide ?? DEFAULT_UI.autohide,
+    pins: {
+      throughWalls: s.pins?.throughWalls !== false,
+      opacity: typeof s.pins?.opacity === 'number' ? clampPinOpacity(s.pins.opacity) : DEFAULT_UI.pins.opacity,
+    },
   };
 }
 
@@ -150,8 +162,6 @@ export const STYLES = `
 .ow-slot[data-slot="tc"] { top: 12px; left: 50%; transform: translateX(-50%); flex-direction: column; align-items: center; }
 .ow-slot[data-slot="bc"] { bottom: 12px; left: 50%; transform: translateX(-50%); flex-direction: column-reverse; align-items: center; }
 .ow-fade { transition: opacity .25s ease; }
-/* « Noms des pastilles » : chaque pastille montre son nom en permanence. */
-.ow-names .ow-pin-label { opacity: 1 !important; }
 .ow-fade.ow-hidden { opacity: 0; pointer-events: none !important; }
 .ow-fade.ow-hidden * { pointer-events: none !important; }
 
@@ -291,5 +301,9 @@ export const STYLES = `
 .ow-drag-ghost { position: fixed; z-index: 100000; pointer-events: none; transform: translate(-50%, -50%) rotate(-3deg); box-shadow: 0 6px 16px rgba(0,0,0,0.35); }
 .ow-row-opt { display: flex; align-items: center; gap: 10px; padding: 7px 2px; font-size: 13px; }
 .ow-row-opt span { flex: 1; }
+.ow-steps { display: flex; gap: 6px; }
+.ow-steps button { flex: 1; border: 1px solid var(--ow-line); background: var(--ow-chrome2); color: var(--ow-text);
+  border-radius: 9px; padding: 7px 4px; cursor: pointer; font: 600 12px ${FONT}; }
+.ow-steps button.ow-on { border-color: var(--ow-acc); color: var(--ow-acc); }
 .ow-hint { font-size: 12px; color: var(--ow-muted); background: var(--ow-chrome2); border-radius: 10px; padding: 9px 11px; display: flex; gap: 8px; line-height: 1.4; }
 `;
