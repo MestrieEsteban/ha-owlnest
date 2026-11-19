@@ -3,8 +3,15 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { hostMargin } from './pin-look.mjs';
 import {
-  PIN_ORDER_FRONT, offsetTowardCamera, pinDepthFlags, pixelsForWorldSize, worldSizeForPixels,
+  PIN_ORDER_FRONT, htmlHoverNameShown, offsetTowardCamera, pinDepthFlags, pixelsForWorldSize, worldSizeForPixels,
 } from './pin-sprite.mjs';
+
+test('le nom HTML n’existe qu’au survol, jamais si le sprite le porte déjà', () => {
+  assert.equal(htmlHoverNameShown(true, true), false);
+  assert.equal(htmlHoverNameShown(true, false), false);
+  assert.equal(htmlHoverNameShown(false, false), false);
+  assert.equal(htmlHoverNameShown(false, true), true);
+});
 
 test('la profondeur suit « à travers les murs » et n’est jamais écrite', () => {
   assert.deepEqual(pinDepthFlags(false), { depthTest: true, depthWrite: false, renderOrder: 0 });

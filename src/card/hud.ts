@@ -321,7 +321,6 @@ export class CardHud {
   // ── Rendu ────────────────────────────────────────────────────────────────
 
   private render() {
-    this.host.classList.toggle('ow-names', this.prefs.show.names);
     for (const [, el] of this.slots) el.innerHTML = '';
     this.roomPanel?.remove();
     this.roomPanel = null;

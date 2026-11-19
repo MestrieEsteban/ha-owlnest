@@ -75,7 +75,7 @@ import { buildHouse, floorGroup, buildRoof, ROOF_NAME, ROOF_COLORS } from './pla
 import { floorViews, floorDoc, withFloorDoc, addFloor, removeFloor, renameFloor, allOpenings, hasWalls, type FloorView } from './plan/floors';
 import { LowWalls, WALL_VIEWS, type WallView } from './plan/low-walls';
 import { cardPinLook, hostMargin, resolvePinLook } from './pin-look';
-import { offsetTowardCamera, pinDepthFlags, pixelsForWorldSize, worldSizeForPixels } from './pin-sprite';
+import { htmlHoverNameShown, offsetTowardCamera, pinDepthFlags, pixelsForWorldSize, worldSizeForPixels } from './pin-sprite';
 import { iconOffColor, paintPin, pinFaceKey, refreshPinPicture, type PinFace } from './pin-canvas';
 import { syncPlanParts } from './plan/parts';
 import { emptyPlan, type PlanDoc, type OpeningKind } from './plan/types';
@@ -5923,7 +5923,7 @@ export class Ha3dFloorplan extends HTMLElement {
       'background:var(--ow-chrome, rgba(0,0,0,0.82))', 'color:var(--ow-text, #fff)',
       'box-shadow:var(--ow-shadow, none)', 'font-size:11px',
       'font-family:var(--primary-font-family,sans-serif)',
-      'padding:3px 8px', 'border-radius:4px', 'white-space:nowrap', 'pointer-events:none', 'opacity:0',
+      'padding:3px 8px', 'border-radius:4px', 'white-space:nowrap', 'pointer-events:none', 'display:none',
     ].join(';');
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', '0 0 36 36');
@@ -5959,16 +5959,29 @@ export class Ha3dFloorplan extends HTMLElement {
     const entry = name ? this.anchors.get(name) : undefined;
     if (!sprite?.visible || !entry) {
       el.style.display = 'none';
-      label.style.opacity = '0';
+      this._setPinHoverLabel(label, false, '');
       return;
     }
     const p = this._projScratch.copy(sprite.position).project(this.camera);
-    if (p.z >= 1) { el.style.display = 'none'; return; }
+    if (p.z >= 1) {
+      el.style.display = 'none';
+      this._setPinHoverLabel(label, false, '');
+      return;
+    }
     el.style.display = 'block';
     placeAt(el, ((p.x + 1) / 2) * w, ((-p.y + 1) / 2) * h);
-    const showLabel = !this._pinShowNames() && (this._pinHover === name || labelHold === name);
-    label.textContent = this._pinHoverText(entry);
-    label.style.opacity = showLabel ? '1' : '0';
+    // Absent quand le sprite porte déjà le nom, sinon seulement au survol.
+    const showLabel = htmlHoverNameShown(
+      this._pinShowNames(),
+      this._pinHover === name || labelHold === name,
+    );
+    this._setPinHoverLabel(label, showLabel, showLabel ? this._pinHoverText(entry) : '');
+  }
+
+  /** `display`, pas l'opacité : une règle CSS peut forcer celle-ci. */
+  private _setPinHoverLabel(label: HTMLElement, shown: boolean, text: string) {
+    label.style.display = shown ? 'block' : 'none';
+    label.textContent = text;
   }
 
   private _hidePinChrome() {
@@ -5978,7 +5991,7 @@ export class Ha3dFloorplan extends HTMLElement {
     this._pinLabelName = null;
     this._hidePinRing();
     if (this._pinChrome) this._pinChrome.style.display = 'none';
-    if (this._pinChromeLabel) this._pinChromeLabel.style.opacity = '0';
+    if (this._pinChromeLabel) this._setPinHoverLabel(this._pinChromeLabel, false, '');
     if (this.canvas && !this._editMode) this.canvas.style.cursor = '';
   }
 

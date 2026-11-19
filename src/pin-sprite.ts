@@ -17,6 +17,15 @@ export interface PinDepthFlags {
   renderOrder: number;
 }
 
+/**
+ * Le nom HTML n'existe qu'au survol.
+ * « Toujours afficher les noms » le peint déjà dans le sprite :
+ * le nœud HTML doit rester absent, l'opacité ne le cache pas.
+ */
+export function htmlHoverNameShown(alwaysShowNames: boolean, pointerOverPin: boolean): boolean {
+  return !alwaysShowNames && pointerOverPin;
+}
+
 /** `throughWalls` : pas de test, et un ordre haut pour rester lisible. */
 export function pinDepthFlags(throughWalls: boolean): PinDepthFlags {
   return {
