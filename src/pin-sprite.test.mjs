@@ -6,11 +6,11 @@ import {
   PIN_ORDER_FRONT, htmlHoverNameShown, offsetTowardCamera, pinDepthFlags, pixelsForWorldSize, worldSizeForPixels,
 } from './pin-sprite.mjs';
 
-test('le nom HTML n’existe qu’au survol, jamais si le sprite le porte déjà', () => {
-  assert.equal(htmlHoverNameShown(true, true), false);
-  assert.equal(htmlHoverNameShown(true, false), false);
-  assert.equal(htmlHoverNameShown(false, false), false);
+test('le nom HTML est toujours là si on les affiche tous, sinon seulement au survol', () => {
+  assert.equal(htmlHoverNameShown(true, false), true);
+  assert.equal(htmlHoverNameShown(true, true), true);
   assert.equal(htmlHoverNameShown(false, true), true);
+  assert.equal(htmlHoverNameShown(false, false), false);
 });
 
 test('la profondeur suit « à travers les murs » et n’est jamais écrite', () => {

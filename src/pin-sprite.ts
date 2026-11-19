@@ -18,12 +18,12 @@ export interface PinDepthFlags {
 }
 
 /**
- * Le nom HTML n'existe qu'au survol.
- * « Toujours afficher les noms » le peint déjà dans le sprite :
- * le nœud HTML doit rester absent, l'opacité ne le cache pas.
+ * Le nom reste en HTML. Le peindre dans le sprite élargit la toile
+ * et ovalise la pastille.
+ * Toujours, si l'option est cochée ; sinon seulement au survol.
  */
 export function htmlHoverNameShown(alwaysShowNames: boolean, pointerOverPin: boolean): boolean {
-  return !alwaysShowNames && pointerOverPin;
+  return alwaysShowNames || pointerOverPin;
 }
 
 /** `throughWalls` : pas de test, et un ordre haut pour rester lisible. */

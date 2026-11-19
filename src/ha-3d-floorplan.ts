@@ -184,6 +184,8 @@ export class Ha3dFloorplan extends HTMLElement {
   private _pinNdc = new THREE.Vector2();
   private _pinChrome: HTMLDivElement | null = null;
   private _pinChromeLabel: HTMLDivElement | null = null;
+  /** Un nom HTML par pastille. Pas dans la texture : la toile resterait ovale. */
+  private _pinNameLabels = new Map<string, HTMLDivElement>();
   private _pinChromeRing: SVGCircleElement | null = null;
   private _pinHover: string | null = null;
   private _pinGuide: string | null = null;
@@ -5525,6 +5527,7 @@ export class Ha3dFloorplan extends HTMLElement {
     if (!show || !this.camera) {
       this._clusters.forEach((c) => c.hide());
       this._hidePinChrome();
+      this._hidePinNames();
       if (!show) this._closePinMenu();
       return;
     }
@@ -5646,6 +5649,7 @@ export class Ha3dFloorplan extends HTMLElement {
     if (pulsing) this._dirty = true;
 
     this._placePinChrome(w, h);
+    this._placePinNames();
     this._placePinMenu(w, h);
   }
 
@@ -5689,7 +5693,7 @@ export class Ha3dFloorplan extends HTMLElement {
     return !!this._ui?.prefs.show.names;
   }
 
-  /** Le nom au survol, ou sous la pastille quand on les affiche tous. */
+  /** Le texte du cachet HTML, au survol ou quand tous les noms restent affichés. */
   private _pinHoverText(entry: AnchorEntry): string {
     const kind = entry.kind ?? 'entity';
     if (kind !== 'entity') return entry.label;
@@ -5708,15 +5712,13 @@ export class Ha3dFloorplan extends HTMLElement {
     return `${entry.label} \u2022 ${desc.stateText(stateObj)}`;
   }
 
-  private _pinFace(entry: AnchorEntry, opacity: number, colors: { disc: string; line: string }, names: boolean): PinFace {
+  private _pinFace(entry: AnchorEntry, opacity: number, colors: { disc: string; line: string }): PinFace {
     const kind = entry.kind ?? 'entity';
-    const caption = names ? this._pinHoverText(entry) : undefined;
-    const base = { opacity, disc: colors.disc, line: colors.line, iconColor: '#e2e8f0', caption };
+    const base = { opacity, disc: colors.disc, line: colors.line, iconColor: '#e2e8f0' };
     if (kind === 'label') {
       return {
         ...base,
         shape: 'label',
-        caption: undefined,
         disc: 'rgba(12,16,28,0.62)',
         line: 'rgba(255,255,255,0.09)',
         text: entry.label,
@@ -5763,7 +5765,6 @@ export class Ha3dFloorplan extends HTMLElement {
       return {
         ...base,
         shape: 'thumb',
-        caption: undefined,
         disc: 'rgba(10,14,24,0.85)',
         line: 'rgba(255,255,255,0.14)',
         text: entry.label,
@@ -5819,7 +5820,6 @@ export class Ha3dFloorplan extends HTMLElement {
     try {
       const colors = this._pinColors();
       const card = cardPinLook(this._ui?.prefs.pins ?? this._scene?.settings?.ui?.pins);
-      const names = this._pinShowNames();
       const keep = new Set<string>();
       this.anchors.forEach((entry, name) => {
         keep.add(name);
@@ -5831,7 +5831,7 @@ export class Ha3dFloorplan extends HTMLElement {
         mat.depthWrite = false;
         mat.opacity = 1;
         sprite.renderOrder = flags.renderOrder;
-        const face = this._pinFace(entry, look.opacity, colors, names);
+        const face = this._pinFace(entry, look.opacity, colors);
         const key = pinFaceKey(face);
         sprite.userData.kind = face.shape;
         sprite.userData.inert = face.shape === 'label';
@@ -5897,6 +5897,7 @@ export class Ha3dFloorplan extends HTMLElement {
     mat.dispose();
     sprite.removeFromParent();
     this._pinSprites.delete(name);
+    this._dropPinNameLabel(name);
   }
 
   private _disposePinSprites() {
@@ -5970,18 +5971,70 @@ export class Ha3dFloorplan extends HTMLElement {
     }
     el.style.display = 'block';
     placeAt(el, ((p.x + 1) / 2) * w, ((-p.y + 1) / 2) * h);
-    // Absent quand le sprite porte déjà le nom, sinon seulement au survol.
-    const showLabel = htmlHoverNameShown(
-      this._pinShowNames(),
-      this._pinHover === name || labelHold === name,
-    );
-    this._setPinHoverLabel(label, showLabel, showLabel ? this._pinHoverText(entry) : '');
+    // L'anneau seulement. Le nom est un cachet à part, sinon le survol le double.
+    this._setPinHoverLabel(label, false, '');
   }
 
   /** `display`, pas l'opacité : une règle CSS peut forcer celle-ci. */
   private _setPinHoverLabel(label: HTMLElement, shown: boolean, text: string) {
     label.style.display = shown ? 'block' : 'none';
     label.textContent = text;
+  }
+
+  /**
+   * Un cachet par pastille visible, 8 px au-dessus du cadre de 40 px.
+   * Un mur peut cacher le sprite sans ce nom : pas de lancer de rayon.
+   */
+  private _placePinNames() {
+    const always = this._pinShowNames();
+    const hold = this._pinLabelUntil > performance.now() ? this._pinLabelName : null;
+    const pos = this._ovPos;
+    this._pinSprites.forEach((sprite, name) => {
+      const entry = this.anchors.get(name);
+      const q = pos.get(name);
+      const over = this._pinHover === name || hold === name;
+      const show = !!entry && sprite.visible && sprite.userData.inert !== true && !!q
+        && htmlHoverNameShown(always, over);
+      const existing = this._pinNameLabels.get(name);
+      if (!show || !entry || !q) {
+        if (existing) existing.style.display = 'none';
+        return;
+      }
+      const el = existing ?? this._mountPinNameLabel(name);
+      const text = this._pinHoverText(entry);
+      if (el.textContent !== text) el.textContent = text;
+      el.style.display = 'block';
+      placeAt(el, q.x, q.y);
+    });
+  }
+
+  private _mountPinNameLabel(name: string): HTMLDivElement {
+    const label = document.createElement('div');
+    label.className = 'ow-pin-label';
+    label.dataset.pin = name;
+    label.style.cssText = [
+      'position:absolute', 'z-index:6', 'left:0', 'top:0',
+      'transform:translate(-50%, calc(-100% - 28px))',
+      'background:var(--ow-chrome, rgba(0,0,0,0.82))', 'color:var(--ow-text, #fff)',
+      'box-shadow:var(--ow-shadow, none)', 'font-size:11px',
+      'font-family:var(--primary-font-family,sans-serif)',
+      'padding:3px 8px', 'border-radius:4px', 'white-space:nowrap',
+      'pointer-events:none', 'display:none',
+    ].join(';');
+    this.overlayContainer?.appendChild(label);
+    this._pinNameLabels.set(name, label);
+    return label;
+  }
+
+  private _hidePinNames() {
+    for (const el of this._pinNameLabels.values()) el.style.display = 'none';
+  }
+
+  private _dropPinNameLabel(name: string) {
+    const el = this._pinNameLabels.get(name);
+    if (!el) return;
+    el.remove();
+    this._pinNameLabels.delete(name);
   }
 
   private _hidePinChrome() {
